@@ -98,6 +98,10 @@ type Model struct {
 	healthStatus  string // "ok", "warning", "critical", "no_baseline", "unavailable"
 	healthMessage string
 
+	// UBS scan status
+	scanStatus string              // "clean", "warning", "critical", "unavailable"
+	scanTotals scanner.ScanTotals  // Scan result totals
+
 	// Layout tier (narrow/split/wide/ultra)
 	tier layout.Tier
 
@@ -524,6 +528,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.healthMessage = msg.Message
 		return m, nil
 
+	case ScanStatusMsg:
+		m.scanStatus = msg.Status
+		m.scanTotals = msg.Totals
+		m.scanDuration = msg.Duration
+		return m, nil
+
 	case AgentMailUpdateMsg:
 		m.agentMailAvailable = msg.Available
 		m.agentMailConnected = msg.Connected
@@ -552,6 +562,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(
 				m.fetchSessionDataWithOutputs(),
 				m.fetchStatuses(),
+				m.fetchScanStatus(),
 			)
 
 		case key.Matches(msg, dashKeys.ContextRefresh):
@@ -559,6 +570,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(
 				m.fetchSessionDataWithOutputs(),
 				m.fetchStatuses(),
+				m.fetchScanStatus(),
 			)
 
 		case key.Matches(msg, dashKeys.MailRefresh):
