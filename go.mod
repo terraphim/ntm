@@ -11,6 +11,7 @@ require (
 	github.com/muesli/reflow v0.3.0
 	github.com/spf13/cobra v1.8.0
 	golang.org/x/term v0.17.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

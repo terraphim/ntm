@@ -305,6 +305,9 @@ var (
 	// Robot-health flag
 	robotHealth bool // project health summary
 
+	// Robot-recipes flag
+	robotRecipes bool // list available recipes as JSON
+
 	// Robot-ack flags for send confirmation tracking
 	robotAck        string // session name for ack
 	robotAckTimeout int    // timeout in milliseconds
@@ -367,6 +370,9 @@ func init() {
 
 	// Robot-health flag for project health summary
 	rootCmd.Flags().BoolVar(&robotHealth, "robot-health", false, "Output project health summary as JSON for AI agents")
+
+	// Robot-recipes flag for recipe listing
+	rootCmd.Flags().BoolVar(&robotRecipes, "robot-recipes", false, "List available recipes as JSON for AI agents")
 
 	// Robot-ack flags for send confirmation tracking
 	rootCmd.Flags().StringVar(&robotAck, "robot-ack", "", "Watch panes for acknowledgment after send (JSON output)")
@@ -462,6 +468,7 @@ func init() {
 		// Configuration management
 		newRecipesCmd(),
 		newPersonasCmd(),
+		newTemplateCmd(),
 	)
 }
 

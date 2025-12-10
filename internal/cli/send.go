@@ -13,6 +13,7 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/checkpoint"
 	"github.com/Dicklesworthstone/ntm/internal/hooks"
 	"github.com/Dicklesworthstone/ntm/internal/prompt"
+	"github.com/Dicklesworthstone/ntm/internal/templates"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
@@ -146,6 +147,8 @@ func newSendCmd() *cobra.Command {
 	var paneIndex int
 	var promptFile, prefix, suffix string
 	var contextFiles []string
+	var templateName string
+	var templateVars []string
 
 	cmd := &cobra.Command{
 		Use:   "send <session> [prompt]",
@@ -159,6 +162,12 @@ Prompt can be provided as:
   - Command line argument (traditional)
   - From a file using --file
   - From stdin when piped/redirected
+  - From a template using --template
+
+Template Usage:
+Use --template (-t) to use a named prompt template with variable substitution.
+Templates support {{variable}} placeholders and {{#var}}...{{/var}} conditionals.
+See 'ntm template list' for available templates.
 
 File Context Injection:
 Use --context (-c) to include file contents in the prompt. Files are prepended
@@ -181,10 +190,18 @@ Examples:
   git diff | ntm send myproject --all --prefix "Review these changes:"  # Stdin with prefix
   ntm send myproject -c src/auth.py "Refactor this"     # With file context
   ntm send myproject -c src/api.go:10-50 "Review lines" # With line range
-  ntm send myproject -c a.go -c b.go "Compare these"    # Multiple files`,
+  ntm send myproject -c a.go -c b.go "Compare these"    # Multiple files
+  ntm send myproject -t code_review --file src/main.go  # Template with file
+  ntm send myproject -t fix --var issue="null pointer" --file src/app.go  # Template with vars`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			session := args[0]
+
+			// Handle template-based prompts
+			if templateName != "" {
+				return runSendWithTemplate(session, templateName, templateVars, promptFile, contextFiles, targets, targetAll, skipFirst, paneIndex)
+			}
+
 			promptText, err := getPromptContent(args[1:], promptFile, prefix, suffix)
 			if err != nil {
 				return err
@@ -218,10 +235,12 @@ Examples:
 	cmd.Flags().BoolVar(&targetAll, "all", false, "send to all panes (including user pane)")
 	cmd.Flags().BoolVarP(&skipFirst, "skip-first", "s", false, "skip the first (user) pane")
 	cmd.Flags().IntVarP(&paneIndex, "pane", "p", -1, "send to specific pane index")
-	cmd.Flags().StringVarP(&promptFile, "file", "f", "", "read prompt from file")
+	cmd.Flags().StringVarP(&promptFile, "file", "f", "", "read prompt from file (also used as {{file}} in templates)")
 	cmd.Flags().StringVar(&prefix, "prefix", "", "text to prepend to file/stdin content")
 	cmd.Flags().StringVar(&suffix, "suffix", "", "text to append to file/stdin content")
 	cmd.Flags().StringArrayVarP(&contextFiles, "context", "c", nil, "file to include as context (repeatable, supports path:start-end)")
+	cmd.Flags().StringVarP(&templateName, "template", "t", "", "use a named prompt template (see 'ntm template list')")
+	cmd.Flags().StringArrayVar(&templateVars, "var", nil, "template variable in key=value format (repeatable)")
 
 	return cmd
 }
@@ -300,6 +319,66 @@ func buildPrompt(content, prefix, suffix string) string {
 		parts = append(parts, suffix)
 	}
 	return strings.Join(parts, "\n")
+}
+
+// runSendWithTemplate handles template-based prompt generation and sending.
+func runSendWithTemplate(session, templateName string, templateVars []string, promptFile string, contextFiles []string, targets SendTargets, targetAll, skipFirst bool, paneIndex int) error {
+	// Load the template
+	loader := templates.NewLoader()
+	tmpl, err := loader.Load(templateName)
+	if err != nil {
+		return fmt.Errorf("loading template '%s': %w", templateName, err)
+	}
+
+	// Parse template variables from --var flags
+	vars := make(map[string]string)
+	for _, v := range templateVars {
+		parts := strings.SplitN(v, "=", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid --var format '%s' (expected key=value)", v)
+		}
+		vars[parts[0]] = parts[1]
+	}
+
+	// Build execution context
+	ctx := templates.ExecutionContext{
+		Variables: vars,
+		Session:   session,
+	}
+
+	// Read file content if --file specified (used as {{file}} variable)
+	if promptFile != "" {
+		content, err := os.ReadFile(promptFile)
+		if err != nil {
+			return fmt.Errorf("reading file '%s': %w", promptFile, err)
+		}
+		ctx.FileContent = string(content)
+	}
+
+	// Execute the template
+	promptText, err := tmpl.Execute(ctx)
+	if err != nil {
+		return fmt.Errorf("executing template: %w", err)
+	}
+
+	// Inject additional file context if specified (via --context)
+	if len(contextFiles) > 0 {
+		var specs []prompt.FileSpec
+		for _, cf := range contextFiles {
+			spec, err := prompt.ParseFileSpec(cf)
+			if err != nil {
+				return fmt.Errorf("invalid --context spec '%s': %w", cf, err)
+			}
+			specs = append(specs, spec)
+		}
+
+		promptText, err = prompt.InjectFiles(specs, promptText)
+		if err != nil {
+			return err
+		}
+	}
+
+	return runSendWithTargets(session, promptText, targets, targetAll, skipFirst, paneIndex)
 }
 
 // runSendWithTargets sends prompts using the new SendTargets filtering
