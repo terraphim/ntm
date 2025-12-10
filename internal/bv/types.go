@@ -109,3 +109,32 @@ type DriftResult struct {
 	Status  DriftStatus
 	Message string
 }
+
+// BeadsSummary provides issue tracking stats
+type BeadsSummary struct {
+	Available      bool             `json:"available"`
+	Reason         string           `json:"reason,omitempty"` // Reason if not available
+	Project        string           `json:"project,omitempty"`
+	Total          int              `json:"total,omitempty"`
+	Open           int              `json:"open,omitempty"`
+	InProgress     int              `json:"in_progress,omitempty"`
+	Blocked        int              `json:"blocked,omitempty"`
+	Ready          int              `json:"ready,omitempty"`
+	Closed         int              `json:"closed,omitempty"`
+	ReadyPreview   []BeadPreview    `json:"ready_preview,omitempty"`
+	InProgressList []BeadInProgress `json:"in_progress_list,omitempty"`
+}
+
+// BeadPreview is a minimal bead representation for ready items
+type BeadPreview struct {
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Priority string `json:"priority"` // e.g., "P0", "P1"
+}
+
+// BeadInProgress represents an in-progress bead with assignee
+type BeadInProgress struct {
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Assignee string `json:"assignee,omitempty"`
+}

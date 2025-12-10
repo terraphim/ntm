@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -577,4 +579,132 @@ func runBd(args ...string) (string, error) {
 func IsBdInstalled() bool {
 	_, err := exec.LookPath("bd")
 	return err == nil
+}
+
+// GetBeadsSummary attempts to get bead statistics from bd command
+func GetBeadsSummary(limit int) *BeadsSummary {
+	result := &BeadsSummary{}
+
+	// Check if .beads directory exists relative to WorkDir
+	beadsDir := ".beads"
+	if WorkDir != "" {
+		beadsDir = filepath.Join(WorkDir, ".beads")
+	}
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		result.Available = false
+		result.Reason = "no .beads/ directory"
+		return result
+	}
+
+	// Get project path (WorkDir or CWD)
+	if WorkDir != "" {
+		result.Project = WorkDir
+	} else if cwd, err := os.Getwd(); err == nil {
+		result.Project = cwd
+	}
+
+	// Try to run bd stats --json to get summary
+	statsOutput, err := runBd("stats", "--json")
+	if err != nil {
+		result.Available = false
+		result.Reason = fmt.Sprintf("bd stats failed: %v", err)
+		return result
+	}
+
+	// Parse the JSON output
+	var stats struct {
+		TotalIssues      int `json:"total_issues"`
+		OpenIssues       int `json:"open_issues"`
+		InProgressIssues int `json:"in_progress_issues"`
+		BlockedIssues    int `json:"blocked_issues"`
+		ReadyIssues      int `json:"ready_issues"`
+		ClosedIssues     int `json:"closed_issues"`
+	}
+	if err := json.Unmarshal([]byte(statsOutput), &stats); err != nil {
+		result.Available = false
+		result.Reason = fmt.Sprintf("parse stats failed: %v", err)
+		return result
+	}
+
+	result.Available = true
+	result.Total = stats.TotalIssues
+	result.Open = stats.OpenIssues
+	result.InProgress = stats.InProgressIssues
+	result.Blocked = stats.BlockedIssues
+	result.Ready = stats.ReadyIssues
+	result.Closed = stats.ClosedIssues
+
+	// Get ready preview (top N ready issues sorted by priority)
+	result.ReadyPreview = GetReadyPreview(limit)
+
+	// Get in-progress list
+	result.InProgressList = GetInProgressList(limit)
+
+	return result
+}
+
+// GetReadyPreview returns top N ready beads sorted by priority
+func GetReadyPreview(limit int) []BeadPreview {
+	var previews []BeadPreview
+
+	output, err := runBd("ready", "--json")
+	if err != nil {
+		return previews
+	}
+
+	var issues []struct {
+		ID       string `json:"id"`
+		Title    string `json:"title"`
+		Priority int    `json:"priority"`
+	}
+	if err := json.Unmarshal([]byte(output), &issues); err != nil {
+		return previews
+	}
+
+	// Take up to limit items
+	for i, issue := range issues {
+		if i >= limit {
+			break
+		}
+		previews = append(previews, BeadPreview{
+			ID:       issue.ID,
+			Title:    issue.Title,
+			Priority: fmt.Sprintf("P%d", issue.Priority),
+		})
+	}
+
+	return previews
+}
+
+// GetInProgressList returns in-progress beads with assignees
+func GetInProgressList(limit int) []BeadInProgress {
+	var items []BeadInProgress
+
+	output, err := runBd("list", "--status=in_progress", "--json")
+	if err != nil {
+		return items
+	}
+
+	var issues []struct {
+		ID       string `json:"id"`
+		Title    string `json:"title"`
+		Assignee string `json:"assignee"`
+	}
+	if err := json.Unmarshal([]byte(output), &issues); err != nil {
+		return items
+	}
+
+	// Take up to limit items
+	for i, issue := range issues {
+		if i >= limit {
+			break
+		}
+		items = append(items, BeadInProgress{
+			ID:       issue.ID,
+			Title:    issue.Title,
+			Assignee: issue.Assignee,
+		})
+	}
+
+	return items
 }
