@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -14,14 +15,16 @@ import (
 )
 
 // PrintStunningHelp prints a beautifully styled help output
-func PrintStunningHelp() {
+func PrintStunningHelp(w io.Writer) {
 	t := theme.Current()
 	ic := icons.Current()
 
 	// Get terminal width
 	width := 80
-	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
-		width = w
+	if f, ok := w.(*os.File); ok {
+		if terminalWidth, _, err := term.GetSize(int(f.Fd())); err == nil && terminalWidth > 0 {
+			width = terminalWidth
+		}
 	}
 	if width > 100 {
 		width = 100
@@ -147,7 +150,7 @@ func PrintStunningHelp() {
 	cmdStyle := lipgloss.NewStyle().Foreground(t.Blue).Bold(true)
 	b.WriteString("  " + hintStyle.Render("Add to shell: ") + cmdStyle.Render("eval \"$(ntm init zsh)\"") + "\n\n")
 
-	fmt.Print(b.String())
+	fmt.Fprint(w, b.String())
 }
 
 type commandHelp struct {
@@ -249,17 +252,17 @@ func renderExamples(width int, t theme.Theme, ic icons.IconSet) string {
 }
 
 // PrintCompactHelp prints a more compact version for --help flag
-func PrintCompactHelp() {
+func PrintCompactHelp(w io.Writer) {
 	t := theme.Current()
 	ic := icons.Current()
 
 	// Simple gradient title
 	title := styles.GradientText("NTM - Named Tmux Manager",
 		string(t.Blue), string(t.Mauve))
-	fmt.Printf("\n  %s\n\n", title)
+	fmt.Fprintf(w, "\n  %s\n\n", title)
 
 	// Brief command list
-	fmt.Println("  " + lipgloss.NewStyle().Bold(true).Foreground(t.Text).Render("Commands:"))
+	fmt.Fprintln(w, "  "+lipgloss.NewStyle().Bold(true).Foreground(t.Text).Render("Commands:"))
 
 	commands := []struct {
 		name string
@@ -279,16 +282,16 @@ func PrintCompactHelp() {
 	descStyle := lipgloss.NewStyle().Foreground(t.Subtext)
 
 	for _, c := range commands {
-		fmt.Printf("    %s %s\n", cmdStyle.Render(c.name), descStyle.Render(c.desc))
+		fmt.Fprintf(w, "    %s %s\n", cmdStyle.Render(c.name), descStyle.Render(c.desc))
 	}
 
-	fmt.Println()
+	fmt.Fprintln(w)
 	hintStyle := lipgloss.NewStyle().Foreground(t.Overlay).Italic(true)
-	fmt.Printf("  %s\n\n", hintStyle.Render("Run 'ntm' without arguments for full help, or 'ntm <command> --help' for details."))
+	fmt.Fprintf(w, "  %s\n\n", hintStyle.Render("Run 'ntm' without arguments for full help, or 'ntm <command> --help' for details."))
 
 	// Shell init hint
 	cmdHighlight := lipgloss.NewStyle().Foreground(t.Blue).Bold(true)
-	fmt.Printf("  Shell setup: %s\n\n", cmdHighlight.Render("eval \"$(ntm init zsh)\""))
+	fmt.Fprintf(w, "  Shell setup: %s\n\n", cmdHighlight.Render("eval \"$(ntm init zsh)\""))
 
 	_ = ic // Use icons in future enhancements
 }

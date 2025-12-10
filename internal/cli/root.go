@@ -324,7 +324,7 @@ Shell Integration:
 		}
 
 		// Show stunning help with gradients when run without subcommand
-		PrintStunningHelp()
+		PrintStunningHelp(cmd.OutOrStdout())
 	},
 }
 

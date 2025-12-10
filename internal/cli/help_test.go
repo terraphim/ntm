@@ -1,8 +1,7 @@
 package cli
 
 import (
-	"io"
-	"os"
+	"bytes"
 	"regexp"
 	"strings"
 	"testing"
@@ -14,27 +13,14 @@ func stripANSI(str string) string {
 }
 
 func TestPrintStunningHelp(t *testing.T) {
-	// Capture stdout
-	oldStdout := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = w
+	// Use buffer instead of stdout
+	var buf bytes.Buffer
 
-	// Run function
-	PrintStunningHelp()
-
-	// Restore stdout
-	w.Close()
-	os.Stdout = oldStdout
+	// Run function with buffer
+	PrintStunningHelp(&buf)
 
 	// Read output
-	out, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	output := stripANSI(string(out))
+	output := stripANSI(buf.String())
 
 	// Verify key components exist
 	expected := []string{
@@ -54,27 +40,14 @@ func TestPrintStunningHelp(t *testing.T) {
 }
 
 func TestPrintCompactHelp(t *testing.T) {
-	// Capture stdout
-	oldStdout := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = w
+	// Use buffer instead of stdout
+	var buf bytes.Buffer
 
-	// Run function
-	PrintCompactHelp()
-
-	// Restore stdout
-	w.Close()
-	os.Stdout = oldStdout
+	// Run function with buffer
+	PrintCompactHelp(&buf)
 
 	// Read output
-	out, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	output := stripANSI(string(out))
+	output := stripANSI(buf.String())
 
 	// Verify key components exist
 	expected := []string{
