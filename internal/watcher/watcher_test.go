@@ -277,8 +277,8 @@ func TestWatcherClose(t *testing.T) {
 
 func TestEventType(t *testing.T) {
 	tests := []struct {
-		name     string
-		eventType EventType
+		name       string
+		eventType  EventType
 		wantCreate bool
 		wantWrite  bool
 		wantRemove bool
@@ -317,6 +317,134 @@ func TestWatcherNonExistentPath(t *testing.T) {
 	if err == nil {
 		t.Error("Add() for non-existent path should fail")
 	}
+}
+
+func TestWatcherPollingCreateWriteRemove(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	var mu sync.Mutex
+	var received []Event
+
+	w, err := New(
+		func(events []Event) {
+			mu.Lock()
+			received = append(received, events...)
+			mu.Unlock()
+		},
+		WithPolling(true),
+		WithPollInterval(20*time.Millisecond),
+		WithDebouncer(NewDebouncer(10*time.Millisecond)),
+	)
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer w.Close()
+
+	if err := w.Add(tmpDir); err != nil {
+		t.Fatalf("Add() failed: %v", err)
+	}
+
+	testFile := filepath.Join(tmpDir, "poll.txt")
+
+	waitFor := func(cond func() bool, msg string) {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			mu.Lock()
+			ok := cond()
+			mu.Unlock()
+			if ok {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatalf("timeout waiting for %s", msg)
+	}
+
+	contains := func(path string, typ EventType) bool {
+		for _, e := range received {
+			if e.Path == path && e.Type&typ != 0 {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Create
+	if err := os.WriteFile(testFile, []byte("hello"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	waitFor(func() bool { return contains(testFile, Create) }, "create event")
+
+	// Modify
+	if err := os.WriteFile(testFile, []byte("world"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	waitFor(func() bool { return contains(testFile, Write) }, "write event")
+
+	// Remove
+	if err := os.Remove(testFile); err != nil {
+		t.Fatalf("Remove failed: %v", err)
+	}
+	waitFor(func() bool { return contains(testFile, Remove) }, "remove event")
+}
+
+func TestWatcherPollingRecursive(t *testing.T) {
+	tmpDir := t.TempDir()
+	subDir := filepath.Join(tmpDir, "sub")
+	if err := os.Mkdir(subDir, 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	var mu sync.Mutex
+	var received []Event
+
+	w, err := New(
+		func(events []Event) {
+			mu.Lock()
+			received = append(received, events...)
+			mu.Unlock()
+		},
+		WithPolling(true),
+		WithRecursive(true),
+		WithPollInterval(20*time.Millisecond),
+		WithDebouncer(NewDebouncer(10*time.Millisecond)),
+	)
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer w.Close()
+
+	if err := w.Add(tmpDir); err != nil {
+		t.Fatalf("Add() failed: %v", err)
+	}
+
+	testFile := filepath.Join(subDir, "nested.txt")
+	if err := os.WriteFile(testFile, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	waitFor := func(cond func() bool, msg string) {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			mu.Lock()
+			ok := cond()
+			mu.Unlock()
+			if ok {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatalf("timeout waiting for %s", msg)
+	}
+
+	waitFor(func() bool {
+		for _, e := range received {
+			if e.Path == testFile && e.Type&Create != 0 {
+				return true
+			}
+		}
+		return false
+	}, "recursive create")
 }
 
 func TestEventTypeFromFsnotify(t *testing.T) {

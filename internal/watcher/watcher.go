@@ -16,6 +16,9 @@ import (
 // ErrClosed is returned when operations are called on a closed Watcher.
 var ErrClosed = errors.New("watcher: watcher is closed")
 
+// DefaultPollInterval is used when falling back to polling.
+const DefaultPollInterval = time.Second
+
 // EventType represents the type of file system event.
 type EventType uint32
 
@@ -90,10 +93,11 @@ type Watcher struct {
 	recursive    bool
 
 	// Poll mode fields (for environments where fsnotify is unavailable)
-	polling      bool
+	pollMode     bool
 	pollInterval time.Duration
-	closeCh      chan struct{}
 	snapshots    map[string]fileMeta
+	closeCh      chan struct{}
+	forcePoll    bool
 
 	mu            sync.Mutex
 	watchedPaths  map[string]bool
@@ -105,24 +109,42 @@ type Watcher struct {
 // By default, all event types are watched. Use WithEventFilter to filter events.
 // Use WithRecursive to watch directories recursively.
 func New(handler Handler, opts ...Option) (*Watcher, error) {
-	fsWatcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return nil, err
-	}
-
 	w := &Watcher{
-		fsWatcher:    fsWatcher,
 		debouncer:    NewDebouncer(DefaultDebounceDuration),
 		handler:      handler,
 		eventFilter:  All,
 		watchedPaths: make(map[string]bool),
+		pollInterval: DefaultPollInterval,
 	}
 
 	for _, opt := range opts {
 		opt(w)
 	}
 
-	go w.run()
+	if !w.forcePoll {
+		fsWatcher, err := fsnotify.NewWatcher()
+		if err == nil {
+			w.fsWatcher = fsWatcher
+		} else {
+			if w.errorHandler != nil {
+				w.errorHandler(fmt.Errorf("fsnotify unavailable, using polling fallback: %w", err))
+			}
+			w.pollMode = true
+		}
+	} else {
+		w.pollMode = true
+	}
+
+	if w.pollMode {
+		if w.pollInterval <= 0 {
+			w.pollInterval = DefaultPollInterval
+		}
+		w.snapshots = make(map[string]fileMeta)
+		w.closeCh = make(chan struct{})
+		go w.runPoll()
+	} else {
+		go w.run()
+	}
 
 	return w, nil
 }
@@ -170,20 +192,21 @@ func WithErrorHandler(handler ErrorHandler) Option {
 	}
 }
 
-// WithPolling enables poll-based watching instead of fsnotify.
-// Useful for environments where fsnotify is unavailable (network filesystems, etc).
-func WithPolling(enabled bool) Option {
-	return func(w *Watcher) {
-		w.polling = enabled
-	}
-}
-
-// WithPollInterval sets the interval between polls when polling mode is enabled.
-// Default is 500ms if not specified.
+// WithPollInterval sets the polling interval (used when polling mode is active).
 func WithPollInterval(d time.Duration) Option {
 	return func(w *Watcher) {
 		if d > 0 {
 			w.pollInterval = d
+		}
+	}
+}
+
+// WithPolling forces polling mode (useful for tests or environments without fsnotify support).
+func WithPolling(force bool) Option {
+	return func(w *Watcher) {
+		w.forcePoll = force
+		if force {
+			w.pollMode = true
 		}
 	}
 }
@@ -216,6 +239,14 @@ func (w *Watcher) Add(path string) error {
 		return w.addRecursive(absPath)
 	}
 
+	if w.pollMode {
+		if err := w.snapshotPath(absPath, info); err != nil {
+			return err
+		}
+		w.watchedPaths[absPath] = true
+		return nil
+	}
+
 	if err := w.fsWatcher.Add(absPath); err != nil {
 		return err
 	}
@@ -239,17 +270,31 @@ func (w *Watcher) addRecursive(root string) error {
 			if w.watchedPaths[path] {
 				return nil
 			}
-			if err := w.fsWatcher.Add(path); err != nil {
-				// Report error but continue
-				if w.errorHandler != nil {
-					w.errorHandler(fmt.Errorf("watching %s: %w", path, err))
+			if w.pollMode {
+				info, statErr := os.Stat(path)
+				if statErr != nil {
+					if w.errorHandler != nil {
+						w.errorHandler(fmt.Errorf("stat %s: %w", path, statErr))
+					}
+					return nil
 				}
-				// If we can't watch this directory, we probably can't watch its children?
-				// fsnotify might fail for other reasons (limit reached).
-				// We'll try to continue.
-				return nil
+				if snapErr := w.snapshotPath(path, info); snapErr != nil && w.errorHandler != nil {
+					w.errorHandler(snapErr)
+				}
+				w.watchedPaths[path] = true
+			} else {
+				if err := w.fsWatcher.Add(path); err != nil {
+					// Report error but continue
+					if w.errorHandler != nil {
+						w.errorHandler(fmt.Errorf("watching %s: %w", path, err))
+					}
+					// If we can't watch this directory, we probably can't watch its children?
+					// fsnotify might fail for other reasons (limit reached).
+					// We'll try to continue.
+					return nil
+				}
+				w.watchedPaths[path] = true
 			}
-			w.watchedPaths[path] = true
 		}
 		return nil
 	})
@@ -273,6 +318,12 @@ func (w *Watcher) Remove(path string) error {
 		return nil // Not watching
 	}
 
+	if w.pollMode {
+		delete(w.watchedPaths, absPath)
+		delete(w.snapshots, absPath)
+		return nil
+	}
+
 	if err := w.fsWatcher.Remove(absPath); err != nil {
 		return err
 	}
@@ -292,6 +343,10 @@ func (w *Watcher) Close() error {
 
 	w.closed = true
 	w.debouncer.Cancel()
+	if w.pollMode {
+		close(w.closeCh)
+		return nil
+	}
 	return w.fsWatcher.Close()
 }
 
