@@ -220,7 +220,9 @@ func editPrompt(original string) (string, error) {
 	}
 
 	// Run editor
-	cmd := exec.Command(editor, f.Name())
+	editorCmd, editorArgs := parseEditorCommand(editor)
+	args := append(editorArgs, f.Name())
+	cmd := exec.Command(editorCmd, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

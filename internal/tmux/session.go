@@ -196,7 +196,9 @@ func GetSession(name string) (*Session, error) {
 
 // GetPanes returns all panes in a session
 func GetPanes(session string) ([]Pane, error) {
-	output, err := run("list-panes", "-s", "-t", session, "-F", "#{pane_id}:#{pane_index}:#{pane_title}:#{pane_current_command}:#{pane_width}:#{pane_height}:#{pane_active}")
+	sep := "|#|"
+	format := fmt.Sprintf("#{pane_id}%[1]s#{pane_index}%[1]s#{pane_title}%[1]s#{pane_current_command}%[1]s#{pane_width}%[1]s#{pane_height}%[1]s#{pane_active}", sep)
+	output, err := run("list-panes", "-s", "-t", session, "-F", format)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +209,7 @@ func GetPanes(session string) ([]Pane, error) {
 			continue
 		}
 
-		parts := strings.SplitN(line, ":", 7)
+		parts := strings.Split(line, sep)
 		if len(parts) < 7 {
 			continue
 		}
@@ -431,8 +433,9 @@ type PaneActivity struct {
 
 // GetPanesWithActivity returns all panes in a session with their activity times
 func GetPanesWithActivity(session string) ([]PaneActivity, error) {
-	output, err := run("list-panes", "-s", "-t", session, "-F",
-		"#{pane_id}:#{pane_index}:#{pane_title}:#{pane_current_command}:#{pane_width}:#{pane_height}:#{pane_active}:#{pane_last_activity}")
+	sep := "|#|"
+	format := fmt.Sprintf("#{pane_id}%[1]s#{pane_index}%[1]s#{pane_title}%[1]s#{pane_current_command}%[1]s#{pane_width}%[1]s#{pane_height}%[1]s#{pane_active}%[1]s#{pane_last_activity}", sep)
+	output, err := run("list-panes", "-s", "-t", session, "-F", format)
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +446,7 @@ func GetPanesWithActivity(session string) ([]PaneActivity, error) {
 			continue
 		}
 
-		parts := strings.SplitN(line, ":", 8)
+		parts := strings.Split(line, sep)
 		if len(parts) < 8 {
 			continue
 		}

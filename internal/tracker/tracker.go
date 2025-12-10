@@ -94,7 +94,15 @@ func (t *StateTracker) Since(ts time.Time) []StateChange {
 	result := make([]StateChange, 0)
 	for _, change := range t.changes {
 		if change.Timestamp.After(ts) {
-			result = append(result, change)
+			// Deep copy Details to prevent data races
+			newChange := change
+			if change.Details != nil {
+				newChange.Details = make(map[string]interface{}, len(change.Details))
+				for k, v := range change.Details {
+					newChange.Details[k] = v
+				}
+			}
+			result = append(result, newChange)
 		}
 	}
 	return result
@@ -105,8 +113,18 @@ func (t *StateTracker) All() []StateChange {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	result := make([]StateChange, len(t.changes))
-	copy(result, t.changes)
+	result := make([]StateChange, 0, len(t.changes))
+	for _, change := range t.changes {
+		// Deep copy Details to prevent data races
+		newChange := change
+		if change.Details != nil {
+			newChange.Details = make(map[string]interface{}, len(change.Details))
+			for k, v := range change.Details {
+				newChange.Details[k] = v
+			}
+		}
+		result = append(result, newChange)
+	}
 	return result
 }
 
@@ -215,7 +233,15 @@ func (t *StateTracker) SinceByType(ts time.Time, changeType ChangeType) []StateC
 	result := make([]StateChange, 0)
 	for _, change := range t.changes {
 		if change.Timestamp.After(ts) && change.Type == changeType {
-			result = append(result, change)
+			// Deep copy Details
+			newChange := change
+			if change.Details != nil {
+				newChange.Details = make(map[string]interface{}, len(change.Details))
+				for k, v := range change.Details {
+					newChange.Details[k] = v
+				}
+			}
+			result = append(result, newChange)
 		}
 	}
 	return result
@@ -229,7 +255,15 @@ func (t *StateTracker) SinceBySession(ts time.Time, session string) []StateChang
 	result := make([]StateChange, 0)
 	for _, change := range t.changes {
 		if change.Timestamp.After(ts) && change.Session == session {
-			result = append(result, change)
+			// Deep copy Details
+			newChange := change
+			if change.Details != nil {
+				newChange.Details = make(map[string]interface{}, len(change.Details))
+				for k, v := range change.Details {
+					newChange.Details[k] = v
+				}
+			}
+			result = append(result, newChange)
 		}
 	}
 	return result

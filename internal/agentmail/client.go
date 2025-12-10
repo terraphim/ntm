@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 )
@@ -292,28 +293,16 @@ func (c *Client) httpBaseURL() string {
 // This matches the logic in the Agent Mail server.
 // Example: "/Users/jemanuel/projects/ntm" -> "ntm"
 func ProjectSlugFromPath(path string) string {
-	// Use the last component of the path, lowercased
-	// and with special characters replaced
 	if path == "" {
 		return ""
 	}
-	// Get the last component
-	lastSlash := -1
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i] == '/' {
-			if i == len(path)-1 {
-				// Trailing slash, skip it
-				path = path[:i]
-				continue
-			}
-			lastSlash = i
-			break
-		}
+	// Get the last component using filepath.Base
+	slug := filepath.Base(path)
+	if slug == "." || slug == "/" {
+		// Fallback for root or dot
+		return "root"
 	}
-	slug := path
-	if lastSlash >= 0 {
-		slug = path[lastSlash+1:]
-	}
+
 	// Lowercase and sanitize
 	result := make([]byte, 0, len(slug))
 	for i := 0; i < len(slug); i++ {

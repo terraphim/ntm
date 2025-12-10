@@ -416,7 +416,9 @@ func openEditorForMessage(existingSubject string) (body string, subject string, 
 	tmpFile.Close()
 
 	// Open editor
-	cmd := exec.Command(editor, tmpPath)
+	editorCmd, editorArgs := parseEditorCommand(editor)
+	args := append(editorArgs, tmpPath)
+	cmd := exec.Command(editorCmd, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

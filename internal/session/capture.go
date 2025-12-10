@@ -36,6 +36,24 @@ func Capture(sessionName string) (*SessionState, error) {
 	// Get layout
 	layout := getLayout(sessionName)
 
+	// Parse session creation time (tmux format varies, try common formats)
+	var createdAt time.Time
+	if session.Created != "" {
+		// Try parsing various tmux date formats
+		formats := []string{
+			"Mon Jan 2 15:04:05 2006",
+			"Mon Jan _2 15:04:05 2006",
+			time.UnixDate,
+			time.ANSIC,
+		}
+		for _, format := range formats {
+			if t, err := time.Parse(format, session.Created); err == nil {
+				createdAt = t.UTC()
+				break
+			}
+		}
+	}
+
 	state := &SessionState{
 		Name:      sessionName,
 		SavedAt:   time.Now().UTC(),
@@ -46,7 +64,7 @@ func Capture(sessionName string) (*SessionState, error) {
 		Agents:    agents,
 		Panes:     paneStates,
 		Layout:    layout,
-		CreatedAt: session.Created,
+		CreatedAt: createdAt,
 		Version:   StateVersion,
 	}
 

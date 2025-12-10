@@ -20,13 +20,13 @@ import (
 
 // SendResult is the JSON output for the send command.
 type SendResult struct {
-	Success       bool     `json:"success"`
-	Session       string   `json:"session"`
-	PromptPreview string   `json:"prompt_preview,omitempty"`
-	Targets       []int    `json:"targets"`
-	Delivered     int      `json:"delivered"`
-	Failed        int      `json:"failed"`
-	Error         string   `json:"error,omitempty"`
+	Success       bool   `json:"success"`
+	Session       string `json:"session"`
+	PromptPreview string `json:"prompt_preview,omitempty"`
+	Targets       []int  `json:"targets"`
+	Delivered     int    `json:"delivered"`
+	Failed        int    `json:"failed"`
+	Error         string `json:"error,omitempty"`
 }
 
 // SendTarget represents a send target with optional variant filter.
@@ -353,12 +353,12 @@ func runSendInternal(session, prompt string, targets SendTargets, targetCC, targ
 		ProjectDir:  getSessionWorkingDir(session),
 		Message:     prompt,
 		AdditionalEnv: map[string]string{
-			"NTM_SEND_TARGETS":    targetDesc,
-			"NTM_TARGET_CC":       boolToStr(targetCC),
-			"NTM_TARGET_COD":      boolToStr(targetCod),
-			"NTM_TARGET_GMI":      boolToStr(targetGmi),
-			"NTM_TARGET_ALL":      boolToStr(targetAll),
-			"NTM_PANE_INDEX":      fmt.Sprintf("%d", paneIndex),
+			"NTM_SEND_TARGETS": targetDesc,
+			"NTM_TARGET_CC":    boolToStr(targetCC),
+			"NTM_TARGET_COD":   boolToStr(targetCod),
+			"NTM_TARGET_GMI":   boolToStr(targetGmi),
+			"NTM_TARGET_ALL":   boolToStr(targetAll),
+			"NTM_PANE_INDEX":   fmt.Sprintf("%d", paneIndex),
 		},
 	}
 
@@ -562,7 +562,7 @@ func runSendInternal(session, prompt string, targets SendTargets, targetCC, targ
 		return json.NewEncoder(os.Stdout).Encode(result)
 	}
 
-	if len(targets) == 0 {
+	if len(targetPanes) == 0 {
 		fmt.Println("No matching panes found")
 	} else {
 		fmt.Printf("Sent to %d pane(s)\n", delivered)
