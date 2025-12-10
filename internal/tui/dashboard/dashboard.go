@@ -898,7 +898,7 @@ func (m Model) renderPaneList(width int) string {
 }
 
 // renderPaneRow renders a single pane as a table row
-func (m Model) renderPaneRow(p tmux.Pane, idx int, selected bool, width int) string {
+func (m Model) renderPaneRow(p tmux.Pane, _ int, selected bool, _ int) string {
 	t := m.theme
 	ic := m.icons
 	var parts []string
@@ -961,10 +961,7 @@ func (m Model) renderPaneRow(p tmux.Pane, idx int, selected bool, width int) str
 	if m.tier >= layout.TierWide {
 		titleWidth = 24
 	}
-	title := p.Title
-	if len(title) > titleWidth {
-		title = title[:titleWidth-3] + "..."
-	}
+	title := layout.TruncateRunes(p.Title, titleWidth, "…")
 	titleStyle := lipgloss.NewStyle().Foreground(t.Text).Width(titleWidth)
 	if selected {
 		titleStyle = titleStyle.Bold(true)
@@ -1020,7 +1017,7 @@ func (m Model) renderPaneDetail(width int) string {
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderBottom(true).
 		BorderForeground(t.Surface1).
-		Width(width - 2).
+		Width(width-2).
 		Padding(0, 1)
 	lines = append(lines, headerStyle.Render(p.Title))
 	lines = append(lines, "")
@@ -1079,7 +1076,9 @@ func (m Model) renderPaneDetail(width int) string {
 
 		// Large context bar
 		barWidth := width - 10
-		if barWidth > 50 {
+		if barWidth < 10 {
+			barWidth = 10
+		} else if barWidth > 50 {
 			barWidth = 50
 		}
 		contextBar := m.renderContextBar(ps.ContextPercent, barWidth)
