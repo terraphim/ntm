@@ -3,13 +3,17 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/Dicklesworthstone/ntm/internal/checkpoint"
 	"github.com/Dicklesworthstone/ntm/internal/hooks"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
 
@@ -27,13 +31,21 @@ type SendResult struct {
 func newSendCmd() *cobra.Command {
 	var targetCC, targetCod, targetGmi, targetAll, skipFirst bool
 	var paneIndex int
+	var promptFile, prefix, suffix string
 
 	cmd := &cobra.Command{
-		Use:   "send <session> <prompt>",
+		Use:   "send <session> [prompt]",
 		Short: "Send a prompt to agent panes",
 		Long: `Send a prompt or command to agent panes in a session.
 
 By default, sends to all agent panes. Use flags to target specific types.
+
+Prompt can be provided as:
+  - Command line argument (traditional)
+  - From a file using --file
+  - From stdin when piped/redirected
+
+When using --file or stdin, use --prefix and --suffix to wrap the content.
 
 Examples:
   ntm send myproject "fix the linting errors"           # All agents
@@ -42,11 +54,17 @@ Examples:
   ntm send myproject --all "git status"                 # All panes
   ntm send myproject --pane=2 "specific pane"           # Specific pane
   ntm send myproject --skip-first "restart"             # Skip user pane
-  ntm send myproject --json "run tests"                 # JSON output`,
-		Args: cobra.MinimumNArgs(2),
+  ntm send myproject --json "run tests"                 # JSON output
+  ntm send myproject --file prompts/review.md           # From file
+  cat error.log | ntm send myproject --cc               # From stdin
+  git diff | ntm send myproject --all --prefix "Review these changes:"  # Stdin with prefix`,
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			session := args[0]
-			prompt := strings.Join(args[1:], " ")
+			prompt, err := getPromptContent(args[1:], promptFile, prefix, suffix)
+			if err != nil {
+				return err
+			}
 			return runSend(session, prompt, targetCC, targetCod, targetGmi, targetAll, skipFirst, paneIndex)
 		},
 	}
@@ -57,8 +75,87 @@ Examples:
 	cmd.Flags().BoolVar(&targetAll, "all", false, "send to all panes (including user pane)")
 	cmd.Flags().BoolVarP(&skipFirst, "skip-first", "s", false, "skip the first (user) pane")
 	cmd.Flags().IntVarP(&paneIndex, "pane", "p", -1, "send to specific pane index")
+	cmd.Flags().StringVarP(&promptFile, "file", "f", "", "read prompt from file")
+	cmd.Flags().StringVar(&prefix, "prefix", "", "text to prepend to file/stdin content")
+	cmd.Flags().StringVar(&suffix, "suffix", "", "text to append to file/stdin content")
 
 	return cmd
+}
+
+// getPromptContent resolves the prompt content from various sources:
+// 1. If --file is specified, read from that file
+// 2. If stdin has data (piped/redirected), read from stdin
+// 3. Otherwise, use positional arguments
+// The prefix and suffix are applied when reading from file or stdin.
+func getPromptContent(args []string, promptFile, prefix, suffix string) (string, error) {
+	var content string
+
+	// Priority 1: Read from file if specified
+	if promptFile != "" {
+		data, err := os.ReadFile(promptFile)
+		if err != nil {
+			return "", fmt.Errorf("reading prompt file: %w", err)
+		}
+		content = string(data)
+		if strings.TrimSpace(content) == "" {
+			return "", errors.New("prompt file is empty")
+		}
+		// Apply prefix/suffix for file content
+		return buildPrompt(content, prefix, suffix), nil
+	}
+
+	// Priority 2: Read from stdin if piped/redirected AND we have no args
+	// (If args are provided, they take priority over stdin)
+	if len(args) == 0 && stdinHasData() {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return "", fmt.Errorf("reading from stdin: %w", err)
+		}
+		content = string(data)
+		// Allow empty stdin if we have a prefix (e.g., just sending a command)
+		if strings.TrimSpace(content) == "" && prefix == "" {
+			return "", errors.New("stdin is empty and no prefix provided")
+		}
+		// Apply prefix/suffix for stdin content
+		return buildPrompt(content, prefix, suffix), nil
+	}
+
+	// Priority 3: Use positional arguments
+	if len(args) == 0 {
+		return "", errors.New("no prompt provided (use argument, --file, or pipe to stdin)")
+	}
+	content = strings.Join(args, " ")
+	// For positional args, prefix/suffix are ignored (they're for file/stdin)
+	return content, nil
+}
+
+// stdinHasData checks if stdin has data available (is piped/redirected)
+func stdinHasData() bool {
+	// Check if stdin is a terminal - if it is, there's no piped data
+	if isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd()) {
+		return false
+	}
+	// Check if stdin has actual data using Stat
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	// Check if it's a named pipe (FIFO) or has data waiting
+	// ModeCharDevice is 0 when stdin is redirected/piped
+	return (stat.Mode() & os.ModeCharDevice) == 0
+}
+
+// buildPrompt combines prefix, content, and suffix into a single prompt string.
+func buildPrompt(content, prefix, suffix string) string {
+	var parts []string
+	if prefix != "" {
+		parts = append(parts, prefix)
+	}
+	parts = append(parts, strings.TrimSpace(content))
+	if suffix != "" {
+		parts = append(parts, suffix)
+	}
+	return strings.Join(parts, "\n")
 }
 
 func runSend(session, prompt string, targetCC, targetCod, targetGmi, targetAll, skipFirst bool, paneIndex int) error {
@@ -128,6 +225,31 @@ func runSend(session, prompt string, targetCC, targetCod, targetGmi, targetAll, 
 		if !jsonOutput {
 			success, _, _ := hooks.CountResults(results)
 			fmt.Printf("✓ %d pre-send hook(s) completed\n", success)
+		}
+	}
+
+	// Auto-checkpoint before broadcast sends
+	isBroadcast := targetAll || (!targetCC && !targetCod && !targetGmi && paneIndex < 0)
+	if isBroadcast && cfg != nil && cfg.Checkpoints.Enabled && cfg.Checkpoints.BeforeBroadcast {
+		if !jsonOutput {
+			fmt.Println("Creating auto-checkpoint before broadcast...")
+		}
+		autoCP := checkpoint.NewAutoCheckpointer()
+		cp, err := autoCP.Create(checkpoint.AutoCheckpointOptions{
+			SessionName:     session,
+			Reason:          checkpoint.ReasonBroadcast,
+			Description:     fmt.Sprintf("before sending to %s", targetDesc),
+			ScrollbackLines: cfg.Checkpoints.ScrollbackLines,
+			IncludeGit:      cfg.Checkpoints.IncludeGit,
+			MaxCheckpoints:  cfg.Checkpoints.MaxAutoCheckpoints,
+		})
+		if err != nil {
+			// Log warning but continue - auto-checkpoint is best-effort
+			if !jsonOutput {
+				fmt.Printf("⚠ Auto-checkpoint failed: %v\n", err)
+			}
+		} else if !jsonOutput {
+			fmt.Printf("✓ Auto-checkpoint created: %s\n", cp.ID)
 		}
 	}
 

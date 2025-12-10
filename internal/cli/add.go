@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Dicklesworthstone/ntm/internal/checkpoint"
 	"github.com/Dicklesworthstone/ntm/internal/output"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 	"github.com/spf13/cobra"
@@ -59,6 +60,30 @@ func runAdd(session string, ccCount, codCount, gmiCount int) error {
 	dir := cfg.GetProjectDir(session)
 	if !IsJSONOutput() {
 		fmt.Printf("Adding %d agent(s) to session '%s'...\n", totalAgents, session)
+	}
+
+	// Auto-checkpoint before adding many agents
+	if cfg.Checkpoints.Enabled && cfg.Checkpoints.BeforeAddAgents > 0 && totalAgents >= cfg.Checkpoints.BeforeAddAgents {
+		if !IsJSONOutput() {
+			fmt.Println("Creating auto-checkpoint before adding agents...")
+		}
+		autoCP := checkpoint.NewAutoCheckpointer()
+		cp, err := autoCP.Create(checkpoint.AutoCheckpointOptions{
+			SessionName:     session,
+			Reason:          checkpoint.ReasonAddAgents,
+			Description:     fmt.Sprintf("before adding %d agents", totalAgents),
+			ScrollbackLines: cfg.Checkpoints.ScrollbackLines,
+			IncludeGit:      cfg.Checkpoints.IncludeGit,
+			MaxCheckpoints:  cfg.Checkpoints.MaxAutoCheckpoints,
+		})
+		if err != nil {
+			// Log warning but continue - auto-checkpoint is best-effort
+			if !IsJSONOutput() {
+				fmt.Printf("⚠ Auto-checkpoint failed: %v\n", err)
+			}
+		} else if !IsJSONOutput() {
+			fmt.Printf("✓ Auto-checkpoint created: %s\n", cp.ID)
+		}
 	}
 
 	// Track newly added panes for JSON output

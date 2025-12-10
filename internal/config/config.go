@@ -703,6 +703,18 @@ func Print(cfg *Config, w io.Writer) error {
 	fmt.Fprintf(w, "resolved_prune_minutes = %d # How long to keep resolved alerts\n", cfg.Alerts.ResolvedPruneMinutes)
 	fmt.Fprintln(w)
 
+	// Write checkpoints configuration
+	fmt.Fprintln(w, "[checkpoints]")
+	fmt.Fprintln(w, "# Automatic checkpoint configuration for risky operations")
+	fmt.Fprintf(w, "enabled = %t                    # Master toggle for auto-checkpoints\n", cfg.Checkpoints.Enabled)
+	fmt.Fprintf(w, "before_broadcast = %t           # Auto-checkpoint before sending to all agents\n", cfg.Checkpoints.BeforeBroadcast)
+	fmt.Fprintf(w, "before_add_agents = %d            # Auto-checkpoint when adding >= N agents (0 = disabled)\n", cfg.Checkpoints.BeforeAddAgents)
+	fmt.Fprintf(w, "max_auto_checkpoints = %d        # Max auto-checkpoints per session (rotation)\n", cfg.Checkpoints.MaxAutoCheckpoints)
+	fmt.Fprintf(w, "scrollback_lines = %d           # Lines of scrollback to capture\n", cfg.Checkpoints.ScrollbackLines)
+	fmt.Fprintf(w, "include_git = %t               # Capture git state in auto-checkpoints\n", cfg.Checkpoints.IncludeGit)
+	fmt.Fprintf(w, "auto_checkpoint_on_spawn = %t   # Auto-checkpoint when spawning session\n", cfg.Checkpoints.AutoCheckpointOnSpawn)
+	fmt.Fprintln(w)
+
 	fmt.Fprintln(w, "# Command Palette entries")
 	fmt.Fprintln(w, "# Add your own prompts here")
 	fmt.Fprintln(w)
