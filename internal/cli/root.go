@@ -11,12 +11,14 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/output"
 	"github.com/Dicklesworthstone/ntm/internal/robot"
 	"github.com/Dicklesworthstone/ntm/internal/startup"
+	"github.com/Dicklesworthstone/ntm/internal/tmux"
 	"github.com/spf13/cobra"
 )
 
 var (
 	cfgFile string
 	cfg     *config.Config
+	sshHost string
 
 	// Global JSON output flag - inherited by all subcommands
 	jsonOutput bool
@@ -46,6 +48,11 @@ Shell Integration:
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Configure remote client if requested
+		if sshHost != "" {
+			tmux.DefaultClient = tmux.NewClient(sshHost)
+		}
+
 		// Phase 1: Critical startup (always runs, minimal overhead)
 		startup.BeginPhase1()
 		EnableProfilingIfRequested()
@@ -427,6 +434,7 @@ func init() {
 
 	// Global JSON output flag - applies to all commands
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format (machine-readable)")
+	rootCmd.PersistentFlags().StringVar(&sshHost, "ssh", "", "Remote host for SSH execution (e.g. user@host)")
 
 	// Profiling flag for startup timing analysis
 	rootCmd.PersistentFlags().BoolVar(&profileStartup, "profile-startup", false, "Enable startup profiling (outputs timing data)")
