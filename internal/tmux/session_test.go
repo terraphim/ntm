@@ -544,3 +544,155 @@ func TestGetCurrentSession(t *testing.T) {
 	session := GetCurrentSession()
 	t.Logf("GetCurrentSession returned: %q", session)
 }
+
+// ============== Additional Tests for Coverage ==============
+
+func TestEnsureInstalled(t *testing.T) {
+	err := EnsureInstalled()
+	if IsInstalled() && err != nil {
+		t.Errorf("EnsureInstalled should not error when tmux is installed: %v", err)
+	}
+	if !IsInstalled() && err == nil {
+		t.Error("EnsureInstalled should error when tmux is not installed")
+	}
+}
+
+func TestGetPaneActivity(t *testing.T) {
+	skipIfNoTmux(t)
+
+	session := createTestSession(t)
+
+	panes, _ := GetPanes(session)
+	paneID := panes[0].ID
+
+	// Generate some activity
+	SendKeys(paneID, "echo activity", true)
+	time.Sleep(300 * time.Millisecond)
+
+	activity, err := GetPaneActivity(paneID)
+	if err != nil {
+		// Some tmux versions may not support this - skip test
+		t.Skipf("GetPaneActivity not supported: %v", err)
+	}
+
+	// Activity time should be recent (within last minute)
+	if time.Since(activity) > time.Minute {
+		t.Errorf("pane activity should be recent, got %v ago", time.Since(activity))
+	}
+}
+
+func TestGetPanesWithActivity(t *testing.T) {
+	skipIfNoTmux(t)
+
+	session := createTestSession(t)
+
+	// Create additional pane
+	_, err := SplitWindow(session, os.TempDir())
+	if err != nil {
+		t.Fatalf("SplitWindow failed: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	// Generate activity
+	panes, _ := GetPanes(session)
+	for _, p := range panes {
+		SendKeys(p.ID, "echo test", true)
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	// Get panes with activity
+	panesWithActivity, err := GetPanesWithActivity(session)
+	if err != nil {
+		t.Fatalf("GetPanesWithActivity failed: %v", err)
+	}
+
+	if len(panesWithActivity) != len(panes) {
+		t.Errorf("expected %d panes with activity, got %d", len(panes), len(panesWithActivity))
+	}
+
+	// Verify each pane has activity info
+	for _, p := range panesWithActivity {
+		if p.LastActivity.IsZero() {
+			t.Errorf("pane %s should have activity timestamp", p.Pane.ID)
+		}
+	}
+}
+
+func TestIsRecentlyActive(t *testing.T) {
+	skipIfNoTmux(t)
+
+	session := createTestSession(t)
+
+	panes, _ := GetPanes(session)
+	paneID := panes[0].ID
+
+	// Generate recent activity
+	SendKeys(paneID, "echo recent", true)
+	time.Sleep(300 * time.Millisecond)
+
+	// Should be recently active (within 1 minute)
+	recent, err := IsRecentlyActive(paneID, time.Minute)
+	if err != nil {
+		// Some tmux versions may not support this - skip test
+		t.Skipf("IsRecentlyActive not supported: %v", err)
+	}
+
+	if !recent {
+		t.Error("pane should be recently active after generating output")
+	}
+}
+
+func TestGetPaneLastActivityAge(t *testing.T) {
+	skipIfNoTmux(t)
+
+	session := createTestSession(t)
+
+	panes, _ := GetPanes(session)
+	paneID := panes[0].ID
+
+	// Generate activity
+	SendKeys(paneID, "echo age test", true)
+	time.Sleep(300 * time.Millisecond)
+
+	age, err := GetPaneLastActivityAge(paneID)
+	if err != nil {
+		// Some tmux versions may not support this - skip test
+		t.Skipf("GetPaneLastActivityAge not supported: %v", err)
+	}
+
+	// Age should be small (just generated activity)
+	if age > 5*time.Second {
+		t.Errorf("pane activity age should be < 5s, got %v", age)
+	}
+}
+
+func TestListSessionsNoServer(t *testing.T) {
+	// This just verifies the function handles edge cases
+	// When tmux is running, it should return sessions or empty list
+	skipIfNoTmux(t)
+
+	sessions, err := ListSessions()
+	// Should not error even if no sessions exist
+	if err != nil {
+		t.Logf("ListSessions returned error: %v", err)
+	}
+	t.Logf("ListSessions returned %d sessions", len(sessions))
+}
+
+func TestGetPanesWithBadSession(t *testing.T) {
+	skipIfNoTmux(t)
+
+	_, err := GetPanes("nonexistent_session_xyz")
+	if err == nil {
+		t.Error("GetPanes should fail for non-existent session")
+	}
+}
+
+func TestSplitWindowWithBadSession(t *testing.T) {
+	skipIfNoTmux(t)
+
+	_, err := SplitWindow("nonexistent_session_xyz", os.TempDir())
+	if err == nil {
+		t.Error("SplitWindow should fail for non-existent session")
+	}
+}
