@@ -1,7 +1,6 @@
 package tmux
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -108,8 +107,7 @@ func FormatTags(tags []string) string {
 
 // IsInstalled checks if tmux is available
 func IsInstalled() bool {
-	_, err := exec.LookPath("tmux")
-	return err == nil
+	return DefaultClient.IsInstalled()
 }
 
 // EnsureInstalled returns an error if tmux is not installed
@@ -125,35 +123,22 @@ func InTmux() bool {
 	return os.Getenv("TMUX") != ""
 }
 
-// run executes a tmux command and returns stdout
-func run(args ...string) (string, error) {
-	cmd := exec.Command("tmux", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
 
-	err := cmd.Run()
-	if err != nil {
-		return "", fmt.Errorf("tmux %s: %w: %s", strings.Join(args, " "), err, stderr.String())
-	}
-	return strings.TrimSpace(stdout.String()), nil
-}
-
-// runSilent executes a tmux command ignoring output
-func runSilent(args ...string) error {
-	cmd := exec.Command("tmux", args...)
-	return cmd.Run()
-}
 
 // SessionExists checks if a session exists
-func SessionExists(name string) bool {
-	err := runSilent("has-session", "-t", name)
+func (c *Client) SessionExists(name string) bool {
+	err := c.RunSilent("has-session", "-t", name)
 	return err == nil
 }
 
+// SessionExists checks if a session exists (default client)
+func SessionExists(name string) bool {
+	return DefaultClient.SessionExists(name)
+}
+
 // ListSessions returns all tmux sessions
-func ListSessions() ([]Session, error) {
-	output, err := run("list-sessions", "-F", "#{session_name}:#{session_windows}:#{session_attached}:#{session_created_string}")
+func (c *Client) ListSessions() ([]Session, error) {
+	output, err := c.Run("list-sessions", "-F", "#{session_name}:#{session_windows}:#{session_attached}:#{session_created_string}")
 	if err != nil {
 		// No sessions is not an error - handle various tmux error messages
 		errMsg := err.Error()
@@ -191,14 +176,19 @@ func ListSessions() ([]Session, error) {
 	return sessions, nil
 }
 
+// ListSessions returns all tmux sessions (default client)
+func ListSessions() ([]Session, error) {
+	return DefaultClient.ListSessions()
+}
+
 // GetSession returns detailed info about a session
-func GetSession(name string) (*Session, error) {
+func (c *Client) GetSession(name string) (*Session, error) {
 	if !SessionExists(name) {
 		return nil, fmt.Errorf("session '%s' not found", name)
 	}
 
 	// Get session info
-	output, err := run("list-sessions", "-F", "#{session_name}:#{session_windows}:#{session_attached}", "-f", fmt.Sprintf("#{==:#{session_name},%s}", name))
+	output, err := c.Run("list-sessions", "-F", "#{session_name}:#{session_windows}:#{session_attached}", "-f", fmt.Sprintf("#{==:#{session_name},%s}", name))
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +208,7 @@ func GetSession(name string) (*Session, error) {
 	}
 
 	// Get panes
-	panes, err := GetPanes(name)
+	panes, err := c.GetPanes(name)
 	if err != nil {
 		return nil, err
 	}
@@ -227,11 +217,26 @@ func GetSession(name string) (*Session, error) {
 	return session, nil
 }
 
+// GetSession returns detailed info about a session (default client)
+func GetSession(name string) (*Session, error) {
+	return DefaultClient.GetSession(name)
+}
+
+// CreateSession creates a new tmux session
+func (c *Client) CreateSession(name, directory string) error {
+	return c.RunSilent("new-session", "-d", "-s", name, "-c", directory)
+}
+
+// CreateSession creates a new tmux session (default client)
+func CreateSession(name, directory string) error {
+	return DefaultClient.CreateSession(name, directory)
+}
+
 // GetPanes returns all panes in a session
-func GetPanes(session string) ([]Pane, error) {
+func (c *Client) GetPanes(session string) ([]Pane, error) {
 	sep := "|#|"
 	format := fmt.Sprintf("#{pane_id}%[1]s#{pane_index}%[1]s#{pane_title}%[1]s#{pane_current_command}%[1]s#{pane_width}%[1]s#{pane_height}%[1]s#{pane_active}", sep)
-	output, err := run("list-panes", "-s", "-t", session, "-F", format)
+	output, err := c.Run("list-panes", "-s", "-t", session, "-F", format)
 	if err != nil {
 		return nil, err
 	}
@@ -272,9 +277,14 @@ func GetPanes(session string) ([]Pane, error) {
 	return panes, nil
 }
 
+// GetPanes returns all panes in a session (default client)
+func GetPanes(session string) ([]Pane, error) {
+	return DefaultClient.GetPanes(session)
+}
+
 // GetFirstWindow returns the first window index for a session
-func GetFirstWindow(session string) (int, error) {
-	output, err := run("list-windows", "-t", session, "-F", "#{window_index}")
+func (c *Client) GetFirstWindow(session string) (int, error) {
+	output, err := c.Run("list-windows", "-t", session, "-F", "#{window_index}")
 	if err != nil {
 		return 0, err
 	}
@@ -287,14 +297,19 @@ func GetFirstWindow(session string) (int, error) {
 	return strconv.Atoi(lines[0])
 }
 
+// GetFirstWindow returns the first window index for a session (default client)
+func GetFirstWindow(session string) (int, error) {
+	return DefaultClient.GetFirstWindow(session)
+}
+
 // GetDefaultPaneIndex returns the default pane index (respects pane-base-index)
-func GetDefaultPaneIndex(session string) (int, error) {
-	firstWin, err := GetFirstWindow(session)
+func (c *Client) GetDefaultPaneIndex(session string) (int, error) {
+	firstWin, err := c.GetFirstWindow(session)
 	if err != nil {
 		return 0, err
 	}
 
-	output, err := run("list-panes", "-t", fmt.Sprintf("%s:%d", session, firstWin), "-F", "#{pane_index}")
+	output, err := c.Run("list-panes", "-t", fmt.Sprintf("%s:%d", session, firstWin), "-F", "#{pane_index}")
 	if err != nil {
 		return 0, err
 	}
@@ -307,14 +322,14 @@ func GetDefaultPaneIndex(session string) (int, error) {
 	return strconv.Atoi(lines[0])
 }
 
-// CreateSession creates a new tmux session
-func CreateSession(name, directory string) error {
-	return runSilent("new-session", "-d", "-s", name, "-c", directory)
+// GetDefaultPaneIndex returns the default pane index (default client)
+func GetDefaultPaneIndex(session string) (int, error) {
+	return DefaultClient.GetDefaultPaneIndex(session)
 }
 
 // SplitWindow creates a new pane in the session
-func SplitWindow(session string, directory string) (string, error) {
-	firstWin, err := GetFirstWindow(session)
+func (c *Client) SplitWindow(session string, directory string) (string, error) {
+	firstWin, err := c.GetFirstWindow(session)
 	if err != nil {
 		return "", err
 	}
@@ -322,31 +337,46 @@ func SplitWindow(session string, directory string) (string, error) {
 	target := fmt.Sprintf("%s:%d", session, firstWin)
 
 	// Split and get the new pane ID
-	paneID, err := run("split-window", "-t", target, "-c", directory, "-P", "-F", "#{pane_id}")
+	paneID, err := c.Run("split-window", "-t", target, "-c", directory, "-P", "-F", "#{pane_id}")
 	if err != nil {
 		return "", err
 	}
 
 	// Apply tiled layout
-	_ = runSilent("select-layout", "-t", target, "tiled")
+	_ = c.RunSilent("select-layout", "-t", target, "tiled")
 
 	return paneID, nil
 }
 
+// SplitWindow creates a new pane in the session (default client)
+func SplitWindow(session string, directory string) (string, error) {
+	return DefaultClient.SplitWindow(session, directory)
+}
+
 // SetPaneTitle sets the title of a pane
+func (c *Client) SetPaneTitle(paneID, title string) error {
+	return c.RunSilent("select-pane", "-t", paneID, "-T", title)
+}
+
+// SetPaneTitle sets the title of a pane (default client)
 func SetPaneTitle(paneID, title string) error {
-	return runSilent("select-pane", "-t", paneID, "-T", title)
+	return DefaultClient.SetPaneTitle(paneID, title)
 }
 
 // GetPaneTitle returns the title of a pane
+func (c *Client) GetPaneTitle(paneID string) (string, error) {
+	return c.Run("display-message", "-p", "-t", paneID, "#{pane_title}")
+}
+
+// GetPaneTitle returns the title of a pane (default client)
 func GetPaneTitle(paneID string) (string, error) {
-	return run("display-message", "-p", "-t", paneID, "#{pane_title}")
+	return DefaultClient.GetPaneTitle(paneID)
 }
 
 // GetPaneTags returns the tags for a pane parsed from its title.
 // Returns nil if no tags are found.
-func GetPaneTags(paneID string) ([]string, error) {
-	title, err := GetPaneTitle(paneID)
+func (c *Client) GetPaneTags(paneID string) ([]string, error) {
+	title, err := c.GetPaneTitle(paneID)
 	if err != nil {
 		return nil, err
 	}
@@ -354,11 +384,16 @@ func GetPaneTags(paneID string) ([]string, error) {
 	return tags, nil
 }
 
+// GetPaneTags returns the tags for a pane (default client)
+func GetPaneTags(paneID string) ([]string, error) {
+	return DefaultClient.GetPaneTags(paneID)
+}
+
 // SetPaneTags sets the tags for a pane by updating its title.
 // Tags are appended to the title in the format [tag1,tag2,...].
 // This replaces any existing tags on the pane.
-func SetPaneTags(paneID string, tags []string) error {
-	title, err := GetPaneTitle(paneID)
+func (c *Client) SetPaneTags(paneID string, tags []string) error {
+	title, err := c.GetPaneTitle(paneID)
 	if err != nil {
 		return err
 	}
@@ -367,13 +402,18 @@ func SetPaneTags(paneID string, tags []string) error {
 	baseTitle := stripTags(title)
 	newTitle := baseTitle + FormatTags(tags)
 
-	return SetPaneTitle(paneID, newTitle)
+	return c.SetPaneTitle(paneID, newTitle)
+}
+
+// SetPaneTags sets the tags for a pane (default client)
+func SetPaneTags(paneID string, tags []string) error {
+	return DefaultClient.SetPaneTags(paneID, tags)
 }
 
 // AddPaneTags adds tags to a pane without removing existing ones.
 // Duplicate tags are not added.
-func AddPaneTags(paneID string, newTags []string) error {
-	existing, err := GetPaneTags(paneID)
+func (c *Client) AddPaneTags(paneID string, newTags []string) error {
+	existing, err := c.GetPaneTags(paneID)
 	if err != nil {
 		return err
 	}
@@ -392,12 +432,17 @@ func AddPaneTags(paneID string, newTags []string) error {
 		}
 	}
 
-	return SetPaneTags(paneID, existing)
+	return c.SetPaneTags(paneID, existing)
+}
+
+// AddPaneTags adds tags to a pane (default client)
+func AddPaneTags(paneID string, newTags []string) error {
+	return DefaultClient.AddPaneTags(paneID, newTags)
 }
 
 // RemovePaneTags removes specific tags from a pane.
-func RemovePaneTags(paneID string, tagsToRemove []string) error {
-	existing, err := GetPaneTags(paneID)
+func (c *Client) RemovePaneTags(paneID string, tagsToRemove []string) error {
+	existing, err := c.GetPaneTags(paneID)
 	if err != nil {
 		return err
 	}
@@ -416,12 +461,17 @@ func RemovePaneTags(paneID string, tagsToRemove []string) error {
 		}
 	}
 
-	return SetPaneTags(paneID, filtered)
+	return c.SetPaneTags(paneID, filtered)
+}
+
+// RemovePaneTags removes specific tags from a pane (default client)
+func RemovePaneTags(paneID string, tagsToRemove []string) error {
+	return DefaultClient.RemovePaneTags(paneID, tagsToRemove)
 }
 
 // HasPaneTag returns true if the pane has the specified tag.
-func HasPaneTag(paneID, tag string) (bool, error) {
-	tags, err := GetPaneTags(paneID)
+func (c *Client) HasPaneTag(paneID, tag string) (bool, error) {
+	tags, err := c.GetPaneTags(paneID)
 	if err != nil {
 		return false, err
 	}
@@ -433,9 +483,14 @@ func HasPaneTag(paneID, tag string) (bool, error) {
 	return false, nil
 }
 
+// HasPaneTag returns true if the pane has the specified tag (default client)
+func HasPaneTag(paneID, tag string) (bool, error) {
+	return DefaultClient.HasPaneTag(paneID, tag)
+}
+
 // HasAnyPaneTag returns true if the pane has any of the specified tags (OR logic).
-func HasAnyPaneTag(paneID string, tags []string) (bool, error) {
-	paneTags, err := GetPaneTags(paneID)
+func (c *Client) HasAnyPaneTag(paneID string, tags []string) (bool, error) {
+	paneTags, err := c.GetPaneTags(paneID)
 	if err != nil {
 		return false, err
 	}
@@ -449,6 +504,11 @@ func HasAnyPaneTag(paneID string, tags []string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// HasAnyPaneTag returns true if the pane has any of the specified tags (default client)
+func HasAnyPaneTag(paneID string, tags []string) (bool, error) {
+	return DefaultClient.HasAnyPaneTag(paneID, tags)
 }
 
 // stripTags removes the [tags] suffix from a pane title.
@@ -466,24 +526,39 @@ func stripTags(title string) string {
 }
 
 // SendKeys sends keys to a pane
-func SendKeys(target, keys string, enter bool) error {
-	if err := runSilent("send-keys", "-t", target, "-l", "--", keys); err != nil {
+func (c *Client) SendKeys(target, keys string, enter bool) error {
+	if err := c.RunSilent("send-keys", "-t", target, "-l", "--", keys); err != nil {
 		return err
 	}
 	if enter {
-		return runSilent("send-keys", "-t", target, "C-m")
+		return c.RunSilent("send-keys", "-t", target, "C-m")
 	}
 	return nil
 }
 
+// SendKeys sends keys to a pane (default client)
+func SendKeys(target, keys string, enter bool) error {
+	return DefaultClient.SendKeys(target, keys, enter)
+}
+
 // SendInterrupt sends Ctrl+C to a pane
+func (c *Client) SendInterrupt(target string) error {
+	return c.RunSilent("send-keys", "-t", target, "C-c")
+}
+
+// SendInterrupt sends Ctrl+C to a pane (default client)
 func SendInterrupt(target string) error {
-	return runSilent("send-keys", "-t", target, "C-c")
+	return DefaultClient.SendInterrupt(target)
 }
 
 // DisplayMessage shows a message in the tmux status line
+func (c *Client) DisplayMessage(session, msg string, durationMs int) error {
+	return c.RunSilent("display-message", "-t", session, "-d", fmt.Sprintf("%d", durationMs), msg)
+}
+
+// DisplayMessage shows a message in the tmux status line (default client)
 func DisplayMessage(session, msg string, durationMs int) error {
-	return runSilent("display-message", "-t", session, "-d", fmt.Sprintf("%d", durationMs), msg)
+	return DefaultClient.DisplayMessage(session, msg, durationMs)
 }
 
 // SanitizePaneCommand rejects control characters that could inject unintended
@@ -512,31 +587,57 @@ func BuildPaneCommand(projectDir, agentCommand string) (string, error) {
 }
 
 // AttachOrSwitch attaches to a session or switches if already in tmux
-func AttachOrSwitch(session string) error {
-	if InTmux() {
-		return runSilent("switch-client", "-t", session)
+func (c *Client) AttachOrSwitch(session string) error {
+	if c.Remote == "" {
+		if InTmux() {
+			return c.RunSilent("switch-client", "-t", session)
+		}
+		// Interactive attach needs stdin/stdout, so use exec directly for local
+		cmd := exec.Command("tmux", "attach", "-t", session)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
 	}
 
-	cmd := exec.Command("tmux", "attach", "-t", session)
+	// Remote attach
+	// ssh -t user@host tmux attach -t session
+	sshArgs := []string{"-t", c.Remote, "tmux", "attach", "-t", session}
+	cmd := exec.Command("ssh", sshArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
+// AttachOrSwitch attaches to a session or switches if already in tmux (default client)
+func AttachOrSwitch(session string) error {
+	return DefaultClient.AttachOrSwitch(session)
+}
+
 // KillSession kills a tmux session
+func (c *Client) KillSession(session string) error {
+	return c.RunSilent("kill-session", "-t", session)
+}
+
+// KillSession kills a tmux session (default client)
 func KillSession(session string) error {
-	return runSilent("kill-session", "-t", session)
+	return DefaultClient.KillSession(session)
 }
 
 // KillPane kills a tmux pane
+func (c *Client) KillPane(paneID string) error {
+	return c.RunSilent("kill-pane", "-t", paneID)
+}
+
+// KillPane kills a tmux pane (default client)
 func KillPane(paneID string) error {
-	return runSilent("kill-pane", "-t", paneID)
+	return DefaultClient.KillPane(paneID)
 }
 
 // ApplyTiledLayout applies tiled layout to all windows
-func ApplyTiledLayout(session string) error {
-	output, err := run("list-windows", "-t", session, "-F", "#{window_index}")
+func (c *Client) ApplyTiledLayout(session string) error {
+	output, err := c.Run("list-windows", "-t", session, "-F", "#{window_index}")
 	if err != nil {
 		return err
 	}
@@ -549,49 +650,75 @@ func ApplyTiledLayout(session string) error {
 		target := fmt.Sprintf("%s:%s", session, winIdx)
 
 		// Unzoom if zoomed
-		zoomed, _ := run("display-message", "-t", target, "-p", "#{window_zoomed_flag}")
+		zoomed, _ := c.Run("display-message", "-t", target, "-p", "#{window_zoomed_flag}")
 		if zoomed == "1" {
-			_ = runSilent("resize-pane", "-t", target, "-Z")
+			_ = c.RunSilent("resize-pane", "-t", target, "-Z")
 		}
 
 		// Apply tiled layout
-		_ = runSilent("select-layout", "-t", target, "tiled")
+		_ = c.RunSilent("select-layout", "-t", target, "tiled")
 	}
 
 	return nil
 }
 
+// ApplyTiledLayout applies tiled layout to all windows (default client)
+func ApplyTiledLayout(session string) error {
+	return DefaultClient.ApplyTiledLayout(session)
+}
+
 // ZoomPane zooms a specific pane
-func ZoomPane(session string, paneIndex int) error {
-	firstWin, err := GetFirstWindow(session)
+func (c *Client) ZoomPane(session string, paneIndex int) error {
+	firstWin, err := c.GetFirstWindow(session)
 	if err != nil {
 		return err
 	}
 
 	target := fmt.Sprintf("%s:%d.%d", session, firstWin, paneIndex)
 
-	if err := runSilent("select-pane", "-t", target); err != nil {
+	if err := c.RunSilent("select-pane", "-t", target); err != nil {
 		return err
 	}
 
-	return runSilent("resize-pane", "-t", target, "-Z")
+	return c.RunSilent("resize-pane", "-t", target, "-Z")
+}
+
+// ZoomPane zooms a specific pane (default client)
+func ZoomPane(session string, paneIndex int) error {
+	return DefaultClient.ZoomPane(session, paneIndex)
 }
 
 // CapturePaneOutput captures the output of a pane
+func (c *Client) CapturePaneOutput(target string, lines int) (string, error) {
+	return c.Run("capture-pane", "-t", target, "-p", "-S", fmt.Sprintf("-%d", lines))
+}
+
+// CapturePaneOutput captures the output of a pane (default client)
 func CapturePaneOutput(target string, lines int) (string, error) {
-	return run("capture-pane", "-t", target, "-p", "-S", fmt.Sprintf("-%d", lines))
+	return DefaultClient.CapturePaneOutput(target, lines)
 }
 
 // GetCurrentSession returns the current session name (if in tmux)
-func GetCurrentSession() string {
-	if !InTmux() {
-		return ""
+func (c *Client) GetCurrentSession() string {
+	if c.Remote == "" {
+		if !InTmux() {
+			return ""
+		}
+	} else {
+		// Remote check logic might differ or be unsupported
+		// For now, assume unsupported or return empty
+		return "" 
 	}
-	output, err := run("display-message", "-p", "#{session_name}")
+	output, err := c.Run("display-message", "-p", "#{session_name}")
 	if err != nil {
 		return ""
 	}
 	return output
+}
+
+// GetCurrentSession returns the current session name (default client)
+func GetCurrentSession() string {
+	return DefaultClient.GetCurrentSession()
 }
 
 // ValidateSessionName checks if a session name is valid
@@ -606,8 +733,8 @@ func ValidateSessionName(name string) error {
 }
 
 // GetPaneActivity returns the last activity time for a pane
-func GetPaneActivity(paneID string) (time.Time, error) {
-	output, err := run("display-message", "-p", "-t", paneID, "#{pane_last_activity}")
+func (c *Client) GetPaneActivity(paneID string) (time.Time, error) {
+	output, err := c.Run("display-message", "-p", "-t", paneID, "#{pane_last_activity}")
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -625,6 +752,11 @@ func GetPaneActivity(paneID string) (time.Time, error) {
 	return time.Unix(timestamp, 0), nil
 }
 
+// GetPaneActivity returns the last activity time for a pane (default client)
+func GetPaneActivity(paneID string) (time.Time, error) {
+	return DefaultClient.GetPaneActivity(paneID)
+}
+
 // PaneActivity contains pane info with activity timestamp
 type PaneActivity struct {
 	Pane         Pane
@@ -632,10 +764,10 @@ type PaneActivity struct {
 }
 
 // GetPanesWithActivity returns all panes in a session with their activity times
-func GetPanesWithActivity(session string) ([]PaneActivity, error) {
+func (c *Client) GetPanesWithActivity(session string) ([]PaneActivity, error) {
 	sep := "|#|"
 	format := fmt.Sprintf("#{pane_id}%[1]s#{pane_index}%[1]s#{pane_title}%[1]s#{pane_current_command}%[1]s#{pane_width}%[1]s#{pane_height}%[1]s#{pane_active}%[1]s#{pane_last_activity}", sep)
-	output, err := run("list-panes", "-s", "-t", session, "-F", format)
+	output, err := c.Run("list-panes", "-s", "-t", session, "-F", format)
 	if err != nil {
 		return nil, err
 	}
@@ -679,9 +811,14 @@ func GetPanesWithActivity(session string) ([]PaneActivity, error) {
 	return panes, nil
 }
 
+// GetPanesWithActivity returns all panes in a session with their activity times (default client)
+func GetPanesWithActivity(session string) ([]PaneActivity, error) {
+	return DefaultClient.GetPanesWithActivity(session)
+}
+
 // IsRecentlyActive checks if a pane has had activity within the threshold
-func IsRecentlyActive(paneID string, threshold time.Duration) (bool, error) {
-	lastActivity, err := GetPaneActivity(paneID)
+func (c *Client) IsRecentlyActive(paneID string, threshold time.Duration) (bool, error) {
+	lastActivity, err := c.GetPaneActivity(paneID)
 	if err != nil {
 		return false, err
 	}
@@ -689,12 +826,22 @@ func IsRecentlyActive(paneID string, threshold time.Duration) (bool, error) {
 	return time.Since(lastActivity) <= threshold, nil
 }
 
+// IsRecentlyActive checks if a pane has had activity within the threshold (default client)
+func IsRecentlyActive(paneID string, threshold time.Duration) (bool, error) {
+	return DefaultClient.IsRecentlyActive(paneID, threshold)
+}
+
 // GetPaneLastActivityAge returns how long ago the pane was last active
-func GetPaneLastActivityAge(paneID string) (time.Duration, error) {
-	lastActivity, err := GetPaneActivity(paneID)
+func (c *Client) GetPaneLastActivityAge(paneID string) (time.Duration, error) {
+	lastActivity, err := c.GetPaneActivity(paneID)
 	if err != nil {
 		return 0, err
 	}
 
 	return time.Since(lastActivity), nil
+}
+
+// GetPaneLastActivityAge returns how long ago the pane was last active (default client)
+func GetPaneLastActivityAge(paneID string) (time.Duration, error) {
+	return DefaultClient.GetPaneLastActivityAge(paneID)
 }
