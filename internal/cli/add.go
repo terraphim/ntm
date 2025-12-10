@@ -142,7 +142,7 @@ func runAdd(session string, specs AgentSpecs) error {
 		}
 
 		num := maxCC + agent.Index
-		title := fmt.Sprintf("%s__cc_%d", session, num)
+		title := FormatPaneName(session, AgentTypeClaude, num, agent.Model)
 		if err := tmux.SetPaneTitle(paneID, title); err != nil {
 			return outputError(fmt.Errorf("setting pane title: %w", err))
 		}
@@ -169,6 +169,7 @@ func runAdd(session string, specs AgentSpecs) error {
 		newPanes = append(newPanes, output.PaneResponse{
 			Title:   title,
 			Type:    "claude",
+			Variant: agent.Model,
 			Command: cmd,
 		})
 	}
@@ -182,7 +183,7 @@ func runAdd(session string, specs AgentSpecs) error {
 		}
 
 		num := maxCod + agent.Index
-		title := fmt.Sprintf("%s__cod_%d", session, num)
+		title := FormatPaneName(session, AgentTypeCodex, num, agent.Model)
 		if err := tmux.SetPaneTitle(paneID, title); err != nil {
 			return outputError(fmt.Errorf("setting pane title: %w", err))
 		}
@@ -209,6 +210,7 @@ func runAdd(session string, specs AgentSpecs) error {
 		newPanes = append(newPanes, output.PaneResponse{
 			Title:   title,
 			Type:    "codex",
+			Variant: agent.Model,
 			Command: cmd,
 		})
 	}
