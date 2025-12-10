@@ -175,6 +175,11 @@ func (c *Client) SetProjectKey(key string) {
 	c.projectKey = key
 }
 
+// BaseURL returns the configured Agent Mail base URL.
+func (c *Client) BaseURL() string {
+	return c.baseURL
+}
+
 // JSONRPCRequest represents a JSON-RPC 2.0 request.
 type JSONRPCRequest struct {
 	JSONRPC string      `json:"jsonrpc"`

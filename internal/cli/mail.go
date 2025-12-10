@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +36,8 @@ Examples:
 	}
 
 	cmd.AddCommand(newMailSendCmd())
+	cmd.AddCommand(newMailReadCmd())
+	cmd.AddCommand(newMailAckCmd())
 
 	return cmd
 }
@@ -111,6 +114,187 @@ Examples:
 	cmd.Flags().StringVarP(&fromFile, "file", "f", "", "read message body from file")
 
 	return cmd
+}
+
+// mailAction represents the kind of mailbox mutation to apply.
+type mailAction string
+
+const (
+	mailActionRead mailAction = "read"
+	mailActionAck  mailAction = "ack"
+)
+
+// newMailReadCmd marks messages as read.
+func newMailReadCmd() *cobra.Command {
+	return newMailMarkCmd(mailActionRead)
+}
+
+// newMailAckCmd marks messages as acknowledged.
+func newMailAckCmd() *cobra.Command {
+	return newMailMarkCmd(mailActionAck)
+}
+
+func newMailMarkCmd(action mailAction) *cobra.Command {
+	var (
+		agent     string
+		urgent    bool
+		fromAgent string
+		all       bool
+		limit     int
+	)
+
+	cmd := &cobra.Command{
+		Use:   fmt.Sprintf("%s <session> [message-id...]", action),
+		Short: fmt.Sprintf("Mark Agent Mail messages as %s", action),
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			session := args[0]
+			if agent == "" {
+				agent = os.Getenv("AGENT_NAME")
+			}
+			if agent == "" {
+				return fmt.Errorf("--agent is required (or set AGENT_NAME)")
+			}
+			if limit <= 0 {
+				return fmt.Errorf("--limit must be greater than 0")
+			}
+
+			ids, err := parseMessageIDs(args[1:])
+			if err != nil {
+				return err
+			}
+
+			return runMailMark(session, agent, action, ids, urgent, fromAgent, all, limit)
+		},
+	}
+
+	cmd.Flags().StringVar(&agent, "agent", "", "agent name to mark messages for (defaults to $AGENT_NAME)")
+	cmd.Flags().BoolVar(&urgent, "urgent", false, "only mark urgent messages")
+	cmd.Flags().StringVar(&fromAgent, "from", "", "only mark messages from this sender")
+	cmd.Flags().BoolVar(&all, "all", false, "mark all matching messages (ignores positional IDs)")
+	cmd.Flags().IntVar(&limit, "limit", 50, "max messages to consider when using --all/filters")
+
+	return cmd
+}
+
+// parseMessageIDs converts a slice of strings to ints.
+func parseMessageIDs(raw []string) ([]int, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	ids := make([]int, 0, len(raw))
+	for _, s := range raw {
+		id, err := strconv.Atoi(s)
+		if err != nil {
+			return nil, fmt.Errorf("invalid message id %q", s)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+type markSummary struct {
+	Action    string `json:"action"`
+	Agent     string `json:"agent"`
+	Processed int    `json:"processed"`
+	Skipped   int    `json:"skipped"`
+	Errors    int    `json:"errors"`
+	IDs       []int  `json:"ids"`
+}
+
+func runMailMark(session, agent string, action mailAction, ids []int, urgent bool, fromAgent string, all bool, limit int) error {
+	projectKey, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getting working directory: %w", err)
+	}
+
+	client := agentmail.NewClient(agentmail.WithProjectKey(projectKey))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if !client.IsAvailable() {
+		return fmt.Errorf("agent mail server not available at %s\nstart the server with: mcp-agent-mail serve", agentmail.DefaultBaseURL)
+	}
+
+	// Ensure project exists (and agent registered)
+	if _, err := client.EnsureProject(ctx, projectKey); err != nil {
+		return fmt.Errorf("ensuring project: %w", err)
+	}
+
+	// If no IDs provided, fetch inbox with filters.
+	if len(ids) == 0 && !all && !urgent && fromAgent == "" {
+		return fmt.Errorf("provide message IDs or use --all/--urgent/--from to select messages")
+	}
+
+	if len(ids) == 0 {
+		inbox, err := client.FetchInbox(ctx, agentmail.FetchInboxOptions{
+			ProjectKey:    projectKey,
+			AgentName:     agent,
+			UrgentOnly:    urgent,
+			IncludeBodies: false,
+			Limit:         limit,
+		})
+		if err != nil {
+			return fmt.Errorf("fetching inbox: %w", err)
+		}
+		for _, msg := range inbox {
+			if fromAgent != "" && !strings.EqualFold(msg.From, fromAgent) {
+				continue
+			}
+			if !all && !urgent && fromAgent == "" {
+				// No filters and no IDs: avoid marking everything accidentally
+				break
+			}
+			ids = append(ids, msg.ID)
+		}
+		if len(ids) == 0 {
+			if IsJSONOutput() {
+				return encodeJSONResult(markSummary{Action: string(action), Agent: agent})
+			}
+			fmt.Println("No matching messages found.")
+			return nil
+		}
+	}
+
+	var processed, errs int
+	for _, id := range ids {
+		var markErr error
+		switch action {
+		case mailActionRead:
+			markErr = client.MarkMessageRead(ctx, projectKey, agent, id)
+		case mailActionAck:
+			markErr = client.AcknowledgeMessage(ctx, projectKey, agent, id)
+		}
+		if markErr != nil {
+			errs++
+			if !IsJSONOutput() {
+				fmt.Fprintf(os.Stderr, "⚠ message %d: %v\n", id, markErr)
+			}
+			continue
+		}
+		processed++
+		if !IsJSONOutput() {
+			switch action {
+			case mailActionRead:
+				fmt.Printf("✓ Message %d marked as read\n", id)
+			case mailActionAck:
+				fmt.Printf("✓ Message %d acknowledged\n", id)
+			}
+		}
+	}
+
+	if IsJSONOutput() {
+		return encodeJSONResult(markSummary{
+			Action:    string(action),
+			Agent:     agent,
+			Processed: processed,
+			Skipped:   len(ids) - processed,
+			Errors:    errs,
+			IDs:       ids,
+		})
+	}
+
+	return nil
 }
 
 // runMailSendOverseer sends a Human Overseer message via the Agent Mail HTTP API.
