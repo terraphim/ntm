@@ -914,8 +914,7 @@ type Change struct {
 }
 
 // PrintSnapshotDelta outputs changes since the given timestamp.
-// NOTE: This is a stub implementation. Full delta tracking requires
-// a state change ring buffer (ntm-hat) which is not yet implemented.
+// Uses the internal state tracker ring buffer to return delta changes.
 func PrintSnapshotDelta(since time.Time) error {
 	output := SnapshotDeltaOutput{
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -923,9 +922,36 @@ func PrintSnapshotDelta(since time.Time) error {
 		Changes:   []Change{},
 	}
 
-	// TODO: Once ntm-hat (state change ring buffer) is implemented,
-	// this should query the ring buffer for changes since the given timestamp.
-	// For now, return empty changes (indicating no tracking yet).
+	// Query the state tracker for changes since the given timestamp
+	trackerChanges := stateTracker.Since(since)
+
+	// Convert tracker.StateChange to robot.Change
+	for _, tc := range trackerChanges {
+		change := Change{
+			Type:    string(tc.Type),
+			Session: tc.Session,
+			Pane:    tc.Pane,
+			Data:    tc.Details,
+		}
+		output.Changes = append(output.Changes, change)
+	}
 
 	return encodeJSON(output)
+}
+
+// RecordStateChange records a state change to the global tracker.
+// This should be called by other parts of the application when state changes occur.
+func RecordStateChange(changeType tracker.ChangeType, session, pane string, details map[string]interface{}) {
+	stateTracker.Record(tracker.StateChange{
+		Timestamp: time.Now(),
+		Type:      changeType,
+		Session:   session,
+		Pane:      pane,
+		Details:   details,
+	})
+}
+
+// GetStateTracker returns the global state tracker for direct access.
+func GetStateTracker() *tracker.StateTracker {
+	return stateTracker
 }
