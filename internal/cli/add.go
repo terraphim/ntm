@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 	"github.com/spf13/cobra"
@@ -48,21 +50,34 @@ func runAdd(session string, ccCount, codCount, gmiCount int) error {
 	dir := cfg.GetProjectDir(session)
 	fmt.Printf("Adding %d agent(s) to session '%s'...\n", totalAgents, session)
 
-	// Count existing agents of each type
+	// Get existing panes to determine next indices
 	panes, err := tmux.GetPanes(session)
 	if err != nil {
 		return err
 	}
 
-	existingCC, existingCod, existingGmi := 0, 0, 0
+	maxCC, maxCod, maxGmi := 0, 0, 0
+
+	// Helper to parse index from title (e.g., "myproject__cc_2" -> 2)
+	parseIndex := func(title, suffix string) int {
+		if idx := strings.LastIndex(title, suffix); idx != -1 {
+			numPart := title[idx+len(suffix):]
+			if val, err := strconv.Atoi(numPart); err == nil {
+				return val
+			}
+		}
+		return 0
+	}
+
 	for _, p := range panes {
-		switch p.Type {
-		case tmux.AgentClaude:
-			existingCC++
-		case tmux.AgentCodex:
-			existingCod++
-		case tmux.AgentGemini:
-			existingGmi++
+		if idx := parseIndex(p.Title, "__cc_"); idx > maxCC {
+			maxCC = idx
+		}
+		if idx := parseIndex(p.Title, "__cod_"); idx > maxCod {
+			maxCod = idx
+		}
+		if idx := parseIndex(p.Title, "__gmi_"); idx > maxGmi {
+			maxGmi = idx
 		}
 	}
 
@@ -73,7 +88,7 @@ func runAdd(session string, ccCount, codCount, gmiCount int) error {
 			return fmt.Errorf("creating pane: %w", err)
 		}
 
-		num := existingCC + i + 1
+		num := maxCC + i + 1
 		title := fmt.Sprintf("%s__cc_%d", session, num)
 		if err := tmux.SetPaneTitle(paneID, title); err != nil {
 			return fmt.Errorf("setting pane title: %w", err)
@@ -92,7 +107,7 @@ func runAdd(session string, ccCount, codCount, gmiCount int) error {
 			return fmt.Errorf("creating pane: %w", err)
 		}
 
-		num := existingCod + i + 1
+		num := maxCod + i + 1
 		title := fmt.Sprintf("%s__cod_%d", session, num)
 		if err := tmux.SetPaneTitle(paneID, title); err != nil {
 			return fmt.Errorf("setting pane title: %w", err)
@@ -111,7 +126,7 @@ func runAdd(session string, ccCount, codCount, gmiCount int) error {
 			return fmt.Errorf("creating pane: %w", err)
 		}
 
-		num := existingGmi + i + 1
+		num := maxGmi + i + 1
 		title := fmt.Sprintf("%s__gmi_%d", session, num)
 		if err := tmux.SetPaneTitle(paneID, title); err != nil {
 			return fmt.Errorf("setting pane title: %w", err)
