@@ -9,6 +9,7 @@ import (
 
 	"github.com/Dicklesworthstone/ntm/internal/agentmail"
 	"github.com/Dicklesworthstone/ntm/internal/config"
+	"github.com/Dicklesworthstone/ntm/internal/events"
 	"github.com/Dicklesworthstone/ntm/internal/hooks"
 	"github.com/Dicklesworthstone/ntm/internal/output"
 	"github.com/Dicklesworthstone/ntm/internal/recipe"
@@ -92,7 +93,7 @@ Examples:
 			codCount := agentSpecs.ByType(AgentTypeCodex).TotalCount()
 			gmiCount := agentSpecs.ByType(AgentTypeGemini).TotalCount()
 
-			return runSpawnWithSpecs(args[0], agentSpecs, ccCount, codCount, gmiCount, !noUserPane, autoRestart)
+			return runSpawnWithSpecs(args[0], agentSpecs, ccCount, codCount, gmiCount, !noUserPane, autoRestart, recipeName)
 		},
 	}
 
@@ -108,19 +109,19 @@ Examples:
 }
 
 // runSpawnWithSpecs handles agent specs with model-specific pane naming
-func runSpawnWithSpecs(session string, specs AgentSpecs, ccCount, codCount, gmiCount int, userPane, autoRestart bool) error {
+func runSpawnWithSpecs(session string, specs AgentSpecs, ccCount, codCount, gmiCount int, userPane, autoRestart bool, recipeName string) error {
 	// Flatten specs to get individual agents with their models
 	agents := specs.Flatten()
-	return runSpawnAgentsWithRestart(session, agents, ccCount, codCount, gmiCount, userPane, autoRestart)
+	return runSpawnAgentsWithRestart(session, agents, ccCount, codCount, gmiCount, userPane, autoRestart, recipeName)
 }
 
 // Backward-compatible helper (no auto-restart)
 func runSpawnAgents(session string, agents []FlatAgent, ccCount, codCount, gmiCount int, userPane bool) error {
-	return runSpawnAgentsWithRestart(session, agents, ccCount, codCount, gmiCount, userPane, false)
+	return runSpawnAgentsWithRestart(session, agents, ccCount, codCount, gmiCount, userPane, false, "")
 }
 
 // runSpawnAgentsWithRestart launches agents with model-specific pane naming and optional auto-restart
-func runSpawnAgentsWithRestart(session string, agents []FlatAgent, ccCount, codCount, gmiCount int, userPane, autoRestart bool) error {
+func runSpawnAgentsWithRestart(session string, agents []FlatAgent, ccCount, codCount, gmiCount int, userPane, autoRestart bool, recipeName string) error {
 	// Helper for JSON error output
 	outputError := func(err error) error {
 		if IsJSONOutput() {
@@ -371,6 +372,18 @@ func runSpawnAgentsWithRestart(session string, agents []FlatAgent, ccCount, codC
 	}
 
 	fmt.Printf("✓ Launched %d agent(s)\n", totalAgents)
+
+	// Emit session_create event
+	events.EmitSessionCreate(session, ccCount, codCount, gmiCount, dir, recipeName)
+
+	// Emit agent_spawn events for each agent
+	for _, agent := range launchedAgents {
+		events.Emit(events.EventAgentSpawn, session, events.AgentSpawnData{
+			AgentType: agent.agentType,
+			Model:     agent.model,
+			PaneIndex: agent.paneIndex,
+		})
+	}
 
 	// Run post-spawn hooks
 	if hookExec.HasHooksForEvent(hooks.EventPostSpawn) {

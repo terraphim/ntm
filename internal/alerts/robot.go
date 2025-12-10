@@ -73,7 +73,7 @@ func GetAlertStrings(cfg Config) []string {
 }
 
 // ToConfigAlerts converts config.AlertsConfig to alerts.Config
-func ToConfigAlerts(enabled bool, agentStuckMinutes int, diskLowThresholdGB float64, mailBacklogThreshold, beadStaleHours, resolvedPruneMinutes int) Config {
+func ToConfigAlerts(enabled bool, agentStuckMinutes int, diskLowThresholdGB float64, mailBacklogThreshold, beadStaleHours, resolvedPruneMinutes int, projectsDir string) Config {
 	return Config{
 		Enabled:              enabled,
 		AgentStuckMinutes:    agentStuckMinutes,
@@ -81,5 +81,6 @@ func ToConfigAlerts(enabled bool, agentStuckMinutes int, diskLowThresholdGB floa
 		MailBacklogThreshold: mailBacklogThreshold,
 		BeadStaleHours:       beadStaleHours,
 		ResolvedPruneMinutes: resolvedPruneMinutes,
+		ProjectsDir:          projectsDir,
 	}
 }
