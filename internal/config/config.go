@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/Dicklesworthstone/ntm/internal/notify"
 )
 
 // Config represents the main configuration
@@ -20,8 +21,9 @@ type Config struct {
 	Tmux         TmuxConfig        `toml:"tmux"`
 	AgentMail    AgentMailConfig   `toml:"agent_mail"`
 	Models       ModelsConfig      `toml:"models"`
-	Alerts       AlertsConfig      `toml:"alerts"`
-	Checkpoints  CheckpointsConfig `toml:"checkpoints"`
+	Alerts        AlertsConfig      `toml:"alerts"`
+	Checkpoints   CheckpointsConfig `toml:"checkpoints"`
+	Notifications notify.Config     `toml:"notifications"`
 }
 
 // CheckpointsConfig holds configuration for automatic checkpoints
@@ -339,9 +341,10 @@ func Default() *Config {
 			AutoRegister: true,
 			ProgramName:  "ntm",
 		},
-		Models:      DefaultModels(),
-		Alerts:      DefaultAlertsConfig(),
-		Checkpoints: DefaultCheckpointsConfig(),
+		Models:        DefaultModels(),
+		Alerts:        DefaultAlertsConfig(),
+		Checkpoints:   DefaultCheckpointsConfig(),
+		Notifications: notify.DefaultConfig(),
 	}
 
 	// Try to load palette from markdown file
@@ -566,6 +569,12 @@ func Load(path string) (*Config, error) {
 		cfg.Checkpoints = cpDefaults
 	}
 
+	// Apply Notifications defaults
+	// If Events is empty, apply all defaults (section likely missing)
+	if len(cfg.Notifications.Events) == 0 {
+		cfg.Notifications = notify.DefaultConfig()
+	}
+
 	// Try to load palette from markdown file
 	// This takes precedence over TOML [[palette]] entries
 	mdPath := cfg.PaletteFile
@@ -725,6 +734,48 @@ func Print(cfg *Config, w io.Writer) error {
 	fmt.Fprintf(w, "scrollback_lines = %d           # Lines of scrollback to capture\n", cfg.Checkpoints.ScrollbackLines)
 	fmt.Fprintf(w, "include_git = %t               # Capture git state in auto-checkpoints\n", cfg.Checkpoints.IncludeGit)
 	fmt.Fprintf(w, "auto_checkpoint_on_spawn = %t   # Auto-checkpoint when spawning session\n", cfg.Checkpoints.AutoCheckpointOnSpawn)
+	fmt.Fprintln(w)
+
+	// Write notifications configuration
+	fmt.Fprintln(w, "[notifications]")
+	fmt.Fprintln(w, "# Notification system for agent events (errors, crashes, rate limits)")
+	fmt.Fprintf(w, "enabled = %t\n", cfg.Notifications.Enabled)
+	fmt.Fprintf(w, "events = %q  # Events to notify on\n", cfg.Notifications.Events)
+	fmt.Fprintln(w)
+
+	fmt.Fprintln(w, "[notifications.desktop]")
+	fmt.Fprintln(w, "# Desktop notifications (macOS/Linux)")
+	fmt.Fprintf(w, "enabled = %t\n", cfg.Notifications.Desktop.Enabled)
+	fmt.Fprintf(w, "title = %q  # Default notification title\n", cfg.Notifications.Desktop.Title)
+	fmt.Fprintln(w)
+
+	fmt.Fprintln(w, "[notifications.webhook]")
+	fmt.Fprintln(w, "# Webhook notifications (Slack, Discord, etc.)")
+	fmt.Fprintf(w, "enabled = %t\n", cfg.Notifications.Webhook.Enabled)
+	if cfg.Notifications.Webhook.URL != "" {
+		fmt.Fprintf(w, "url = %q\n", cfg.Notifications.Webhook.URL)
+	} else {
+		fmt.Fprintln(w, "# url = \"https://hooks.slack.com/...\"")
+	}
+	fmt.Fprintf(w, "method = %q\n", cfg.Notifications.Webhook.Method)
+	fmt.Fprintf(w, "template = %q\n", cfg.Notifications.Webhook.Template)
+	fmt.Fprintln(w)
+
+	fmt.Fprintln(w, "[notifications.shell]")
+	fmt.Fprintln(w, "# Shell command notifications")
+	fmt.Fprintf(w, "enabled = %t\n", cfg.Notifications.Shell.Enabled)
+	if cfg.Notifications.Shell.Command != "" {
+		fmt.Fprintf(w, "command = %q\n", cfg.Notifications.Shell.Command)
+	} else {
+		fmt.Fprintln(w, "# command = \"~/bin/notify.sh\"")
+	}
+	fmt.Fprintf(w, "pass_json = %t  # Pass event as JSON to stdin\n", cfg.Notifications.Shell.PassJSON)
+	fmt.Fprintln(w)
+
+	fmt.Fprintln(w, "[notifications.log]")
+	fmt.Fprintln(w, "# Log file notifications")
+	fmt.Fprintf(w, "enabled = %t\n", cfg.Notifications.Log.Enabled)
+	fmt.Fprintf(w, "path = %q\n", cfg.Notifications.Log.Path)
 	fmt.Fprintln(w)
 
 	fmt.Fprintln(w, "# Command Palette entries")
