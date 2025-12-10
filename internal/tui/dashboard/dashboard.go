@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Dicklesworthstone/ntm/internal/bv"
 	"github.com/Dicklesworthstone/ntm/internal/status"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 	"github.com/Dicklesworthstone/ntm/internal/tui/components"
@@ -27,6 +28,12 @@ type RefreshMsg struct{}
 type StatusUpdateMsg struct {
 	Statuses []status.AgentStatus
 	Time     time.Time
+}
+
+// HealthCheckMsg is sent when health check (bv drift) completes
+type HealthCheckMsg struct {
+	Status  string // "ok", "warning", "critical", "no_baseline", "unavailable"
+	Message string
 }
 
 // Model is the session dashboard model
@@ -65,6 +72,10 @@ type Model struct {
 
 	// Auto-refresh configuration
 	refreshInterval time.Duration
+
+	// Health badge (bv drift status)
+	healthStatus    string // "ok", "warning", "critical", "no_baseline", "unavailable"
+	healthMessage   string
 }
 
 // PaneStatus tracks the status of a pane including compaction state
@@ -136,6 +147,8 @@ func New(session string) Model {
 		detector:        status.NewDetector(),
 		agentStatuses:   make(map[string]status.AgentStatus),
 		refreshInterval: DefaultRefreshInterval,
+		healthStatus:    "unknown",
+		healthMessage:   "",
 	}
 }
 
@@ -151,6 +164,7 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.tick(),
 		m.fetchSessionDataWithOutputs(),
+		m.fetchHealthStatus(),
 	)
 }
 
@@ -158,6 +172,38 @@ func (m Model) tick() tea.Cmd {
 	return tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 		return DashboardTickMsg(t)
 	})
+}
+
+// fetchHealthStatus performs the health check via bv
+func (m Model) fetchHealthStatus() tea.Cmd {
+	return func() tea.Msg {
+		if !bv.IsInstalled() {
+			return HealthCheckMsg{
+				Status:  "unavailable",
+				Message: "bv not installed",
+			}
+		}
+
+		result := bv.CheckDrift()
+		var status string
+		switch result.Status {
+		case bv.DriftOK:
+			status = "ok"
+		case bv.DriftWarning:
+			status = "warning"
+		case bv.DriftCritical:
+			status = "critical"
+		case bv.DriftNoBaseline:
+			status = "no_baseline"
+		default:
+			status = "unknown"
+		}
+
+		return HealthCheckMsg{
+			Status:  status,
+			Message: result.Message,
+		}
+	}
 }
 
 func (m Model) refresh() tea.Cmd {
