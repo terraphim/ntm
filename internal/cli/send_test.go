@@ -70,9 +70,9 @@ func TestSendRealSession(t *testing.T) {
 	// Send a prompt
 	prompt := "Hello NTM Test"
 	targets := SendTargets{} // Empty targets = default behavior (all agents)
-	
+
 	// Send to all agents (skip user pane default)
-	err = runSendWithTargets(sessionName, prompt, targets, false, true, -1, "")
+	err = runSendWithTargets(sessionName, prompt, targets, false, true, -1, "", nil)
 	if err != nil {
 		t.Fatalf("runSendWithTargets failed: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestBuildTargetDescription(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildTargetDescription(tt.cc, tt.cod, tt.gmi, tt.all, tt.skipFirst, tt.paneIdx)
+			got := buildTargetDescription(tt.cc, tt.cod, tt.gmi, tt.all, tt.skipFirst, tt.paneIdx, nil)
 			if got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}

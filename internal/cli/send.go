@@ -162,6 +162,7 @@ func newSendCmd() *cobra.Command {
 	var contextFiles []string
 	var templateName string
 	var templateVars []string
+	var tags []string
 
 	cmd := &cobra.Command{
 		Use:   "send <session> [prompt]",
@@ -170,6 +171,7 @@ func newSendCmd() *cobra.Command {
 
 By default, sends to all agent panes. Use flags to target specific types.
 Use --cc=variant to filter by model or persona (e.g., --cc=opus, --cc=architect).
+Use --tag to filter by user-defined tags.
 
 Prompt can be provided as:
   - Command line argument (traditional)
@@ -192,7 +194,7 @@ Examples:
   ntm send myproject "fix the linting errors"           # All agents
   ntm send myproject --cc "review the changes"          # All Claude agents
   ntm send myproject --cc=opus "review the changes"     # Only Claude Opus agents
-  ntm send myproject --cc=opus --cc=sonnet "review"     # Opus and Sonnet
+  ntm send myproject --tag=frontend "update ui"         # Agents with 'frontend' tag
   ntm send myproject --cod --gmi "run the tests"        # Codex and Gemini
   ntm send myproject --all "git status"                 # All panes
   ntm send myproject --pane=2 "specific pane"           # Specific pane
@@ -212,7 +214,7 @@ Examples:
 
 			// Handle template-based prompts
 			if templateName != "" {
-				return runSendWithTemplate(session, templateName, templateVars, promptFile, contextFiles, targets, targetAll, skipFirst, paneIndex)
+				return runSendWithTemplate(session, templateName, templateVars, promptFile, contextFiles, targets, targetAll, skipFirst, paneIndex, tags)
 			}
 
 			promptText, err := getPromptContent(args[1:], promptFile, prefix, suffix)
@@ -237,7 +239,7 @@ Examples:
 				}
 			}
 
-			return runSendWithTargets(session, promptText, targets, targetAll, skipFirst, paneIndex, "")
+			return runSendWithTargets(session, promptText, targets, targetAll, skipFirst, paneIndex, "", tags)
 		},
 	}
 
@@ -254,6 +256,7 @@ Examples:
 	cmd.Flags().StringArrayVarP(&contextFiles, "context", "c", nil, "file to include as context (repeatable, supports path:start-end)")
 	cmd.Flags().StringVarP(&templateName, "template", "t", "", "use a named prompt template (see 'ntm template list')")
 	cmd.Flags().StringArrayVar(&templateVars, "var", nil, "template variable in key=value format (repeatable)")
+	cmd.Flags().StringSliceVar(&tags, "tag", nil, "filter by tag (OR logic)")
 
 	return cmd
 }
@@ -335,7 +338,7 @@ func buildPrompt(content, prefix, suffix string) string {
 }
 
 // runSendWithTemplate handles template-based prompt generation and sending.
-func runSendWithTemplate(session, templateName string, templateVars []string, promptFile string, contextFiles []string, targets SendTargets, targetAll, skipFirst bool, paneIndex int) error {
+func runSendWithTemplate(session, templateName string, templateVars []string, promptFile string, contextFiles []string, targets SendTargets, targetAll, skipFirst bool, paneIndex int, tags []string) error {
 	// Load the template
 	loader := templates.NewLoader()
 	tmpl, err := loader.Load(templateName)
@@ -391,20 +394,20 @@ func runSendWithTemplate(session, templateName string, templateVars []string, pr
 		}
 	}
 
-	return runSendWithTargets(session, promptText, targets, targetAll, skipFirst, paneIndex, templateName)
+	return runSendWithTargets(session, promptText, targets, targetAll, skipFirst, paneIndex, templateName, tags)
 }
 
 // runSendWithTargets sends prompts using the new SendTargets filtering
-func runSendWithTargets(session, prompt string, targets SendTargets, targetAll, skipFirst bool, paneIndex int, templateName string) error {
+func runSendWithTargets(session, prompt string, targets SendTargets, targetAll, skipFirst bool, paneIndex int, templateName string, tags []string) error {
 	// Convert to the old signature for backwards compatibility
 	targetCC := targets.HasTargetsForType(AgentTypeClaude)
 	targetCod := targets.HasTargetsForType(AgentTypeCodex)
 	targetGmi := targets.HasTargetsForType(AgentTypeGemini)
 
-	return runSendInternal(session, prompt, templateName, targets, targetCC, targetCod, targetGmi, targetAll, skipFirst, paneIndex)
+	return runSendInternal(session, prompt, templateName, targets, targetCC, targetCod, targetGmi, targetAll, skipFirst, paneIndex, tags)
 }
 
-func runSendInternal(session, prompt, templateName string, targets SendTargets, targetCC, targetCod, targetGmi, targetAll, skipFirst bool, paneIndex int) error {
+func runSendInternal(session, prompt, templateName string, targets SendTargets, targetCC, targetCod, targetGmi, targetAll, skipFirst bool, paneIndex int, tags []string) error {
 	start := time.Now()
 	var (
 		histTargets []int
@@ -456,7 +459,7 @@ func runSendInternal(session, prompt, templateName string, targets SendTargets, 
 	}
 
 	// Build target description for hook environment
-	targetDesc := buildTargetDescription(targetCC, targetCod, targetGmi, targetAll, skipFirst, paneIndex)
+	targetDesc := buildTargetDescription(targetCC, targetCod, targetGmi, targetAll, skipFirst, paneIndex, tags)
 
 	// Build execution context for hooks
 	hookCtx := hooks.ExecutionContext{
@@ -506,7 +509,7 @@ func runSendInternal(session, prompt, templateName string, targets SendTargets, 
 	}
 
 	// Auto-checkpoint before broadcast sends
-	isBroadcast := targetAll || (!targetCC && !targetCod && !targetGmi && paneIndex < 0)
+	isBroadcast := targetAll || (!targetCC && !targetCod && !targetGmi && paneIndex < 0 && len(tags) == 0)
 	if isBroadcast && cfg != nil && cfg.Checkpoints.Enabled && cfg.Checkpoints.BeforeBroadcast {
 		if !jsonOutput {
 			fmt.Println("Creating auto-checkpoint before broadcast...")
@@ -589,7 +592,7 @@ func runSendInternal(session, prompt, templateName string, targets SendTargets, 
 	}
 
 	// Determine which panes to target
-	noFilter := !targetCC && !targetCod && !targetGmi && !targetAll
+	noFilter := !targetCC && !targetCod && !targetGmi && !targetAll && len(tags) == 0
 	hasVariantFilter := len(targets) > 0
 	if noFilter {
 		// Default: send to all agent panes (skip user panes)
@@ -602,27 +605,37 @@ func runSendInternal(session, prompt, templateName string, targets SendTargets, 
 			continue
 		}
 
-		// Apply type and variant filters
+		// Apply filters
 		if !targetAll && !noFilter {
-			// Use variant-aware matching if we have targets with potential variants
-			if hasVariantFilter {
-				if !targets.MatchesPane(p) {
+			// Check tags
+			if len(tags) > 0 {
+				if !HasAnyTag(p.Tags, tags) {
 					continue
 				}
-			} else {
-				// Fallback to simple type matching (shouldn't happen with new flags)
-				match := false
-				if targetCC && p.Type == tmux.AgentClaude {
-					match = true
-				}
-				if targetCod && p.Type == tmux.AgentCodex {
-					match = true
-				}
-				if targetGmi && p.Type == tmux.AgentGemini {
-					match = true
-				}
-				if !match {
-					continue
+			}
+
+			// Check type filters (only if specified)
+			hasTypeFilter := hasVariantFilter || targetCC || targetCod || targetGmi
+
+			if hasTypeFilter {
+				if hasVariantFilter {
+					if !targets.MatchesPane(p) {
+						continue
+					}
+				} else {
+					match := false
+					if targetCC && p.Type == tmux.AgentClaude {
+						match = true
+					}
+					if targetCod && p.Type == tmux.AgentCodex {
+						match = true
+					}
+					if targetGmi && p.Type == tmux.AgentGemini {
+						match = true
+					}
+					if !match {
+						continue
+					}
 				}
 			}
 		} else if noFilter {
@@ -681,7 +694,7 @@ func runSendInternal(session, prompt, templateName string, targets SendTargets, 
 
 	// Emit prompt_send event
 	if delivered > 0 {
-		events.EmitPromptSend(session, delivered, len(prompt), "", buildTargetDescription(targetCC, targetCod, targetGmi, targetAll, skipFirst, paneIndex), len(hookCtx.AdditionalEnv) > 0)
+		events.EmitPromptSend(session, delivered, len(prompt), "", buildTargetDescription(targetCC, targetCod, targetGmi, targetAll, skipFirst, paneIndex, tags), len(hookCtx.AdditionalEnv) > 0)
 	}
 
 	// JSON output mode
@@ -824,7 +837,7 @@ func truncatePrompt(s string, maxLen int) string {
 }
 
 // buildTargetDescription creates a human-readable description of send targets
-func buildTargetDescription(targetCC, targetCod, targetGmi, targetAll, skipFirst bool, paneIndex int) string {
+func buildTargetDescription(targetCC, targetCod, targetGmi, targetAll, skipFirst bool, paneIndex int, tags []string) string {
 	if paneIndex >= 0 {
 		return fmt.Sprintf("pane:%d", paneIndex)
 	}
@@ -842,6 +855,9 @@ func buildTargetDescription(targetCC, targetCod, targetGmi, targetAll, skipFirst
 	if targetGmi {
 		targets = append(targets, "gmi")
 	}
+	if len(tags) > 0 {
+		targets = append(targets, fmt.Sprintf("tags:[%s]", strings.Join(tags, ",")))
+	}
 
 	if len(targets) == 0 {
 		if skipFirst {
@@ -850,6 +866,18 @@ func buildTargetDescription(targetCC, targetCod, targetGmi, targetAll, skipFirst
 		return "all-agents"
 	}
 	return strings.Join(targets, ",")
+}
+
+// HasAnyTag checks if any of the pane's tags match any of the filter tags
+func HasAnyTag(paneTags, filterTags []string) bool {
+	for _, ft := range filterTags {
+		for _, pt := range paneTags {
+			if strings.EqualFold(pt, ft) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // getSessionWorkingDir returns the working directory for a session
