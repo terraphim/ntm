@@ -85,10 +85,13 @@ func (d *UnifiedDetector) Detect(paneID string) (AgentStatus, error) {
 		return status, nil
 	}
 
-	// Check if at prompt (idle)
+	// Check if at prompt (idle), but only if last activity is not recent
 	if DetectIdleFromOutput(output, status.AgentType) {
-		status.State = StateIdle
-		return status, nil
+		idleGrace := 1 * time.Second
+		if time.Since(status.LastActive) >= idleGrace {
+			status.State = StateIdle
+			return status, nil
+		}
 	}
 
 	// Check recent activity
@@ -141,11 +144,14 @@ func (d *UnifiedDetector) DetectAll(session string) ([]AgentStatus, error) {
 			continue
 		}
 
-		// Check if at prompt (idle)
+		// Check if at prompt (idle) with grace for recent activity
 		if DetectIdleFromOutput(output, status.AgentType) {
-			status.State = StateIdle
-			statuses = append(statuses, status)
-			continue
+			idleGrace := 1 * time.Second
+			if time.Since(status.LastActive) >= idleGrace {
+				status.State = StateIdle
+				statuses = append(statuses, status)
+				continue
+			}
 		}
 
 		// Check recent activity
