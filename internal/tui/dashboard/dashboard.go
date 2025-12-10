@@ -21,6 +21,7 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/tui/theme"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -112,6 +113,9 @@ type Model struct {
 	agentMailLocks     int                 // Active file reservations
 	agentMailUnread    int                 // Unread message count (requires agent context)
 	agentMailLockInfo  []AgentMailLockInfo // Lock details for display
+
+	// Markdown renderer
+	renderer *glamour.TermRenderer
 }
 
 // PaneStatus tracks the status of a pane including compaction state
@@ -162,6 +166,14 @@ type KeyMap struct {
 // DefaultRefreshInterval is the default auto-refresh interval
 const DefaultRefreshInterval = 2 * time.Second
 
+func (m *Model) initRenderer(width int) {
+	r, _ := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(width),
+	)
+	m.renderer = r
+}
+
 var dashKeys = KeyMap{
 	Up:             key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 	Down:           key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
@@ -190,7 +202,7 @@ func New(session string) Model {
 	t := theme.Current()
 	ic := icons.Current()
 
-	return Model{
+	m := Model{
 		session:         session,
 		width:           80,
 		height:          24,
@@ -205,6 +217,9 @@ func New(session string) Model {
 		healthStatus:    "unknown",
 		healthMessage:   "",
 	}
+	
+	m.initRenderer(40)
+	return m
 }
 
 // NewWithInterval creates a dashboard with custom refresh interval
@@ -432,6 +447,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.tier = layout.TierForWidth(msg.Width)
+		
+		_, detailWidth := layout.SplitProportions(msg.Width)
+		contentWidth := detailWidth - 4
+		if contentWidth < 20 {
+			contentWidth = 20
+		}
+		m.initRenderer(contentWidth)
+		
 		return m, nil
 
 	case DashboardTickMsg:
@@ -1476,6 +1499,20 @@ func (m Model) renderPaneDetail(width int) string {
 			Italic(true).
 			Width(width - 6)
 		lines = append(lines, "  "+cmdStyle.Render(p.Command))
+	}
+
+	// Recent Output (rendered with glamour)
+	if status, ok := m.agentStatuses[p.ID]; ok && status.LastOutput != "" && m.renderer != nil {
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(t.Lavender).Render("Recent Output"))
+		lines = append(lines, "")
+		
+		rendered, err := m.renderer.Render(status.LastOutput)
+		if err == nil {
+			lines = append(lines, rendered)
+		} else {
+			lines = append(lines, layout.TruncateRunes(status.LastOutput, 500, "..."))
+		}
 	}
 
 	return strings.Join(lines, "\n")
