@@ -96,17 +96,17 @@ func (m *HistoryPanel) contentHeight() int {
 // View renders the panel
 func (m *HistoryPanel) View() string {
 	t := m.theme
-	
+
 	borderColor := t.Surface1
 	if m.focused {
 		borderColor = t.Primary
 	}
-	
+
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(borderColor).
-		Width(m.width - 2).
-		Height(m.height - 2).
+		Width(m.width-2).
+		Height(m.height-2).
 		Padding(0, 1)
 
 	var content strings.Builder
@@ -119,7 +119,7 @@ func (m *HistoryPanel) View() string {
 		BorderForeground(t.Surface1).
 		Width(m.width - 4).
 		Align(lipgloss.Center)
-	
+
 	content.WriteString(headerStyle.Render("History") + "\n")
 
 	if len(m.entries) == 0 {
@@ -136,17 +136,17 @@ func (m *HistoryPanel) View() string {
 	for i := m.offset; i < end; i++ {
 		entry := m.entries[i]
 		selected := i == m.cursor
-		
+
 		var lineStyle lipgloss.Style
 		if selected {
 			lineStyle = lipgloss.NewStyle().Background(t.Surface0).Bold(true)
 		} else {
 			lineStyle = lipgloss.NewStyle()
 		}
-		
+
 		// ID
 		id := lipgloss.NewStyle().Foreground(t.Overlay).Render(entry.ID[:4])
-		
+
 		// Targets
 		targets := "all"
 		if len(entry.Targets) > 0 {
@@ -156,16 +156,18 @@ func (m *HistoryPanel) View() string {
 			targets = targets[:9] + "…"
 		}
 		targetStyle := lipgloss.NewStyle().Foreground(t.Blue).Width(10).Render(targets)
-		
+
 		// Prompt
 		prompt := strings.ReplaceAll(entry.Prompt, "\n", " ")
 		maxPrompt := m.width - 20
-		if maxPrompt < 10 { maxPrompt = 10 }
+		if maxPrompt < 10 {
+			maxPrompt = 10
+		}
 		if len(prompt) > maxPrompt {
 			prompt = prompt[:maxPrompt-1] + "…"
 		}
 		promptStyle := lipgloss.NewStyle().Foreground(t.Text).Render(prompt)
-		
+
 		// Status
 		status := "✓"
 		statusColor := t.Green
@@ -174,7 +176,7 @@ func (m *HistoryPanel) View() string {
 			statusColor = t.Red
 		}
 		statusStyle := lipgloss.NewStyle().Foreground(statusColor).Render(status)
-		
+
 		line := fmt.Sprintf("%s %s %s %s", statusStyle, id, targetStyle, promptStyle)
 		content.WriteString(lineStyle.Render(line) + "\n")
 	}
