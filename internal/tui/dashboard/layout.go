@@ -211,15 +211,18 @@ func RenderMiniBar(value float64, width int, t theme.Theme) string {
 }
 
 // RenderContextMiniBar renders context usage with warning indicator
+// When context is >80%, warning indicators shimmer to draw attention
 func RenderContextMiniBar(percent float64, width int, tick int, t theme.Theme) string {
 	bar := styles.ShimmerProgressBar(percent/100, width-4, "█", "░", tick, string(t.Green), string(t.Yellow), string(t.Red))
 
-	// Add warning icon for high usage
+	// Add warning icon for high usage with shimmer effect
 	var suffix string
 	if percent >= 90 {
-		suffix = lipgloss.NewStyle().Foreground(t.Red).Bold(true).Render(" !!")
+		// Critical: shimmer the warning in red/orange gradient
+		suffix = " " + styles.Shimmer("!!", tick, string(t.Red), string(t.Maroon), string(t.Red))
 	} else if percent >= 80 {
-		suffix = lipgloss.NewStyle().Foreground(t.Yellow).Bold(true).Render(" !")
+		// Warning: shimmer the warning in yellow/orange gradient
+		suffix = " " + styles.Shimmer("!", tick, string(t.Yellow), string(t.Peach), string(t.Yellow))
 	} else {
 		suffix = "  "
 	}
@@ -565,7 +568,8 @@ func RenderPaneRow(row PaneTableRow, dims LayoutDimensions, t theme.Theme) strin
 }
 
 // RenderPaneDetail renders the detail panel for a selected pane
-func RenderPaneDetail(pane tmux.Pane, ps PaneStatus, dims LayoutDimensions, t theme.Theme) string {
+// tick is used for shimmer animation on high context bars
+func RenderPaneDetail(pane tmux.Pane, ps PaneStatus, dims LayoutDimensions, t theme.Theme, tick int) string {
 	var lines []string
 	innerWidth := dims.DetailWidth
 	if innerWidth < 12 {
@@ -639,7 +643,7 @@ func RenderPaneDetail(pane tmux.Pane, ps PaneStatus, dims LayoutDimensions, t th
 		if barWidth < 10 {
 			barWidth = 10
 		}
-		contextBar := renderDetailContextBar(ps.ContextPercent, barWidth, t)
+		contextBar := renderDetailContextBar(ps.ContextPercent, barWidth, t, tick)
 		lines = append(lines, contextBar)
 
 		// Stats
@@ -692,7 +696,8 @@ func RenderPaneDetail(pane tmux.Pane, ps PaneStatus, dims LayoutDimensions, t th
 }
 
 // renderDetailContextBar renders a large context bar for the detail view
-func renderDetailContextBar(percent float64, width int, t theme.Theme) string {
+// High context (>80%) uses shimmer effect to highlight critical usage
+func renderDetailContextBar(percent float64, width int, t theme.Theme, tick int) string {
 	if percent > 100 {
 		percent = 100
 	}
@@ -713,10 +718,15 @@ func renderDetailContextBar(percent float64, width int, t theme.Theme) string {
 	filledStyle := lipgloss.NewStyle().Foreground(barColor)
 	emptyStyle := lipgloss.NewStyle().Foreground(t.Surface1)
 
-	bar := "  [" +
-		filledStyle.Render(strings.Repeat("█", filled)) +
-		emptyStyle.Render(strings.Repeat("░", empty)) +
-		"]"
+	filledStr := strings.Repeat("█", filled)
+	emptyStr := strings.Repeat("░", empty)
+
+	// Apply shimmer effect for high context usage
+	if percent >= 80 {
+		filledStr = styles.Shimmer(filledStr, tick, string(t.Red), string(t.Maroon), string(t.Red))
+	}
+
+	bar := "  [" + filledStyle.Render(filledStr) + emptyStyle.Render(emptyStr) + "]"
 
 	return bar
 }

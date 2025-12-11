@@ -3,8 +3,10 @@ package panels
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Dicklesworthstone/ntm/internal/bv"
@@ -12,16 +14,29 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/tui/theme"
 )
 
+// beadsConfig returns the configuration for the beads panel
+func beadsConfig() PanelConfig {
+	return PanelConfig{
+		ID:              "beads",
+		Title:           "Beads Pipeline",
+		Priority:        PriorityHigh, // Important for workflow
+		RefreshInterval: 15 * time.Second,
+		MinWidth:        30,
+		MinHeight:       10,
+		Collapsible:     true,
+	}
+}
+
 type BeadsPanel struct {
-	width   int
-	height  int
-	focused bool
+	PanelBase
 	summary bv.BeadsSummary
 	ready   []bv.BeadPreview
 }
 
 func NewBeadsPanel() *BeadsPanel {
-	return &BeadsPanel{}
+	return &BeadsPanel{
+		PanelBase: NewPanelBase(beadsConfig()),
+	}
 }
 
 func (m *BeadsPanel) SetData(summary bv.BeadsSummary, ready []bv.BeadPreview) {
@@ -37,28 +52,37 @@ func (m *BeadsPanel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *BeadsPanel) SetSize(w, h int) {
-	m.width = w
-	m.height = h
-}
-
-func (m *BeadsPanel) Focus() {
-	m.focused = true
-}
-
-func (m *BeadsPanel) Blur() {
-	m.focused = false
+// Keybindings returns beads panel specific shortcuts
+func (m *BeadsPanel) Keybindings() []Keybinding {
+	return []Keybinding{
+		{
+			Key:         key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "claim")),
+			Description: "Claim selected bead",
+			Action:      "claim",
+		},
+		{
+			Key:         key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open")),
+			Description: "Open bead details",
+			Action:      "open",
+		},
+		{
+			Key:         key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new")),
+			Description: "Create new bead",
+			Action:      "new",
+		},
+	}
 }
 
 func (m *BeadsPanel) View() string {
 	t := theme.Current()
+	w, h := m.Width(), m.Height()
 
-	if m.width <= 0 {
+	if w <= 0 {
 		return ""
 	}
 
 	borderColor := t.Surface1
-	if m.focused {
+	if m.IsFocused() {
 		borderColor = t.Pink
 	}
 
@@ -68,9 +92,9 @@ func (m *BeadsPanel) View() string {
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderBottom(true).
 		BorderForeground(borderColor).
-		Width(m.width).
+		Width(w).
 		Padding(0, 1).
-		Render("Beads Pipeline")
+		Render(m.Config().Title)
 
 	var content strings.Builder
 	content.WriteString(header + "\n")
@@ -83,7 +107,7 @@ func (m *BeadsPanel) View() string {
 
 	// Calculate remaining height
 	usedHeight := lipgloss.Height(header) + lipgloss.Height(statsStyled) + 2 // +2 for newlines
-	remainingHeight := m.height - usedHeight
+	remainingHeight := h - usedHeight
 	if remainingHeight < 0 {
 		remainingHeight = 0
 	}
@@ -107,7 +131,7 @@ func (m *BeadsPanel) View() string {
 				assignee = fmt.Sprintf(" (@%s)", b.Assignee)
 			}
 
-			titleWidth := m.width - 10 - len(assignee)
+			titleWidth := w - 10 - len(assignee)
 			if titleWidth < 10 {
 				titleWidth = 10
 			}
@@ -136,7 +160,7 @@ func (m *BeadsPanel) View() string {
 				prioStyle = prioStyle.Foreground(t.Yellow)
 			}
 
-			titleWidth := m.width - 14
+			titleWidth := w - 14
 			if titleWidth < 10 {
 				titleWidth = 10
 			}
