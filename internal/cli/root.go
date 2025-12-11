@@ -583,6 +583,7 @@ func init() {
 		newQuotaCmd(),
 		newPipelineCmd(),
 		newMailCmd(),
+		newPluginsCmd(),
 
 		// Session navigation
 		newAttachCmd(),

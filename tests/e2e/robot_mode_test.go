@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -124,6 +125,78 @@ func TestRobotPlan(t *testing.T) {
 		if cmd, ok := action["command"].(string); !ok || strings.TrimSpace(cmd) == "" {
 			t.Fatalf("actions[%d] missing non-empty command", i)
 		}
+	}
+}
+
+// TestRobotStatusWithLiveSession ensures a real session appears in robot-status.
+func TestRobotStatusWithLiveSession(t *testing.T) {
+	testutil.RequireE2E(t)
+	testutil.RequireTmux(t)
+	testutil.RequireNTMBinary(t)
+
+	logger := testutil.NewTestLogger(t, t.TempDir())
+
+	session := fmt.Sprintf("ntm_robot_status_%d", time.Now().UnixNano())
+	projectsBase := t.TempDir()
+	projectDir := filepath.Join(projectsBase, session)
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	configDir := t.TempDir()
+	configPath := filepath.Join(configDir, "config.toml")
+	configContent := fmt.Sprintf(`
+projects_base = %q
+
+[agents]
+claude = "bash"
+codex = "bash"
+gemini = "bash"
+`, projectsBase)
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	t.Cleanup(func() {
+		exec.Command("tmux", "kill-session", "-t", session).Run()
+	})
+
+	// Spawn session with two agents (claude+codex)
+	logger.LogSection("spawn session")
+	if _, err := logger.Exec("ntm", "--config", configPath, "spawn", session, "--cc=1", "--cod=1"); err != nil {
+		t.Fatalf("ntm spawn failed: %v", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	// robot-status should include the session and at least 2 agents
+	logger.LogSection("robot-status")
+	out := testutil.AssertCommandSuccess(t, logger, "ntm", "--config", configPath, "--robot-status")
+
+	var payload struct {
+		Sessions []struct {
+			Name    string                   `json:"name"`
+			Agents  []map[string]interface{} `json:"agents"`
+			Summary struct {
+				TotalAgents int `json:"total_agents"`
+			} `json:"summary"`
+		} `json:"sessions"`
+	}
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	found := false
+	for _, s := range payload.Sessions {
+		if s.Name == session {
+			found = true
+			if s.Summary.TotalAgents < 2 {
+				t.Fatalf("expected at least 2 agents (claude+codex) in summary, got %d", s.Summary.TotalAgents)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("robot-status did not include session %q; payload: %+v", session, payload)
 	}
 }
 

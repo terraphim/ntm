@@ -39,6 +39,9 @@ type SpawnOptions struct {
 	CassContextQuery string
 	NoCassContext    bool
 	Prompt           string
+
+	// Hooks
+	NoHooks bool
 }
 
 func newSpawnCmd() *cobra.Command {
@@ -52,6 +55,7 @@ func newSpawnCmd() *cobra.Command {
 	var contextLimit int
 	var contextDays int
 	var prompt string
+	var noHooks bool
 
 	cmd := &cobra.Command{
 		Use:   "spawn <session-name>",
@@ -210,6 +214,7 @@ Examples:
 				CassContextQuery: contextQuery,
 				NoCassContext:    noCassContext,
 				Prompt:           prompt,
+				NoHooks:          noHooks,
 			}
 
 			return spawnSessionLogic(opts)
@@ -231,6 +236,7 @@ Examples:
 	cmd.Flags().IntVar(&contextLimit, "cass-context-limit", 0, "Max past sessions to include")
 	cmd.Flags().IntVar(&contextDays, "cass-context-days", 0, "Look back N days")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Prompt to initialize agents with")
+	cmd.Flags().BoolVar(&noHooks, "no-hooks", false, "Disable command hooks")
 
 	// Register plugin flags dynamically
 	// Note: We scan for plugins here to register flags.
@@ -299,13 +305,17 @@ func spawnSessionLogic(opts SpawnOptions) error {
 	dir := cfg.GetProjectDir(opts.Session)
 
 	// Initialize hook executor
-	hookExec, err := hooks.NewExecutorFromConfig()
-	if err != nil {
-		// Log warning but don't fail if hooks can't be loaded
-		if !IsJSONOutput() {
-			fmt.Printf("⚠ Warning: could not load hooks config: %v\n", err)
+	var hookExec *hooks.Executor
+	if !opts.NoHooks {
+		var err error
+		hookExec, err = hooks.NewExecutorFromConfig()
+		if err != nil {
+			// Log warning but don't fail if hooks can't be loaded
+			if !IsJSONOutput() {
+				fmt.Printf("⚠ Warning: could not load hooks config: %v\n", err)
+			}
+			hookExec = hooks.NewExecutor(nil) // Use empty config
 		}
-		hookExec = hooks.NewExecutor(nil) // Use empty config
 	}
 
 	// Build execution context for hooks
@@ -321,7 +331,7 @@ func spawnSessionLogic(opts SpawnOptions) error {
 	}
 
 	// Run pre-spawn hooks
-	if hookExec.HasHooksForEvent(hooks.EventPreSpawn) {
+	if hookExec != nil && hookExec.HasHooksForEvent(hooks.EventPreSpawn) {
 		if !IsJSONOutput() {
 			fmt.Println("Running pre-spawn hooks...")
 		}
@@ -631,7 +641,7 @@ func spawnSessionLogic(opts SpawnOptions) error {
 	}
 
 	// Run post-spawn hooks
-	if hookExec.HasHooksForEvent(hooks.EventPostSpawn) {
+	if hookExec != nil && hookExec.HasHooksForEvent(hooks.EventPostSpawn) {
 		if !IsJSONOutput() {
 			fmt.Println("Running post-spawn hooks...")
 		}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/palette"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 	"github.com/Dicklesworthstone/ntm/internal/tui/theme"
+	"github.com/Dicklesworthstone/ntm/internal/watcher"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
@@ -27,24 +29,26 @@ func newWatchCmd() *cobra.Command {
 		noColor      bool
 		noTimestamps bool
 		pollInterval int
+		watchPattern string
+		watchCommand string
 	)
 
 	cmd := &cobra.Command{
 		Use:     "watch [session-name]",
 		Aliases: []string{"w"},
-		Short:   "Stream agent output to terminal without tmux attach",
-		Long: `Watch mode streams agent output directly to your terminal.
+		Short:   "Stream agent output or watch files to trigger commands",
+		Long: `Watch mode streams agent output or monitors files.
 
-Monitor agent activity without attaching to the tmux session.
-Output from each pane is prefixed with the pane name and timestamp.
+1. Stream output (default):
+   Monitor agent activity without attaching to the tmux session.
+
+2. File watcher:
+   Monitor file changes and trigger commands in the session.
 
 Examples:
   ntm watch myproject              # Stream all panes
   ntm watch myproject --cc         # Only Claude agents
-  ntm watch myproject --cod        # Only Codex agents
-  ntm watch myproject --pane=cc_1  # Specific pane
-  ntm watch myproject --activity   # Only show when output appears
-  ntm watch myproject --tail=50    # Start with last 50 lines`,
+  ntm watch myproject --pattern="*.go" --command="go test ./..." # Run tests on change`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var session string
@@ -62,6 +66,8 @@ Examples:
 				noColor:      noColor,
 				noTimestamps: noTimestamps,
 				pollInterval: time.Duration(pollInterval) * time.Millisecond,
+				watchPattern: watchPattern,
+				watchCommand: watchCommand,
 			}
 
 			return runWatch(session, opts)
@@ -77,6 +83,8 @@ Examples:
 	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable colors")
 	cmd.Flags().BoolVar(&noTimestamps, "no-timestamps", false, "Disable timestamps")
 	cmd.Flags().IntVar(&pollInterval, "interval", 250, "Poll interval in milliseconds")
+	cmd.Flags().StringVar(&watchPattern, "pattern", "", "File pattern to watch (e.g. '*.go')")
+	cmd.Flags().StringVar(&watchCommand, "command", "", "Command to send to agent on change")
 
 	return cmd
 }
@@ -91,6 +99,8 @@ type watchOptions struct {
 	noColor      bool
 	noTimestamps bool
 	pollInterval time.Duration
+	watchPattern string
+	watchCommand string
 }
 
 func runWatch(session string, opts watchOptions) error {
@@ -142,6 +152,11 @@ func runWatch(session string, opts watchOptions) error {
 
 	// Get theme for colors
 	t := theme.Current()
+
+	// File watching mode
+	if opts.watchPattern != "" {
+		return runFileWatch(ctx, session, opts, t)
+	}
 
 	// Start watching
 	return watchLoop(ctx, session, opts, t)
@@ -374,4 +389,64 @@ func printPaneOutput(pane tmux.Pane, output string, opts watchOptions, t theme.T
 			}
 		}
 	}
+}
+
+func runFileWatch(ctx context.Context, session string, opts watchOptions, t theme.Theme) error {
+	if opts.watchCommand == "" {
+		return fmt.Errorf("--command is required with --pattern")
+	}
+
+	fmt.Printf("\nWatching files matching '%s' in current directory...\n", opts.watchPattern)
+	fmt.Printf("Will run command: %s\n", opts.watchCommand)
+	fmt.Println("Press Ctrl+C to stop")
+
+	handler := func(events []watcher.Event) {
+		matched := false
+		for _, e := range events {
+			name := filepath.Base(e.Path)
+			// Simple shell glob matching
+			if m, _ := filepath.Match(opts.watchPattern, name); m {
+				matched = true
+				if !opts.noColor {
+					fmt.Printf("File changed: %s\n", e.Path)
+				}
+				break
+			}
+		}
+
+		if matched {
+			// Determine targets
+			panes, err := tmux.GetPanes(session)
+			if err != nil {
+				fmt.Printf("Error getting panes: %v\n", err)
+				return
+			}
+
+			targets := filterPanes(panes, opts)
+			if len(targets) == 0 {
+				fmt.Println("No target agents found")
+				return
+			}
+
+			fmt.Printf("Triggering command on %d pane(s)...\n", len(targets))
+			for _, p := range targets {
+				if err := tmux.SendKeys(p.ID, opts.watchCommand, true); err != nil {
+					fmt.Printf("Failed to send to pane %s: %v\n", p.ID, err)
+				}
+			}
+		}
+	}
+
+	w, err := watcher.New(handler, watcher.WithRecursive(true))
+	if err != nil {
+		return fmt.Errorf("failed to create watcher: %w", err)
+	}
+	defer w.Close()
+
+	if err := w.Add("."); err != nil {
+		return fmt.Errorf("failed to watch directory: %w", err)
+	}
+
+	<-ctx.Done()
+	return nil
 }

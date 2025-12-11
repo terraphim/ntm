@@ -34,6 +34,43 @@ func skipIfNoTmux(t *testing.T) {
 	}
 }
 
+func TestParseAgentFromTitle(t *testing.T) {
+	tests := []struct {
+		title       string
+		wantType    AgentType
+		wantVariant string
+		wantTags    []string
+	}{
+		{"proj__cc_1", AgentClaude, "", nil},
+		{"proj__cod_2", AgentCodex, "", nil},
+		{"proj__gmi_3", AgentGemini, "", nil},
+		{"proj__cc_4_opus", AgentClaude, "opus", nil},
+		{"proj__cod_5_sonnet", AgentCodex, "sonnet", nil},
+		{"proj__gmi_6_flash", AgentGemini, "flash", nil},
+		{"proj__cc_7_opus[foo,bar]", AgentClaude, "opus", []string{"foo", "bar"}},
+		{"proj__foo_1", AgentUser, "", nil},
+		{"plain-title", AgentUser, "", nil},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.title, func(t *testing.T) {
+			gotType, gotVariant, gotTags := parseAgentFromTitle(tt.title)
+			if gotType != tt.wantType || gotVariant != tt.wantVariant {
+				t.Fatalf("parseAgentFromTitle(%q) = (%v,%q); want (%v,%q)", tt.title, gotType, gotVariant, tt.wantType, tt.wantVariant)
+			}
+			if len(gotTags) != len(tt.wantTags) {
+				t.Fatalf("parseAgentFromTitle(%q) tags len=%d want %d", tt.title, len(gotTags), len(tt.wantTags))
+			}
+			for i := range tt.wantTags {
+				if gotTags[i] != tt.wantTags[i] {
+					t.Fatalf("parseAgentFromTitle(%q) tags[%d]=%q want %q", tt.title, i, gotTags[i], tt.wantTags[i])
+				}
+			}
+		})
+	}
+}
+
 func TestValidateSessionName(t *testing.T) {
 	tests := []struct {
 		name    string

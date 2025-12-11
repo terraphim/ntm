@@ -719,6 +719,13 @@ Keep docs concise but complete.`,
 			Prompt: `Pull latest changes from main branch and resolve any conflicts.
 Run tests after merging to ensure nothing is broken.`,
 		},
+		{
+			Key:      "check_project_inbox",
+			Label:    "Check Project Inbox",
+			Category: "Coordination",
+			Prompt: `Check the project inbox for any new messages from other agents or the human overseer.
+Run 'ntm mail inbox' to see the full list of messages.`,
+		},
 
 		// Investigation
 		{

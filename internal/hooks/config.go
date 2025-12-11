@@ -25,6 +25,8 @@ const (
 	EventPostAdd      CommandEvent = "post-add"
 	EventPreCreate    CommandEvent = "pre-create"
 	EventPostCreate   CommandEvent = "post-create"
+	EventPreKill      CommandEvent = "pre-kill"
+	EventPostKill     CommandEvent = "post-kill"
 	EventPreShutdown  CommandEvent = "pre-shutdown"
 	EventPostShutdown CommandEvent = "post-shutdown"
 )
@@ -36,6 +38,7 @@ func AllCommandEvents() []CommandEvent {
 		EventPreSend, EventPostSend,
 		EventPreAdd, EventPostAdd,
 		EventPreCreate, EventPostCreate,
+		EventPreKill, EventPostKill,
 		EventPreShutdown, EventPostShutdown,
 	}
 }
@@ -274,28 +277,76 @@ func LoadCommandHooksFromMainConfig(mainConfigPath string) (*CommandHooksConfig,
 	return &cfg, nil
 }
 
-// LoadAllCommandHooks loads hooks from both dedicated hooks.toml and main config.toml
-// Hooks from hooks.toml are loaded first, then main config hooks are appended
+// DefaultCommandHooksDir returns the default hooks directory path
+func DefaultCommandHooksDir() string {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "ntm", "hooks")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "ntm", "hooks")
+}
+
+// LoadHooksFromDirectory loads command hooks from all .toml files in a directory
+func LoadHooksFromDirectory(dir string) (*CommandHooksConfig, error) {
+	if dir == "" {
+		dir = DefaultCommandHooksDir()
+	}
+
+	combined := &CommandHooksConfig{
+		Hooks: []CommandHook{},
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return combined, nil
+		}
+		return nil, fmt.Errorf("reading hooks directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".toml") {
+			continue
+		}
+
+		path := filepath.Join(dir, entry.Name())
+		cfg, err := LoadCommandHooks(path)
+		if err != nil {
+			return nil, fmt.Errorf("loading hook file %s: %w", entry.Name(), err)
+		}
+		combined.Hooks = append(combined.Hooks, cfg.Hooks...)
+	}
+
+	return combined, nil
+}
+
+// LoadAllCommandHooks loads hooks from hooks.toml, hooks/*.toml, and config.toml
 func LoadAllCommandHooks() (*CommandHooksConfig, error) {
-	// Load from dedicated hooks file first
+	var allHooks []CommandHook
+
+	// 1. Load from dedicated hooks.toml
 	hooksConfig, err := LoadCommandHooks("")
 	if err != nil {
 		return nil, err
 	}
+	allHooks = append(allHooks, hooksConfig.Hooks...)
 
-	// Load from main config
+	// 2. Load from hooks directory
+	dirHooksConfig, err := LoadHooksFromDirectory("")
+	if err != nil {
+		return nil, err
+	}
+	allHooks = append(allHooks, dirHooksConfig.Hooks...)
+
+	// 3. Load from main config
 	mainConfig, err := LoadCommandHooksFromMainConfig("")
 	if err != nil {
 		// Non-fatal - main config might not have hooks
-		return hooksConfig, nil
+		return &CommandHooksConfig{Hooks: allHooks}, nil
 	}
+	allHooks = append(allHooks, mainConfig.Hooks...)
 
-	// Merge: dedicated hooks file hooks come first
-	combined := &CommandHooksConfig{
-		Hooks: append(hooksConfig.Hooks, mainConfig.Hooks...),
-	}
-
-	return combined, nil
+	return &CommandHooksConfig{Hooks: allHooks}, nil
 }
 
 // ExpandWorkDir expands the workdir for a command hook, substituting variables
