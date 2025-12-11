@@ -249,6 +249,33 @@ func TestMailMarkReportsErrorsInJSON(t *testing.T) {
 	}
 }
 
+func TestMailMarkJSONPartialSuccess(t *testing.T) {
+	inbox := []agentmail.InboxMessage{}
+	stub := newMailStub(t, inbox)
+	stub.failIDs[7] = "already read"
+	defer stub.Close()
+
+	t.Setenv("AGENT_MAIL_URL", stub.server.URL+"/")
+	t.Setenv("AGENT_NAME", "EnvAgent")
+
+	out, err := execCommand(t, "mail", "read", "mysession", "7", "8", "--json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	dec := json.NewDecoder(strings.NewReader(out))
+	var summary markSummary
+	if err := dec.Decode(&summary); err != nil {
+		t.Fatalf("decode summary: %v (out=%s)", err, out)
+	}
+	if summary.Processed != 1 || summary.Errors != 1 || summary.Skipped != 1 {
+		t.Fatalf("unexpected summary: %+v", summary)
+	}
+	if len(summary.IDs) != 2 || summary.IDs[0] != 7 || summary.IDs[1] != 8 {
+		t.Fatalf("unexpected ids: %+v", summary.IDs)
+	}
+}
+
 func TestMailReadWithFilters(t *testing.T) {
 	inbox := []agentmail.InboxMessage{
 		{ID: 1, From: "BlueBear", Importance: "urgent", CreatedTS: time.Now()},

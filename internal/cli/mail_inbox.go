@@ -2,9 +2,7 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,6 +21,7 @@ func newMailInboxCmd() *cobra.Command {
 		agentFilter   string
 		urgent        bool
 		limit         int
+		jsonFmt       bool
 	)
 
 	cmd := &cobra.Command{
@@ -43,7 +42,7 @@ Examples:
 			if len(args) > 0 {
 				session = args[0]
 			}
-			return runMailInbox(cmd, session, sessionAgents, agentFilter, urgent, limit)
+			return runMailInbox(cmd, session, sessionAgents, agentFilter, urgent, limit, jsonFmt)
 		},
 	}
 
@@ -51,6 +50,7 @@ Examples:
 	cmd.Flags().StringVar(&agentFilter, "agent", "", "filter to messages involving specific agent")
 	cmd.Flags().BoolVar(&urgent, "urgent", false, "show only urgent messages")
 	cmd.Flags().IntVar(&limit, "limit", 50, "max messages per agent inbox to fetch")
+	cmd.Flags().BoolVar(&jsonFmt, "json", false, "Output in JSON format")
 
 	return cmd
 }
@@ -67,7 +67,7 @@ type aggregatedMessage struct {
 	Recipients  []string  `json:"recipients"`
 }
 
-func runMailInbox(cmd *cobra.Command, session string, sessionAgents bool, agentFilter string, urgent bool, limit int) error {
+func runMailInbox(cmd *cobra.Command, session string, sessionAgents bool, agentFilter string, urgent bool, limit int, jsonFmt bool) error {
 	projectKey, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getting working directory: %w", err)
@@ -229,7 +229,7 @@ func runMailInbox(cmd *cobra.Command, session string, sessionAgents bool, agentF
 	})
 
 	// 5. Output
-	if IsJSONOutput() {
+	if IsJSONOutput() || jsonFmt {
 		return encodeJSONResult(mailJSONWriter(cmd), result)
 	}
 
@@ -276,7 +276,7 @@ func runMailInbox(cmd *cobra.Command, session string, sessionAgents bool, agentF
 
 		// Line 3: Time | Thread | Flags
 		timeStr := m.CreatedTS.Format("15:04")
-		ago := time.Since(m.CreatedTS).Round(time.Minute)
+			ago := time.Since(m.CreatedTS).Round(time.Minute)
 		if ago < 24*time.Hour {
 			timeStr = fmt.Sprintf("%s (%dm ago)", timeStr, int(ago.Minutes()))
 		}
@@ -307,55 +307,4 @@ func runMailInbox(cmd *cobra.Command, session string, sessionAgents bool, agentF
 	}
 
 	return nil
-}
-
-// resolveAgentName tries to get the agent name from a pane.
-func resolveAgentName(p tmux.Pane) string {
-	// Try pane title first (may contain agent name)
-	if p.Title != "" && !strings.HasPrefix(p.Title, "pane") {
-		if looksLikeAgentName(p.Title) {
-			return p.Title
-		}
-	}
-
-	// Fall back to generated name based on type and index
-	var prefix string
-	switch p.Type {
-	case tmux.AgentClaude:
-		prefix = "Claude"
-	case tmux.AgentCodex:
-		prefix = "Codex"
-	case tmux.AgentGemini:
-		prefix = "Gemini"
-	default:
-		return ""
-	}
-	return fmt.Sprintf("%sAgent%d", prefix, p.Index)
-}
-
-// looksLikeAgentName checks if a string looks like an AdjectiveNoun agent name.
-func looksLikeAgentName(s string) bool {
-	if strings.Contains(s, " ") || strings.Contains(s, "_") || strings.Contains(s, "-") {
-		return false
-	}
-	if len(s) == 0 || s[0] < 'A' || s[0] > 'Z' {
-		return false
-	}
-	for i := 1; i < len(s); i++ {
-		if s[i] >= 'A' && s[i] <= 'Z' {
-			return true
-		}
-	}
-	return false
-}
-
-func mailJSONWriter(cmd *cobra.Command) io.Writer {
-	return io.MultiWriter(cmd.Root().OutOrStdout(), cmd.Root().ErrOrStderr())
-}
-
-// encodeJSONResult is a helper to output JSON.
-func encodeJSONResult(w io.Writer, v interface{}) error {
-	encoder := json.NewEncoder(w)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(v)
 }
