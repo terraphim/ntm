@@ -3,6 +3,8 @@ package robot
 import (
 	"strings"
 	"testing"
+
+	"github.com/Dicklesworthstone/ntm/internal/alerts"
 )
 
 func TestRenderAgentTable(t *testing.T) {
@@ -68,5 +70,81 @@ func TestRenderSuggestedActions(t *testing.T) {
 	}
 	if !strings.Contains(out, "2. Trim logs") {
 		t.Errorf("second action missing: %s", out)
+	}
+}
+
+func TestDefaultMarkdownOptions(t *testing.T) {
+	opts := DefaultMarkdownOptions()
+
+	if opts.MaxBeads != 5 {
+		t.Errorf("expected MaxBeads=5, got %d", opts.MaxBeads)
+	}
+	if opts.MaxAlerts != 10 {
+		t.Errorf("expected MaxAlerts=10, got %d", opts.MaxAlerts)
+	}
+	if opts.Compact {
+		t.Error("expected Compact=false by default")
+	}
+	if opts.Session != "" {
+		t.Errorf("expected empty Session, got %q", opts.Session)
+	}
+}
+
+func TestTruncateStr(t *testing.T) {
+	tests := []struct {
+		input  string
+		maxLen int
+		want   string
+	}{
+		{"hello", 10, "hello"},
+		{"hello world", 5, "he..."},
+		{"ab", 3, "ab"},
+		{"abcd", 3, "abc"},
+		{"", 5, ""},
+	}
+
+	for _, tc := range tests {
+		got := truncateStr(tc.input, tc.maxLen)
+		if got != tc.want {
+			t.Errorf("truncateStr(%q, %d) = %q, want %q", tc.input, tc.maxLen, got, tc.want)
+		}
+	}
+}
+
+func TestAlertSeverityOrder(t *testing.T) {
+	tests := []struct {
+		severity alerts.Severity
+		want     int
+	}{
+		{alerts.SeverityCritical, 0},
+		{alerts.SeverityWarning, 1},
+		{alerts.SeverityInfo, 2},
+		{alerts.Severity("unknown"), 2},
+	}
+
+	for _, tc := range tests {
+		got := alertSeverityOrder(tc.severity)
+		if got != tc.want {
+			t.Errorf("alertSeverityOrder(%v) = %d, want %d", tc.severity, got, tc.want)
+		}
+	}
+}
+
+func TestAlertSeverityIcon(t *testing.T) {
+	tests := []struct {
+		severity alerts.Severity
+		want     string
+	}{
+		{alerts.SeverityCritical, "🔴"},
+		{alerts.SeverityWarning, "⚠️"},
+		{alerts.SeverityInfo, "ℹ️"},
+		{alerts.Severity("other"), "ℹ️"},
+	}
+
+	for _, tc := range tests {
+		got := alertSeverityIcon(tc.severity)
+		if got != tc.want {
+			t.Errorf("alertSeverityIcon(%v) = %q, want %q", tc.severity, got, tc.want)
+		}
 	}
 }

@@ -345,6 +345,16 @@ Shell Integration:
 			}
 			return
 		}
+		if robotMarkdown {
+			opts := robot.DefaultMarkdownOptions()
+			opts.Compact = robotMarkdownCompact
+			opts.Session = robotMarkdownSession
+			if err := robot.PrintMarkdown(cfg, opts); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 		if robotSave != "" {
 			opts := robot.SaveOptions{
 				Session:    robotSave,
@@ -459,6 +469,11 @@ var (
 	// Robot-terse flag for ultra-compact output
 	robotTerse bool // single-line encoded state
 
+	// Robot-markdown flags for token-efficient markdown output
+	robotMarkdown        bool   // markdown output mode
+	robotMarkdownCompact bool   // ultra-compact markdown
+	robotMarkdownSession string // filter to specific session
+
 	// Robot-save flags for session state persistence
 	robotSave       string // session name to save
 	robotSaveOutput string // custom output file path
@@ -550,6 +565,11 @@ func init() {
 
 	// Robot-terse flag for ultra-compact output
 	rootCmd.Flags().BoolVar(&robotTerse, "robot-terse", false, "Output ultra-compact single-line state (e.g., S:proj|A:2/3|W:2|I:1|E:0|C:0%|B:R10/I5/B2|M:3|!:1c,2w)")
+
+	// Robot-markdown flags for token-efficient markdown output
+	rootCmd.Flags().BoolVar(&robotMarkdown, "robot-markdown", false, "Output system state as token-efficient markdown for LLM consumption")
+	rootCmd.Flags().BoolVar(&robotMarkdownCompact, "md-compact", false, "Use ultra-compact markdown format (used with --robot-markdown)")
+	rootCmd.Flags().StringVar(&robotMarkdownSession, "md-session", "", "Filter markdown output to specific session (used with --robot-markdown)")
 
 	// Robot-save flags for session state persistence
 	rootCmd.Flags().StringVar(&robotSave, "robot-save", "", "Save session state as JSON for AI agents")
@@ -833,7 +853,7 @@ func needsConfigLoading(cmdName string) bool {
 		if robotStatus || robotPlan || robotSnapshot || robotTail != "" ||
 			robotSend != "" || robotAck != "" || robotSpawn != "" ||
 			robotInterrupt != "" || robotGraph || robotMail || robotHealth ||
-			robotTerse || robotSave != "" || robotRestore != "" {
+			robotTerse || robotMarkdown || robotSave != "" || robotRestore != "" {
 			return true
 		}
 	}

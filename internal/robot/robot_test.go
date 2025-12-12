@@ -1606,14 +1606,15 @@ func TestParseTerse(t *testing.T) {
 
 func TestTerseStateRoundTrip(t *testing.T) {
 	original := TerseState{
-		Session:      "test",
-		ActiveAgents: 5,
-		TotalAgents:  8,
-		ReadyBeads:   20,
-		BlockedBeads: 10,
-		InProgress:   5,
-		UnreadMail:   2,
-		AlertCount:   3,
+		Session:        "test",
+		ActiveAgents:   5,
+		TotalAgents:    8,
+		ReadyBeads:     20,
+		BlockedBeads:   10,
+		InProgressBead: 5,
+		UnreadMail:     2,
+		CriticalAlerts: 1,
+		WarningAlerts:  2,
 	}
 
 	str := original.String()
@@ -1629,14 +1630,14 @@ func TestTerseStateRoundTrip(t *testing.T) {
 
 func TestTerseStateMarshal(t *testing.T) {
 	state := TerseState{
-		Session:      "myproject",
-		ActiveAgents: 2,
-		TotalAgents:  3,
-		ReadyBeads:   10,
-		BlockedBeads: 5,
-		InProgress:   2,
-		UnreadMail:   3,
-		AlertCount:   1,
+		Session:        "myproject",
+		ActiveAgents:   2,
+		TotalAgents:    3,
+		ReadyBeads:     10,
+		BlockedBeads:   5,
+		InProgressBead: 2,
+		UnreadMail:     3,
+		CriticalAlerts: 1,
 	}
 
 	data, err := json.Marshal(state)
