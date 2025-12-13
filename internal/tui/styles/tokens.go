@@ -523,8 +523,8 @@ func PanelStyle(focused bool, width, height int) lipgloss.Style {
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(borderColor).
-		Width(width - 2).   // Account for borders
-		Height(height - 2). // Account for borders
+		Width(width-2).   // Account for borders
+		Height(height-2). // Account for borders
 		Padding(0, tokens.PaddingInline)
 }
 

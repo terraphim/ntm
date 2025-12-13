@@ -111,10 +111,10 @@ func RenderHelpBar(opts HelpBarOptions) string {
 
 // HelpOverlayOptions configures the help overlay appearance.
 type HelpOverlayOptions struct {
-	Title    string       // Overlay title (default: "Keyboard Shortcuts")
+	Title    string        // Overlay title (default: "Keyboard Shortcuts")
 	Sections []HelpSection // Grouped key hints
-	Width    int          // Overlay width (0 = auto-size)
-	MaxWidth int          // Maximum width cap
+	Width    int           // Overlay width (0 = auto-size)
+	MaxWidth int           // Maximum width cap
 }
 
 // HelpSection groups related key hints under a heading.
@@ -295,6 +295,8 @@ func PaletteHelpSections() []HelpSection {
 			Hints: []KeyHint{
 				{Key: "Enter", Desc: "Select command"},
 				{Key: "1-4", Desc: "Select target (in target phase)"},
+				{Key: "Ctrl+P", Desc: "Pin / unpin command"},
+				{Key: "Ctrl+F", Desc: "Favorite / unfavorite command"},
 				{Key: "Type", Desc: "Filter commands"},
 			},
 		},
@@ -335,6 +337,7 @@ func DashboardHelpSections() []HelpSection {
 			Title: "View Controls",
 			Hints: []KeyHint{
 				{Key: "r", Desc: "Refresh data"},
+				{Key: "d", Desc: "Toggle diagnostics"},
 				{Key: "?", Desc: "Toggle help"},
 			},
 		},

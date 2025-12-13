@@ -3,6 +3,7 @@ package icons
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 )
 
@@ -130,10 +131,10 @@ var NerdFonts = IconSet{
 	General:       "",
 
 	// Decorations
-	Sparkle:   "✨",
-	Fire:      "🔥",
+	Sparkle:   "✦",
+	Fire:      "▲",
 	Lightning: "⚡",
-	Rocket:    "🚀",
+	Rocket:    "➜",
 	Gear:      "",
 
 	// Help
@@ -162,8 +163,8 @@ var Unicode = IconSet{
 	Question: "?",
 
 	// Objects
-	Folder:   "📁",
-	File:     "📄",
+	Folder:   "▣",
+	File:     "▤",
 	Terminal: "▢",
 	Pane:     "▢",
 	Window:   "◻",
@@ -172,13 +173,13 @@ var Unicode = IconSet{
 	// Actions
 	Send:   "➤",
 	Target: "◎",
-	Search: "🔍",
+	Search: "⌕",
 	Filter: "⊛",
 	Copy:   "⎘",
-	Save:   "💾",
+	Save:   "⤓",
 	Kill:   "✕",
 	Zoom:   "⊕",
-	View:   "👁",
+	View:   "◉",
 
 	// Branding
 	Palette: "◆",
@@ -187,17 +188,17 @@ var Unicode = IconSet{
 	Codex:   "O",
 	Gemini:  "G",
 	All:     "*",
-	User:    "👤",
+	User:    "U",
 
 	// Categories
 	Quick:         "⚡",
 	CodeQuality:   "✎",
 	Coordination:  "⇄",
-	Investigation: "🔍",
+	Investigation: "⌕",
 	General:       "•",
 
 	// Decorations
-	Sparkle:   "✨",
+	Sparkle:   "✦",
 	Fire:      "*",
 	Lightning: "⚡",
 	Rocket:    "→",
@@ -272,6 +273,29 @@ var ASCII = IconSet{
 
 	// Help
 	Help: "?",
+}
+
+func (i IconSet) WithFallback(fallback IconSet) IconSet {
+	if reflect.DeepEqual(i, fallback) {
+		return i
+	}
+
+	out := i
+	dst := reflect.ValueOf(&out).Elem()
+	fb := reflect.ValueOf(fallback)
+
+	for idx := 0; idx < dst.NumField(); idx++ {
+		f := dst.Field(idx)
+		if f.Kind() != reflect.String {
+			continue
+		}
+		if f.String() != "" {
+			continue
+		}
+		f.SetString(fb.Field(idx).String())
+	}
+
+	return out
 }
 
 // HasNerdFonts detects if the terminal likely supports Nerd Fonts
@@ -349,23 +373,23 @@ func Detect() IconSet {
 	// Explicit preference via env var
 	switch os.Getenv("NTM_ICONS") {
 	case "nerd", "nerdfonts":
-		return NerdFonts
+		return NerdFonts.WithFallback(Unicode).WithFallback(ASCII)
 	case "unicode":
-		return Unicode
+		return Unicode.WithFallback(ASCII)
 	case "ascii":
 		return ASCII
 	case "auto":
 		if HasNerdFonts() {
-			return NerdFonts
+			return NerdFonts.WithFallback(Unicode).WithFallback(ASCII)
 		}
 		if HasUnicode() {
-			return Unicode
+			return Unicode.WithFallback(ASCII)
 		}
 	}
 
 	// Legacy: NTM_USE_ICONS or NERD_FONTS env vars (explicit opt-in)
 	if os.Getenv("NTM_USE_ICONS") == "1" || os.Getenv("NERD_FONTS") == "1" {
-		return NerdFonts
+		return NerdFonts.WithFallback(Unicode).WithFallback(ASCII)
 	}
 
 	// Default to ASCII to avoid width drift issues.
