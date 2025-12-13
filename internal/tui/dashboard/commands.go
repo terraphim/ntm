@@ -34,8 +34,21 @@ func (m Model) fetchBeadsCmd() tea.Cmd {
 // fetchAlertsCmd aggregates alerts
 func (m Model) fetchAlertsCmd() tea.Cmd {
 	return func() tea.Msg {
-		// Use default config for alerts generator
-		cfg := alerts.DefaultConfig()
+		var cfg alerts.Config
+		if m.cfg != nil {
+			cfg = alerts.ToConfigAlerts(
+				m.cfg.Alerts.Enabled,
+				m.cfg.Alerts.AgentStuckMinutes,
+				m.cfg.Alerts.DiskLowThresholdGB,
+				m.cfg.Alerts.MailBacklogThreshold,
+				m.cfg.Alerts.BeadStaleHours,
+				m.cfg.Alerts.ResolvedPruneMinutes,
+				m.cfg.ProjectsBase,
+			)
+		} else {
+			cfg = alerts.DefaultConfig()
+		}
+
 		gen := alerts.NewGenerator(cfg)
 		activeAlerts := gen.GenerateAll()
 		return AlertsUpdateMsg{Alerts: activeAlerts}
