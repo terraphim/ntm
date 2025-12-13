@@ -182,6 +182,53 @@ var CatppuccinLatte = Theme{
 	User:   lipgloss.Color("#40a02b"),
 }
 
+// Plain is a no-color theme that uses empty/default colors.
+// Used when NO_COLOR is set or for accessibility needs.
+var Plain = Theme{
+	// Base colors - empty strings mean terminal default
+	Base:     lipgloss.Color(""),
+	Mantle:   lipgloss.Color(""),
+	Crust:    lipgloss.Color(""),
+	Surface0: lipgloss.Color(""),
+	Surface1: lipgloss.Color(""),
+	Surface2: lipgloss.Color(""),
+
+	// Text colors
+	Text:    lipgloss.Color(""),
+	Subtext: lipgloss.Color(""),
+	Overlay: lipgloss.Color(""),
+
+	// Accent colors - all default
+	Rosewater: lipgloss.Color(""),
+	Flamingo:  lipgloss.Color(""),
+	Pink:      lipgloss.Color(""),
+	Mauve:     lipgloss.Color(""),
+	Red:       lipgloss.Color(""),
+	Maroon:    lipgloss.Color(""),
+	Peach:     lipgloss.Color(""),
+	Yellow:    lipgloss.Color(""),
+	Green:     lipgloss.Color(""),
+	Teal:      lipgloss.Color(""),
+	Sky:       lipgloss.Color(""),
+	Sapphire:  lipgloss.Color(""),
+	Blue:      lipgloss.Color(""),
+	Lavender:  lipgloss.Color(""),
+
+	// Semantic colors
+	Primary:   lipgloss.Color(""),
+	Secondary: lipgloss.Color(""),
+	Success:   lipgloss.Color(""),
+	Warning:   lipgloss.Color(""),
+	Error:     lipgloss.Color(""),
+	Info:      lipgloss.Color(""),
+
+	// Agent colors
+	Claude: lipgloss.Color(""),
+	Codex:  lipgloss.Color(""),
+	Gemini: lipgloss.Color(""),
+	User:   lipgloss.Color(""),
+}
+
 // Nord - popular arctic theme
 var Nord = Theme{
 	Base:     lipgloss.Color("#2e3440"),
@@ -226,9 +273,36 @@ var Nord = Theme{
 // Default is the currently active theme
 var Default = CatppuccinMocha
 
+// NoColorEnabled returns true if color output should be disabled.
+// Respects the NO_COLOR standard (https://no-color.org/):
+// - If NO_COLOR exists in environment (any value), colors are disabled
+// - NTM_NO_COLOR=1 also disables colors
+// - NTM_NO_COLOR=0 forces colors ON (overrides NO_COLOR)
+func NoColorEnabled() bool {
+	// NTM-specific override takes precedence
+	ntmNoColor := strings.TrimSpace(os.Getenv("NTM_NO_COLOR"))
+	switch strings.ToLower(ntmNoColor) {
+	case "0", "false", "no", "off":
+		return false // Force colors on
+	case "1", "true", "yes", "on":
+		return true // Force colors off
+	}
+
+	// Check standard NO_COLOR (presence means disabled, regardless of value)
+	_, noColorSet := os.LookupEnv("NO_COLOR")
+	return noColorSet
+}
+
 // FromName returns a theme by name
 func FromName(name string) Theme {
+	// Always return Plain theme if NO_COLOR is enabled
+	if NoColorEnabled() {
+		return Plain
+	}
+
 	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "plain", "none", "no-color", "nocolor":
+		return Plain
 	case "macchiato":
 		return CatppuccinMacchiato
 	case "nord":

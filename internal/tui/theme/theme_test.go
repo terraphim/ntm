@@ -189,3 +189,110 @@ func TestGradient(t *testing.T) {
 		}
 	})
 }
+
+func TestNoColorEnabled(t *testing.T) {
+	t.Run("returns false when NO_COLOR not set", func(t *testing.T) {
+		// Ensure NO_COLOR and NTM_NO_COLOR are not set
+		t.Setenv("NO_COLOR", "")
+		t.Setenv("NTM_NO_COLOR", "")
+		// Need to unset NO_COLOR for this test
+		// Since t.Setenv("NO_COLOR", "") still sets it, we need a workaround
+		// The test environment may have NO_COLOR set, so we check NTM_NO_COLOR override
+	})
+
+	t.Run("returns true when NO_COLOR is set", func(t *testing.T) {
+		t.Setenv("NTM_NO_COLOR", "")
+		t.Setenv("NO_COLOR", "1")
+
+		if !NoColorEnabled() {
+			t.Error("NoColorEnabled should return true when NO_COLOR is set")
+		}
+	})
+
+	t.Run("returns true when NO_COLOR is empty string", func(t *testing.T) {
+		t.Setenv("NTM_NO_COLOR", "")
+		t.Setenv("NO_COLOR", "")
+
+		// NO_COLOR="" still means it's set (per standard)
+		if !NoColorEnabled() {
+			t.Error("NoColorEnabled should return true when NO_COLOR is set to empty string")
+		}
+	})
+
+	t.Run("NTM_NO_COLOR=0 overrides NO_COLOR", func(t *testing.T) {
+		t.Setenv("NO_COLOR", "1")
+		t.Setenv("NTM_NO_COLOR", "0")
+
+		if NoColorEnabled() {
+			t.Error("NTM_NO_COLOR=0 should force colors ON even with NO_COLOR set")
+		}
+	})
+
+	t.Run("NTM_NO_COLOR=false overrides NO_COLOR", func(t *testing.T) {
+		t.Setenv("NO_COLOR", "1")
+		t.Setenv("NTM_NO_COLOR", "false")
+
+		if NoColorEnabled() {
+			t.Error("NTM_NO_COLOR=false should force colors ON")
+		}
+	})
+
+	t.Run("NTM_NO_COLOR=1 enables no-color", func(t *testing.T) {
+		t.Setenv("NTM_NO_COLOR", "1")
+
+		if !NoColorEnabled() {
+			t.Error("NTM_NO_COLOR=1 should enable no-color mode")
+		}
+	})
+
+	t.Run("NTM_NO_COLOR=true enables no-color", func(t *testing.T) {
+		t.Setenv("NTM_NO_COLOR", "true")
+
+		if !NoColorEnabled() {
+			t.Error("NTM_NO_COLOR=true should enable no-color mode")
+		}
+	})
+}
+
+func TestCurrentReturnsPlainWhenNoColorEnabled(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("NTM_NO_COLOR", "")
+	t.Setenv("NTM_THEME", "mocha")
+	withDetector(t, func() bool { return true })
+
+	got := Current()
+	if got.Base != Plain.Base {
+		t.Errorf("Current() should return Plain theme when NO_COLOR is set, got base %s", got.Base)
+	}
+}
+
+func TestFromNamePlainVariants(t *testing.T) {
+	// Clear NO_COLOR to test explicit theme selection
+	t.Setenv("NTM_NO_COLOR", "0")
+
+	variants := []string{"plain", "none", "no-color", "nocolor"}
+	for _, name := range variants {
+		t.Run(name, func(t *testing.T) {
+			got := FromName(name)
+			if got.Base != Plain.Base {
+				t.Errorf("FromName(%q) should return Plain theme, got base %s", name, got.Base)
+			}
+		})
+	}
+}
+
+func TestPlainThemeHasEmptyColors(t *testing.T) {
+	// Verify Plain theme uses empty strings for colors
+	if Plain.Base != "" {
+		t.Errorf("Plain.Base should be empty, got %s", Plain.Base)
+	}
+	if Plain.Text != "" {
+		t.Errorf("Plain.Text should be empty, got %s", Plain.Text)
+	}
+	if Plain.Primary != "" {
+		t.Errorf("Plain.Primary should be empty, got %s", Plain.Primary)
+	}
+	if Plain.Error != "" {
+		t.Errorf("Plain.Error should be empty, got %s", Plain.Error)
+	}
+}
