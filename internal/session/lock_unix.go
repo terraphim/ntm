@@ -1,12 +1,15 @@
 //go:build unix
 
-package history
+package session
 
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 )
+
+var localMu sync.Mutex
 
 // acquireLock acquires both process-level (flock) and thread-level (mutex) locks.
 // Returns an unlock function to release both.
@@ -14,13 +17,13 @@ func acquireLock() (func(), error) {
 	localMu.Lock()
 
 	// Ensure directory exists for lock file
-	path := StoragePath()
-	lockPath := path + ".lock"
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	dir := StorageDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		localMu.Unlock()
 		return nil, err
 	}
 
+	lockPath := filepath.Join(dir, "session.lock")
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
 		localMu.Unlock()

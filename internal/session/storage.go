@@ -31,6 +31,12 @@ func StorageDir() string {
 
 // Save writes a session state to disk.
 func Save(state *SessionState, opts SaveOptions) (string, error) {
+	unlock, err := acquireLock()
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+
 	dir := StorageDir()
 
 	// Ensure directory exists
@@ -62,9 +68,33 @@ func Save(state *SessionState, opts SaveOptions) (string, error) {
 		return "", fmt.Errorf("failed to serialize session state: %w", err)
 	}
 
-	// Write file
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return "", fmt.Errorf("failed to write session file: %w", err)
+	// Atomic write: write to temp file then rename
+	tmpFile, err := os.CreateTemp(dir, "session-*.tmp")
+	if err != nil {
+		return "", fmt.Errorf("creating temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	// Ensure cleanup on error
+	defer func() {
+		_ = tmpFile.Close()
+		if err != nil {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err = tmpFile.Write(data); err != nil {
+		return "", fmt.Errorf("writing to temp file: %w", err)
+	}
+	if err = tmpFile.Sync(); err != nil {
+		return "", fmt.Errorf("syncing temp file: %w", err)
+	}
+	if err = tmpFile.Close(); err != nil {
+		return "", fmt.Errorf("closing temp file: %w", err)
+	}
+
+	if err = os.Rename(tmpPath, path); err != nil {
+		return "", fmt.Errorf("renaming session file: %w", err)
 	}
 
 	return path, nil
@@ -93,10 +123,16 @@ func Load(name string) (*SessionState, error) {
 
 // Delete removes a saved session.
 func Delete(name string) error {
+	unlock, err := acquireLock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	name = sanitizeFilename(name)
 	path := filepath.Join(StorageDir(), name+fileExtension)
 
-	err := os.Remove(path)
+	err = os.Remove(path)
 	if os.IsNotExist(err) {
 		return fmt.Errorf("no saved session named '%s'", name)
 	}
@@ -116,6 +152,12 @@ type SavedSession struct {
 
 // List returns all saved sessions.
 func List() ([]SavedSession, error) {
+	unlock, err := acquireLock()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
 	dir := StorageDir()
 
 	entries, err := os.ReadDir(dir)

@@ -119,8 +119,7 @@ func readAllLocked() ([]HistoryEntry, error) {
 	return entries, nil
 }
 
-// ReadRecent reads the last n entries efficiently.
-// Reads from end of file when possible.
+// ReadRecent reads the last n entries efficiently by scanning backwards.
 func ReadRecent(n int) ([]HistoryEntry, error) {
 	unlock, err := acquireLock()
 	if err != nil {
@@ -128,18 +127,101 @@ func ReadRecent(n int) ([]HistoryEntry, error) {
 	}
 	defer unlock()
 
-	// For simplicity, read all and return last n
-	// Could be optimized with tail-reading for large files
-	entries, err := readAllLocked()
+	if n <= 0 {
+		return []HistoryEntry{}, nil
+	}
+
+	path := StoragePath()
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []HistoryEntry{}, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
+	fileSize := stat.Size()
 
-	if len(entries) <= n {
-		return entries, nil
+	if fileSize == 0 {
+		return []HistoryEntry{}, nil
 	}
 
-	return entries[len(entries)-n:], nil
+	// Scan backwards for newlines
+	const bufferSize = 4096
+	buf := make([]byte, bufferSize)
+	offset := fileSize
+	newlinesFound := 0
+
+	// If the file ends with a newline, we start counting from the one before it.
+	// But JSONL usually implies "line separated", so effectively we count line separators.
+	// Let's just count backward. If we find N+1 newlines, the read starts after the (N+1)th newline.
+	// If we don't find N+1 newlines, we read from start.
+
+	for offset > 0 {
+		readSize := int64(bufferSize)
+		if offset < readSize {
+			readSize = offset
+		}
+		offset -= readSize
+
+		_, err := f.ReadAt(buf[:readSize], offset)
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
+
+		for i := int(readSize) - 1; i >= 0; i-- {
+			if buf[i] == '\n' {
+				// Ignore newline at the very end of file
+				if offset+int64(i) == fileSize-1 {
+					continue
+				}
+				newlinesFound++
+				if newlinesFound >= n {
+					// Found start of the Nth line (from end)
+					offset += int64(i) + 1
+					goto ReadEntries
+				}
+			}
+		}
+	}
+	// If we got here, we didn't find enough newlines, so we read from start
+	offset = 0
+
+ReadEntries:
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	var entries []HistoryEntry
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+
+	for scanner.Scan() {
+		var entry HistoryEntry
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	// We might have read slightly more if we landed in the middle of a line (unlikely with this logic)
+	// or if the file grew (we hold lock though).
+	// But scanner reads line by line.
+	// Just return what we got. If we got more than n, slice it.
+	if len(entries) > n {
+		entries = entries[len(entries)-n:]
+	}
+
+	return entries, nil
 }
 
 // ReadForSession reads entries for a specific session.
@@ -250,6 +332,10 @@ func Prune(keep int) (int, error) {
 		return 0, err
 	}
 	if err := tmpFile.Close(); err != nil {
+		return 0, err
+	}
+
+	if err := os.Chmod(tmpFile.Name(), 0644); err != nil {
 		return 0, err
 	}
 
