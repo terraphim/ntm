@@ -105,7 +105,7 @@ func waitForIdle(ctx context.Context, detector status.Detector, paneID string) e
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
-	timeout := time.After(5 * time.Minute) // Max 5 min per stage default
+	timeout := time.After(30 * time.Minute) // Max 30 min per stage default
 
 	for {
 		select {
