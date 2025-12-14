@@ -202,6 +202,20 @@ type Model struct {
 	// Auto-refresh configuration
 	refreshInterval time.Duration
 
+	// Refresh cadence (configurable; defaults match the constants below)
+	paneRefreshInterval        time.Duration
+	contextRefreshInterval     time.Duration
+	alertsRefreshInterval      time.Duration
+	beadsRefreshInterval       time.Duration
+	cassContextRefreshInterval time.Duration
+
+	// Pane output capture budgeting/caching
+	paneOutputLines         int
+	paneOutputCaptureBudget int
+	paneOutputCaptureCursor int
+	paneOutputCache         map[string]string
+	paneOutputLastCaptured  map[string]time.Time
+
 	// Health badge (bv drift status)
 	healthStatus  string // "ok", "warning", "critical", "no_baseline", "unavailable"
 	healthMessage string
@@ -373,20 +387,29 @@ func New(session, projectDir string) Model {
 	ic := icons.Current()
 
 	m := Model{
-		session:         session,
-		projectDir:      projectDir,
-		width:           80,
-		height:          24,
-		tier:            layout.TierForWidth(80),
-		theme:           t,
-		icons:           ic,
-		compaction:      status.NewCompactionRecoveryIntegrationDefault(),
-		paneStatus:      make(map[int]PaneStatus),
-		detector:        status.NewDetector(),
-		agentStatuses:   make(map[string]status.AgentStatus),
-		refreshInterval: DefaultRefreshInterval,
-		healthStatus:    "unknown",
-		healthMessage:   "",
+		session:                    session,
+		projectDir:                 projectDir,
+		width:                      80,
+		height:                     24,
+		tier:                       layout.TierForWidth(80),
+		theme:                      t,
+		icons:                      ic,
+		compaction:                 status.NewCompactionRecoveryIntegrationDefault(),
+		paneStatus:                 make(map[int]PaneStatus),
+		detector:                   status.NewDetector(),
+		agentStatuses:              make(map[string]status.AgentStatus),
+		refreshInterval:            DefaultRefreshInterval,
+		paneRefreshInterval:        PaneRefreshInterval,
+		contextRefreshInterval:     ContextRefreshInterval,
+		alertsRefreshInterval:      AlertsRefreshInterval,
+		beadsRefreshInterval:       BeadsRefreshInterval,
+		cassContextRefreshInterval: CassContextRefreshInterval,
+		paneOutputLines:            50,
+		paneOutputCaptureBudget:    20,
+		paneOutputCache:            make(map[string]string),
+		paneOutputLastCaptured:     make(map[string]time.Time),
+		healthStatus:               "unknown",
+		healthMessage:              "",
 		cassSearch: components.NewCassSearch(func(hit cass.SearchHit) tea.Cmd {
 			return func() tea.Msg {
 				return CassSelectMsg{Hit: hit}
@@ -419,6 +442,8 @@ func New(session, projectDir string) Model {
 	m.lastAlertsFetch = now
 	m.lastBeadsFetch = now
 	m.lastCassContextFetch = now
+
+	applyDashboardEnvOverrides(&m)
 
 	// Setup config watcher
 	m.configSub = make(chan *config.Config, 1)
@@ -651,16 +676,19 @@ func (m Model) refresh() tea.Cmd {
 
 // Helper struct to carry output data
 type PaneOutputData struct {
-	PaneIndex int
-	Output    string
-	AgentType string
+	PaneID       string
+	PaneIndex    int
+	LastActivity time.Time
+	Output       string
+	AgentType    string
 }
 
 type SessionDataWithOutputMsg struct {
-	Panes    []tmux.Pane
-	Outputs  []PaneOutputData
-	Duration time.Duration
-	Err      error
+	Panes             []tmux.Pane
+	Outputs           []PaneOutputData
+	Duration          time.Duration
+	NextCaptureCursor int
+	Err               error
 }
 
 func (m Model) fetchSessionDataWithOutputs() tea.Cmd {
@@ -770,41 +798,188 @@ func (m *Model) finishScanFetch() tea.Cmd {
 }
 
 func (m Model) fetchSessionDataWithOutputsCtx(ctx context.Context) tea.Cmd {
+	outputLines := m.paneOutputLines
+	budget := m.paneOutputCaptureBudget
+	startCursor := m.paneOutputCaptureCursor
+	lastCaptured := copyTimeMap(m.paneOutputLastCaptured)
+
+	selectedPaneID := ""
+	if m.cursor >= 0 && m.cursor < len(m.panes) {
+		selectedPaneID = m.panes[m.cursor].ID
+	}
+
+	session := m.session
+
 	return func() tea.Msg {
 		start := time.Now()
 		if ctx == nil {
 			ctx = context.Background()
 		}
 
-		panes, err := tmux.GetPanesContext(ctx, m.session)
+		panesWithActivity, err := tmux.GetPanesWithActivityContext(ctx, session)
 		if err != nil {
 			return SessionDataWithOutputMsg{Err: err, Duration: time.Since(start)}
 		}
 
+		panes := make([]tmux.Pane, 0, len(panesWithActivity))
+		for _, pane := range panesWithActivity {
+			panes = append(panes, pane.Pane)
+		}
+
+		plan := planPaneCaptures(panesWithActivity, selectedPaneID, lastCaptured, budget, startCursor)
+
 		var outputs []PaneOutputData
-		for _, pane := range panes {
+		for _, pane := range plan.Targets {
 			if err := ctx.Err(); err != nil {
 				return SessionDataWithOutputMsg{Err: err, Duration: time.Since(start)}
 			}
-			if pane.Type == tmux.AgentUser {
+
+			out, err := tmux.CapturePaneOutputContext(ctx, pane.Pane.ID, outputLines)
+			if err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return SessionDataWithOutputMsg{Err: ctxErr, Duration: time.Since(start)}
+				}
 				continue
 			}
-			out, err := tmux.CapturePaneOutputContext(ctx, pane.ID, 50)
-			if err == nil {
-				outputs = append(outputs, PaneOutputData{
-					PaneIndex: pane.Index,
-					Output:    out,
-					AgentType: string(pane.Type), // Simplified mapping
-				})
-			}
+
+			outputs = append(outputs, PaneOutputData{
+				PaneID:       pane.Pane.ID,
+				PaneIndex:    pane.Pane.Index,
+				LastActivity: pane.LastActivity,
+				Output:       out,
+				AgentType:    string(pane.Pane.Type), // Simplified mapping
+			})
 		}
 
 		if err := ctx.Err(); err != nil {
 			return SessionDataWithOutputMsg{Err: err, Duration: time.Since(start)}
 		}
 
-		return SessionDataWithOutputMsg{Panes: panes, Outputs: outputs, Duration: time.Since(start)}
+		return SessionDataWithOutputMsg{
+			Panes:             panes,
+			Outputs:           outputs,
+			Duration:          time.Since(start),
+			NextCaptureCursor: plan.NextCursor,
+		}
 	}
+}
+
+type paneCapturePlan struct {
+	Targets    []tmux.PaneActivity
+	NextCursor int
+}
+
+func planPaneCaptures(panes []tmux.PaneActivity, selectedPaneID string, lastCaptured map[string]time.Time, budget int, startCursor int) paneCapturePlan {
+	var candidates []tmux.PaneActivity
+	for _, pane := range panes {
+		if pane.Pane.Type == tmux.AgentUser {
+			continue
+		}
+		candidates = append(candidates, pane)
+	}
+
+	if budget <= 0 || len(candidates) == 0 {
+		next := 0
+		if len(candidates) > 0 {
+			next = startCursor % len(candidates)
+			if next < 0 {
+				next = 0
+			}
+		}
+		return paneCapturePlan{Targets: nil, NextCursor: next}
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].Pane.Index < candidates[j].Pane.Index
+	})
+
+	if startCursor < 0 {
+		startCursor = 0
+	}
+	startCursor = startCursor % len(candidates)
+
+	selected := make(map[string]struct{}, budget)
+	var targets []tmux.PaneActivity
+
+	if selectedPaneID != "" {
+		for _, pane := range candidates {
+			if pane.Pane.ID == selectedPaneID {
+				selected[pane.Pane.ID] = struct{}{}
+				targets = append(targets, pane)
+				budget--
+				break
+			}
+		}
+	}
+
+	type captureCandidate struct {
+		pane tmux.PaneActivity
+	}
+
+	var needs []captureCandidate
+	if budget > 0 {
+		for _, pane := range candidates {
+			if _, ok := selected[pane.Pane.ID]; ok {
+				continue
+			}
+
+			last, ok := lastCaptured[pane.Pane.ID]
+			if !ok || pane.LastActivity.After(last) {
+				needs = append(needs, captureCandidate{pane: pane})
+			}
+		}
+	}
+
+	sort.Slice(needs, func(i, j int) bool {
+		if needs[i].pane.LastActivity.Equal(needs[j].pane.LastActivity) {
+			return needs[i].pane.Pane.Index < needs[j].pane.Pane.Index
+		}
+		return needs[i].pane.LastActivity.After(needs[j].pane.LastActivity)
+	})
+
+	for _, c := range needs {
+		if budget <= 0 {
+			break
+		}
+		if _, ok := selected[c.pane.Pane.ID]; ok {
+			continue
+		}
+		selected[c.pane.Pane.ID] = struct{}{}
+		targets = append(targets, c.pane)
+		budget--
+	}
+
+	rrSteps := 0
+	for budget > 0 && rrSteps < len(candidates) {
+		idx := (startCursor + rrSteps) % len(candidates)
+		pane := candidates[idx]
+		rrSteps++
+		if _, ok := selected[pane.Pane.ID]; ok {
+			continue
+		}
+		selected[pane.Pane.ID] = struct{}{}
+		targets = append(targets, pane)
+		budget--
+	}
+
+	nextCursor := startCursor
+	if rrSteps > 0 {
+		nextCursor = (startCursor + rrSteps) % len(candidates)
+	}
+
+	return paneCapturePlan{Targets: targets, NextCursor: nextCursor}
+}
+
+func copyTimeMap(src map[string]time.Time) map[string]time.Time {
+	if len(src) == 0 {
+		return nil
+	}
+
+	copied := make(map[string]time.Time, len(src))
+	for k, v := range src {
+		copied[k] = v
+	}
+	return copied
 }
 
 // fetchStatuses runs unified status detection across all panes
@@ -943,7 +1118,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Drive staggered refreshes on the animation ticker to avoid a single heavy burst.
 		now := time.Now()
 		if !m.refreshPaused {
-			if now.Sub(m.lastPaneFetch) >= PaneRefreshInterval && !m.fetchingSession {
+			if now.Sub(m.lastPaneFetch) >= m.paneRefreshInterval && !m.fetchingSession {
 				if cmd := m.requestSessionFetch(false); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
@@ -953,7 +1128,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
-			if now.Sub(m.lastContextFetch) >= ContextRefreshInterval && !m.fetchingContext {
+			if now.Sub(m.lastContextFetch) >= m.contextRefreshInterval && !m.fetchingContext {
 				if cmd := m.requestStatusesFetch(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
@@ -971,17 +1146,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, m.fetchFileChangesCmd())
 				}
 			}
-			if now.Sub(m.lastAlertsFetch) >= AlertsRefreshInterval && !m.fetchingAlerts {
+			if now.Sub(m.lastAlertsFetch) >= m.alertsRefreshInterval && !m.fetchingAlerts {
 				m.fetchingAlerts = true
 				cmds = append(cmds, m.fetchAlertsCmd())
 				m.lastAlertsFetch = now
 			}
-			if now.Sub(m.lastBeadsFetch) >= BeadsRefreshInterval && !m.fetchingBeads {
+			if now.Sub(m.lastBeadsFetch) >= m.beadsRefreshInterval && !m.fetchingBeads {
 				m.fetchingBeads = true
 				cmds = append(cmds, m.fetchBeadsCmd())
 				m.lastBeadsFetch = now
 			}
-			if now.Sub(m.lastCassContextFetch) >= CassContextRefreshInterval && !m.fetchingCassContext {
+			if now.Sub(m.lastCassContextFetch) >= m.cassContextRefreshInterval && !m.fetchingCassContext {
 				m.fetchingCassContext = true
 				cmds = append(cmds, m.fetchCASSContextCmd())
 				m.lastCassContextFetch = now
@@ -1040,13 +1215,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, followUp
 		}
 		m.err = nil
+		m.lastRefresh = time.Now()
 
 		{
+			prevSelectedID := ""
+			if m.cursor >= 0 && m.cursor < len(m.panes) {
+				prevSelectedID = m.panes[m.cursor].ID
+			}
+
+			sort.Slice(msg.Panes, func(i, j int) bool {
+				return msg.Panes[i].Index < msg.Panes[j].Index
+			})
+
 			m.panes = msg.Panes
 			m.updateStats()
+			m.paneOutputCaptureCursor = msg.NextCaptureCursor
+
+			if prevSelectedID != "" {
+				for i := range m.panes {
+					if m.panes[i].ID == prevSelectedID {
+						m.cursor = i
+						break
+					}
+				}
+			}
+			if len(m.panes) > 0 && m.cursor >= len(m.panes) {
+				m.cursor = len(m.panes) - 1
+			}
+			if m.cursor < 0 {
+				m.cursor = 0
+			}
+
+			if m.paneOutputCache == nil {
+				m.paneOutputCache = make(map[string]string)
+			}
+			if m.paneOutputLastCaptured == nil {
+				m.paneOutputLastCaptured = make(map[string]time.Time)
+			}
 
 			// Process compaction checks and context tracking on the main thread using fetched outputs
 			for _, data := range msg.Outputs {
+				if data.PaneID != "" {
+					m.paneOutputCache[data.PaneID] = data.Output
+					if !data.LastActivity.IsZero() {
+						m.paneOutputLastCaptured[data.PaneID] = data.LastActivity
+					}
+				}
+
 				// Map type string to model name for context limits
 				agentType := "unknown"
 				modelName := ""
@@ -1409,6 +1624,9 @@ func (m Model) View() string {
 	animatedSession := styles.Shimmer(sessionTitle, m.animTick,
 		string(t.Blue), string(t.Lavender), string(t.Mauve))
 	b.WriteString(center.Render(animatedSession) + "\n")
+	if contextLine := m.renderHeaderContextLine(m.width); contextLine != "" {
+		b.WriteString(center.Render(contextLine) + "\n")
+	}
 	b.WriteString(styles.GradientDivider(m.width,
 		string(t.Blue), string(t.Mauve)) + "\n\n")
 
@@ -1479,6 +1697,13 @@ func (m Model) View() string {
 	b.WriteString("\n")
 	m.tickerPanel.SetSize(m.width-4, 1)
 	b.WriteString("  " + m.tickerPanel.View() + "\n")
+
+	// ═══════════════════════════════════════════════════════════════
+	// QUICK ACTIONS BAR (width-gated, only in wide+ modes)
+	// ═══════════════════════════════════════════════════════════════
+	if quickActions := m.renderQuickActions(); quickActions != "" {
+		b.WriteString("  " + quickActions + "\n")
+	}
 
 	// ═══════════════════════════════════════════════════════════════
 	// HELP BAR
@@ -1930,6 +2155,94 @@ func (m Model) renderPaneGrid() string {
 	return strings.Join(lines, "\n")
 }
 
+// renderQuickActions renders actionable buttons for common operations.
+// Only shows in TierWide and above to avoid cluttering narrow terminals.
+func (m Model) renderQuickActions() string {
+	// Only show in wide modes (TierWide = 200+ cols)
+	if m.tier < layout.TierWide {
+		return ""
+	}
+
+	t := m.theme
+	ic := m.icons
+
+	// Action button style - more prominent than help bar keys
+	buttonStyle := lipgloss.NewStyle().
+		Background(t.Surface1).
+		Foreground(t.Text).
+		Bold(true).
+		Padding(0, 2).
+		MarginRight(1)
+
+	// Disabled button style - dimmed text
+	disabledButtonStyle := buttonStyle.
+		Foreground(t.Surface2)
+
+	// Subtle key hint
+	keyHintStyle := lipgloss.NewStyle().
+		Foreground(t.Overlay).
+		Italic(true)
+
+	type action struct {
+		icon    string
+		label   string
+		key     string
+		enabled bool
+	}
+
+	// Build actions based on current state
+	hasSelection := m.cursor >= 0 && m.cursor < len(m.panes)
+
+	actions := []action{
+		{
+			icon:    ic.Palette,
+			label:   "Palette",
+			key:     "F6",
+			enabled: true,
+		},
+		{
+			icon:    ic.Send,
+			label:   "Send",
+			key:     "s",
+			enabled: hasSelection,
+		},
+		{
+			icon:    ic.Copy,
+			label:   "Copy",
+			key:     "y",
+			enabled: hasSelection,
+		},
+		{
+			icon:    ic.Zoom,
+			label:   "Zoom",
+			key:     "z",
+			enabled: hasSelection,
+		},
+	}
+
+	var parts []string
+
+	// Label for the section
+	labelStyle := lipgloss.NewStyle().
+		Foreground(t.Subtext).
+		Bold(true).
+		MarginRight(2)
+	parts = append(parts, labelStyle.Render("Actions"))
+
+	for _, a := range actions {
+		style := buttonStyle
+		if !a.enabled {
+			style = disabledButtonStyle
+		}
+
+		btn := style.Render(a.icon + " " + a.label)
+		hint := keyHintStyle.Render(" " + a.key)
+		parts = append(parts, btn+hint)
+	}
+
+	return strings.Join(parts, " ")
+}
+
 func (m Model) renderHelpBar() string {
 	t := m.theme
 
@@ -1963,6 +2276,79 @@ func (m Model) renderHelpBar() string {
 	}
 
 	return strings.Join(parts, "  ")
+}
+
+func (m Model) renderHeaderContextLine(width int) string {
+	if width < 20 {
+		return ""
+	}
+
+	t := m.theme
+
+	var parts []string
+	remote := strings.TrimSpace(tmux.DefaultClient.Remote)
+	if remote == "" {
+		parts = append(parts, "local")
+	} else {
+		parts = append(parts, "ssh "+remote)
+	}
+
+	if !m.lastRefresh.IsZero() {
+		parts = append(parts, "refreshed "+formatRelativeTime(time.Since(m.lastRefresh)))
+	} else if m.fetchingSession || m.fetchingContext {
+		parts = append(parts, "refreshing…")
+	}
+
+	if m.refreshPaused {
+		parts = append(parts, "paused")
+	}
+
+	line := strings.Join(parts, " · ")
+	line = truncateRunes(line, width-4)
+
+	return lipgloss.NewStyle().
+		Foreground(t.Subtext).
+		Render(line)
+}
+
+func formatRelativeTime(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	if d < 5*time.Second {
+		return "just now"
+	}
+
+	d = d.Round(time.Second)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	}
+
+	hours := int(d.Hours())
+	if hours < 48 {
+		return fmt.Sprintf("%dh ago", hours)
+	}
+
+	days := hours / 24
+	return fmt.Sprintf("%dd ago", days)
+}
+
+func truncateRunes(s string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	if maxLen == 1 {
+		return "…"
+	}
+	return string(runes[:maxLen-1]) + "…"
 }
 
 func (m Model) renderDiagnosticsBar(width int) string {
@@ -2231,7 +2617,9 @@ func (m Model) renderSidebar(width, height int) string {
 		}
 	}
 
-	return strings.Join(lines, "\n")
+	// Ensure stable height by padding the sidebar to fill allocated space
+	content := strings.Join(lines, "\n")
+	return panels.FitToHeight(content, height)
 }
 
 // renderMegaLayout renders a five-panel layout: Agents | Detail | Beads | Alerts | Activity

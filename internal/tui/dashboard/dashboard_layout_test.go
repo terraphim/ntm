@@ -364,3 +364,59 @@ func TestViewRendersHelpOverlayWhenOpen(t *testing.T) {
 		t.Error("view should render help overlay content when showHelp is true")
 	}
 }
+
+func TestQuickActionsBarWidthGated(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		width       int
+		shouldShow  bool
+		description string
+	}{
+		{width: 80, shouldShow: false, description: "narrow"},
+		{width: 120, shouldShow: false, description: "split"},
+		{width: 180, shouldShow: false, description: "below wide"},
+		{width: 200, shouldShow: true, description: "wide threshold"},
+		{width: 240, shouldShow: true, description: "ultra"},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.description, func(t *testing.T) {
+			t.Parallel()
+
+			m := newTestModel(tc.width)
+			quickActions := m.renderQuickActions()
+			plain := status.StripANSI(quickActions)
+
+			hasContent := len(plain) > 0
+
+			if tc.shouldShow && !hasContent {
+				t.Errorf("width %d: expected quick actions to be visible at wide tier", tc.width)
+			}
+			if !tc.shouldShow && hasContent {
+				t.Errorf("width %d: expected quick actions to be hidden in narrow mode", tc.width)
+			}
+		})
+	}
+}
+
+func TestQuickActionsBarContainsExpectedActions(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModel(200) // Wide enough to show quick actions
+	quickActions := m.renderQuickActions()
+	plain := status.StripANSI(quickActions)
+
+	expectedItems := []string{"Palette", "Send", "Copy", "Zoom"}
+	for _, item := range expectedItems {
+		if !strings.Contains(plain, item) {
+			t.Errorf("quick actions bar should contain '%s', got: %s", item, plain)
+		}
+	}
+
+	// Verify the "Actions" label is present
+	if !strings.Contains(plain, "Actions") {
+		t.Error("quick actions bar should contain 'Actions' label")
+	}
+}
