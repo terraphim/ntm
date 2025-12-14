@@ -544,7 +544,6 @@ func (c *Client) ListProjectAgents(ctx context.Context, projectKey string) ([]Ag
 
 	result, err := c.callTool(ctx, "list_agents", args)
 	if err != nil {
-		// Fall back to trying to get agents from project info
 		return nil, err
 	}
 

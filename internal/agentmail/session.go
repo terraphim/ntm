@@ -113,9 +113,10 @@ func LoadSessionAgent(sessionName, projectKey string) (*SessionAgentInfo, error)
 // SaveSessionAgent saves the agent info for a session.
 func SaveSessionAgent(sessionName, projectKey string, info *SessionAgentInfo) error {
 	path := sessionAgentPath(sessionName, projectKey)
+	dir := filepath.Dir(path)
 
 	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("creating session directory: %w", err)
 	}
 
@@ -124,8 +125,34 @@ func SaveSessionAgent(sessionName, projectKey string, info *SessionAgentInfo) er
 		return fmt.Errorf("marshaling session agent: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	// Write to temp file first
+	tmpFile, err := os.CreateTemp(dir, "agent.json.tmp")
+	if err != nil {
+		return fmt.Errorf("creating temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	
+	// Ensure cleanup on error
+	defer func() {
+		_ = tmpFile.Close()
+		if err != nil {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err = tmpFile.Write(data); err != nil {
 		return fmt.Errorf("writing session agent: %w", err)
+	}
+	if err = tmpFile.Sync(); err != nil {
+		return fmt.Errorf("syncing temp file: %w", err)
+	}
+	if err = tmpFile.Close(); err != nil {
+		return fmt.Errorf("closing temp file: %w", err)
+	}
+
+	// Atomic rename
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("renaming session agent file: %w", err)
 	}
 
 	return nil

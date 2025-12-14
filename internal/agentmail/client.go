@@ -53,6 +53,9 @@ type Option func(*Client)
 // WithBaseURL sets the Agent Mail server base URL.
 func WithBaseURL(url string) Option {
 	return func(c *Client) {
+		if !strings.HasSuffix(url, "/") {
+			url += "/"
+		}
 		c.baseURL = url
 	}
 }
@@ -105,6 +108,11 @@ func NewClient(opts ...Option) *Client {
 	}
 	if baseURL := os.Getenv("AGENT_MAIL_URL"); baseURL != "" {
 		c.baseURL = baseURL
+	}
+
+	// Ensure base URL ends with /
+	if !strings.HasSuffix(c.baseURL, "/") {
+		c.baseURL += "/"
 	}
 
 	// Apply options
