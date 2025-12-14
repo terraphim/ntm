@@ -174,7 +174,8 @@ func (m *CASSPanel) View() string {
 
 	if len(m.hits) == 0 {
 		content.WriteString("\n" + components.EmptyState("No matches", w-4))
-		return boxStyle.Render(content.String())
+		// Ensure stable height to prevent layout jitter
+		return boxStyle.Render(FitToHeight(content.String(), h-4))
 	}
 
 	visibleHeight := m.contentHeight()
@@ -215,7 +216,8 @@ func (m *CASSPanel) View() string {
 		content.WriteString(lineStyle.Render(line) + "\n")
 	}
 
-	return boxStyle.Render(content.String())
+	// Ensure stable height to prevent layout jitter
+	return boxStyle.Render(FitToHeight(content.String(), h-4))
 }
 
 func formatAge(t time.Time) string {

@@ -175,7 +175,7 @@ func (m *BeadsPanel) View() string {
 				assignee = fmt.Sprintf(" (@%s)", b.Assignee)
 			}
 
-			titleWidth := w - 10 - len(assignee)
+			titleWidth := w - 10 - lipgloss.Width(assignee)
 			if titleWidth < 10 {
 				titleWidth = 10
 			}
@@ -219,5 +219,6 @@ func (m *BeadsPanel) View() string {
 		content.WriteString(lipgloss.NewStyle().Foreground(t.Overlay).Italic(true).Padding(0, 1).Render("  (Pipeline unavailable)") + "\n")
 	}
 
-	return content.String()
+	// Ensure stable height to prevent layout jitter
+	return FitToHeight(content.String(), h)
 }

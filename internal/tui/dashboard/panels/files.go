@@ -250,7 +250,8 @@ func (m *FilesPanel) View() string {
 
 	if len(m.changes) == 0 {
 		content.WriteString("\n" + components.EmptyState("No file changes", w-4))
-		return boxStyle.Render(content.String())
+		// Ensure stable height to prevent layout jitter
+		return boxStyle.Render(FitToHeight(content.String(), h-4))
 	}
 
 	// File list
@@ -317,7 +318,8 @@ func (m *FilesPanel) View() string {
 		content.WriteString(lineStyle.Render(line) + "\n")
 	}
 
-	return boxStyle.Render(content.String())
+	// Ensure stable height to prevent layout jitter
+	return boxStyle.Render(FitToHeight(content.String(), h-4))
 }
 
 // buildStats returns a summary string of file changes

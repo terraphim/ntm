@@ -175,7 +175,8 @@ func (m *HistoryPanel) View() string {
 
 	if len(m.entries) == 0 {
 		content.WriteString("\n" + components.EmptyState("No command history", w-4))
-		return boxStyle.Render(content.String())
+		// Ensure stable height to prevent layout jitter
+		return boxStyle.Render(FitToHeight(content.String(), h-4))
 	}
 
 	visibleHeight := m.contentHeight()
@@ -232,5 +233,6 @@ func (m *HistoryPanel) View() string {
 		content.WriteString(lineStyle.Render(line) + "\n")
 	}
 
-	return boxStyle.Render(content.String())
+	// Ensure stable height to prevent layout jitter
+	return boxStyle.Render(FitToHeight(content.String(), h-4))
 }

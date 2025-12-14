@@ -1,6 +1,7 @@
 package panels
 
 import (
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -150,4 +151,56 @@ func (b *PanelBase) Width() int {
 // Height returns the current panel height
 func (b *PanelBase) Height() int {
 	return b.height
+}
+
+// PadToHeight pads content with empty lines to fill the specified height.
+// This prevents layout jitter when content varies in length.
+func PadToHeight(content string, targetHeight int) string {
+	if targetHeight <= 0 {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	currentHeight := len(lines)
+	if currentHeight >= targetHeight {
+		return content
+	}
+	// Add empty lines to fill remaining space
+	for i := currentHeight; i < targetHeight; i++ {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// TruncateToHeight truncates content to fit within targetHeight lines.
+// Returns the truncated content.
+func TruncateToHeight(content string, targetHeight int) string {
+	if targetHeight <= 0 {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+	if len(lines) <= targetHeight {
+		return content
+	}
+	return strings.Join(lines[:targetHeight], "\n")
+}
+
+// FitToHeight ensures content exactly fills targetHeight lines,
+// truncating if too long or padding if too short.
+func FitToHeight(content string, targetHeight int) string {
+	if targetHeight <= 0 {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+
+	// Truncate if too long
+	if len(lines) > targetHeight {
+		lines = lines[:targetHeight]
+	}
+
+	// Pad if too short
+	for len(lines) < targetHeight {
+		lines = append(lines, "")
+	}
+
+	return strings.Join(lines, "\n")
 }

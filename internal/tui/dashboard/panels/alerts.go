@@ -183,9 +183,11 @@ func (m *AlertsPanel) View() string {
 	if len(m.alerts) == 0 && m.err == nil {
 		content.WriteString("\n  " + lipgloss.NewStyle().Foreground(t.Green).Render("✓ System Healthy") + "\n")
 		content.WriteString("  " + lipgloss.NewStyle().Foreground(t.Subtext).Render("No active alerts") + "\n")
-		return content.String()
+		// Ensure stable height to prevent layout jitter
+		return FitToHeight(content.String(), h)
 	} else if len(m.alerts) == 0 {
-		return content.String()
+		// Ensure stable height to prevent layout jitter
+		return FitToHeight(content.String(), h)
 	}
 
 	// Group by severity
@@ -243,5 +245,6 @@ func (m *AlertsPanel) View() string {
 		renderList(info, t.Blue, "ℹ")
 	}
 
-	return content.String()
+	// Ensure stable height to prevent layout jitter
+	return FitToHeight(content.String(), h)
 }
