@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDefault(t *testing.T) {
@@ -30,6 +31,46 @@ func TestDefault(t *testing.T) {
 
 	if len(cfg.Palette) == 0 {
 		t.Error("Default palette should have commands")
+	}
+}
+
+func TestExpandHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("Cannot get user home dir")
+	}
+
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"~", home},
+		{"~/foo", filepath.Join(home, "foo")},
+		{"/abs/path", "/abs/path"},
+		{"rel/path", "rel/path"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := ExpandHome(tt.input)
+			if got != tt.expected {
+				t.Errorf("ExpandHome(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGetProjectDirWithJustTilde(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	cfg := &Config{
+		ProjectsBase: "~",
+	}
+
+	dir := cfg.GetProjectDir("myproject")
+	expected := filepath.Join(home, "myproject")
+
+	if dir != expected {
+		t.Errorf("Expected %s, got %s", expected, dir)
 	}
 }
 
@@ -885,5 +926,63 @@ enabled = false
 
 	if !cfg.Rotation.Enabled {
 		t.Error("Expected rotation.enabled to be overridden to true by env var")
+	}
+}
+
+func TestWatchProjectConfig(t *testing.T) {
+	// Setup dirs
+	tmpDir := t.TempDir()
+	cwd := t.TempDir()
+	origWd, _ := os.Getwd()
+	os.Chdir(cwd)
+	defer os.Chdir(origWd)
+
+	// Set NTM_CONFIG to point to our temp global config
+	globalPath := filepath.Join(tmpDir, "config.toml")
+	os.Setenv("NTM_CONFIG", globalPath)
+	defer os.Unsetenv("NTM_CONFIG")
+
+	// Global config
+	os.WriteFile(globalPath, []byte(`
+[agents]
+claude = "global-claude"
+`), 0644)
+
+	// Project config
+	os.Mkdir(".ntm", 0755)
+	projPath := filepath.Join(cwd, ".ntm", "config.toml")
+	os.WriteFile(projPath, []byte(`
+[agents]
+claude = "project-claude"
+`), 0644)
+
+	// Setup watcher
+	updated := make(chan *Config, 1)
+	closeWatcher, err := Watch(func(cfg *Config) {
+		select {
+		case updated <- cfg:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatalf("Watch failed: %v", err)
+	}
+	defer closeWatcher()
+
+	// Modify project config
+	time.Sleep(600 * time.Millisecond) // Wait for debounce/start
+	os.WriteFile(projPath, []byte(`
+[agents]
+claude = "updated-project-claude"
+`), 0644)
+
+	// Wait for update
+	select {
+	case cfg := <-updated:
+		if cfg.Agents.Claude != "updated-project-claude" {
+			t.Errorf("Expected 'updated-project-claude', got %q", cfg.Agents.Claude)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("Timed out waiting for config update")
 	}
 }

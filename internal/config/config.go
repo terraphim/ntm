@@ -454,13 +454,7 @@ func (c *Config) IsPersonaName(name string) bool {
 // DefaultPath returns the default config file path
 func DefaultPath() string {
 	if env := os.Getenv("NTM_CONFIG"); env != "" {
-		// Expand ~/ in env var path for convenience.
-		if strings.HasPrefix(env, "~/") {
-			if home, err := os.UserHomeDir(); err == nil {
-				env = filepath.Join(home, env[2:])
-			}
-		}
-		return env
+		return ExpandHome(env)
 	}
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
 		return filepath.Join(xdg, "ntm", "config.toml")
@@ -1001,12 +995,7 @@ func Load(path string) (*Config, error) {
 	if mdPath == "" {
 		mdPath = findPaletteMarkdown()
 	} else {
-		// Expand ~/ in explicit path (e.g., ~/foo -> /home/user/foo)
-		if strings.HasPrefix(mdPath, "~/") {
-			if home, err := os.UserHomeDir(); err == nil {
-				mdPath = filepath.Join(home, mdPath[2:])
-			}
-		}
+		mdPath = ExpandHome(mdPath)
 	}
 
 	if mdPath != "" {
@@ -1475,13 +1464,29 @@ func Print(cfg *Config, w io.Writer) error {
 	return nil
 }
 
+// ExpandHome expands the tilde (~) in a path to the user's home directory.
+// Supports "~" and "~/path" formats.
+func ExpandHome(path string) string {
+	if path == "~" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return home
+		}
+		return path
+	}
+
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+
+	return path
+}
+
 // GetProjectDir returns the project directory for a session
 func (c *Config) GetProjectDir(session string) string {
-	// Expand ~/ in path (e.g., ~/Developer -> /home/user/Developer)
-	base := c.ProjectsBase
-	if strings.HasPrefix(base, "~/") {
-		home, _ := os.UserHomeDir()
-		base = filepath.Join(home, base[2:])
-	}
+	base := ExpandHome(c.ProjectsBase)
 	return filepath.Join(base, session)
 }

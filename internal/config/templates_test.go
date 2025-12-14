@@ -135,6 +135,12 @@ func TestGenerateAgentCommand_TemplateMode(t *testing.T) {
 			vars:     AgentTemplateVars{Model: "OPUS"},
 			want:     "agent --model opus",
 		},
+		{
+			name:     "quoted argument with spaces",
+			template: `echo '{{.Model}}'`,
+			vars:     AgentTemplateVars{Model: "hello  world"},
+			want:     "echo 'hello  world'",
+		},
 	}
 
 	for _, tt := range tests {

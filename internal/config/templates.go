@@ -93,13 +93,7 @@ func GenerateAgentCommand(tmpl string, vars AgentTemplateVars) (string, error) {
 		return "", err
 	}
 
-	// Clean up whitespace from template conditionals
-	result := buf.String()
-	// Remove multiple consecutive spaces that may result from conditionals
-	for strings.Contains(result, "  ") {
-		result = strings.ReplaceAll(result, "  ", " ")
-	}
-	result = strings.TrimSpace(result)
+	result := strings.TrimSpace(buf.String())
 
 	return result, nil
 }

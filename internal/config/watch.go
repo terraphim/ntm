@@ -22,20 +22,29 @@ func Watch(onChange func(*Config)) (func(), error) {
 
 	// Create watcher with debounce to avoid multiple reloads on single save
 	w, err := watcher.New(func(events []watcher.Event) {
-		// We only care if the config file changed
+		// We care if global config or project config changed
+		shouldReload := false
 		for _, e := range events {
+			// Check global config
 			if filepath.Clean(e.Path) == filepath.Clean(path) {
-				// Reload config
-				cfg, err := Load(path)
-				if err != nil {
-					log.Printf("Error reloading config: %v", err)
-					return
-				}
-				// Notify callback
-				if onChange != nil {
-					onChange(cfg)
-				}
+				shouldReload = true
+				break
+			}
+			// Check project config (re-resolve to handle potential changes/moves, though robust enough for now)
+			// For simplicity, we just reload if ANY watched file changes, because we only add config files to the watcher.
+			shouldReload = true
+		}
+
+		if shouldReload {
+			// Reload config (merged with project config)
+			cfg, err := LoadMerged("", path)
+			if err != nil {
+				log.Printf("Error reloading config: %v", err)
 				return
+			}
+			// Notify callback
+			if onChange != nil {
+				onChange(cfg)
 			}
 		}
 	}, watcher.WithDebounceDuration(500*time.Millisecond))
@@ -44,13 +53,21 @@ func Watch(onChange func(*Config)) (func(), error) {
 		return nil, fmt.Errorf("creating config watcher: %w", err)
 	}
 
-	// Add config file to watcher
-	// If file doesn't exist yet, watch the directory
+	// Add global config file to watcher
 	if err := w.Add(path); err != nil {
 		dir := filepath.Dir(path)
 		if err := w.Add(dir); err != nil {
 			w.Close()
 			return nil, fmt.Errorf("watching config path %s: %w", path, err)
+		}
+	}
+
+	// Add project config file to watcher if it exists
+	if projectDir, _, err := FindProjectConfig(""); err == nil && projectDir != "" {
+		projectConfigPath := filepath.Join(projectDir, ".ntm", "config.toml")
+		if err := w.Add(projectConfigPath); err != nil {
+			// Non-fatal, just log
+			log.Printf("Warning: failed to watch project config: %v", err)
 		}
 	}
 
