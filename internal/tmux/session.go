@@ -783,13 +783,28 @@ func GetCurrentSession() string {
 	return DefaultClient.GetCurrentSession()
 }
 
-// ValidateSessionName checks if a session name is valid
+// ValidateSessionName checks if a session name is valid.
+// It enforces a strict character set to prevent shell injection risks when used in templates.
+// Allowed: Alphanumeric, underscore (_), dash (-).
 func ValidateSessionName(name string) error {
 	if name == "" {
 		return errors.New("session name cannot be empty")
 	}
-	if strings.ContainsAny(name, ":./\\") {
-		return errors.New("session name cannot contain ':', '.', '/', or '\\'")
+
+	// Provide targeted errors for common confusion cases so callers can surface
+	// clear remediation (tmux uses ':' as a target separator; '.' conflicts with
+	// NTM's pane reference format like "0.1").
+	if strings.Contains(name, ":") {
+		return errors.New("session name cannot contain ':'")
+	}
+	if strings.Contains(name, ".") {
+		return errors.New("session name cannot contain '.'")
+	}
+
+	// Check for invalid characters
+	valid := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	if !valid.MatchString(name) {
+		return fmt.Errorf("session name %q contains invalid characters (allowed: a-z, A-Z, 0-9, _, -)", name)
 	}
 	return nil
 }

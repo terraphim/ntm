@@ -27,7 +27,12 @@ var sanitizeRegex = regexp.MustCompile(`[^a-zA-Z0-9]+`)
 func sanitizeSessionName(name string) string {
 	sanitized := sanitizeRegex.ReplaceAllString(name, "_")
 	sanitized = strings.Trim(sanitized, "_")
-	return strings.ToLower(sanitized)
+	sanitized = strings.ToLower(sanitized)
+	if sanitized == "" {
+		// Fallback to hex encoding if sanitization stripped everything
+		return fmt.Sprintf("hex_%x", []byte(name))
+	}
+	return sanitized
 }
 
 // getSessionsBaseDir returns the base directory for storing session data.

@@ -81,10 +81,14 @@ func TestValidateSessionName(t *testing.T) {
 		{"my_project", false},
 		{"MyProject123", false},
 		{"", true},            // empty
-		{"my.project", true},  // contains .
+		{"my.project", true},  // dot rejected
+		{"my project", true},  // space rejected
 		{"my:project", true},  // contains :
 		{"my/project", true},  // contains /
 		{"my\\project", true}, // contains \
+		{"my;project", true},  // semicolon rejected
+		{"my&project", true},  // ampersand rejected
+		{"my$project", true},  // dollar rejected
 	}
 
 	for _, tt := range tests {

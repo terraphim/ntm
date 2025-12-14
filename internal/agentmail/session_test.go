@@ -19,6 +19,7 @@ func TestSanitizeSessionName(t *testing.T) {
 		{"project@123", "project_123"},
 		{"---project---", "project"},
 		{"Project With Spaces", "project_with_spaces"},
+		{"...", "hex_2e2e2e"}, // "..." -> "" -> hex
 	}
 
 	for _, tt := range tests {

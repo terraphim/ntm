@@ -143,7 +143,7 @@ func (c *Capturer) captureScrollback(cp *Checkpoint, lines int) error {
 		}
 
 		// Save scrollback
-		relativePath, err := c.storage.SaveScrollback(cp.SessionName, cp.ID, pane.Index, content)
+		relativePath, err := c.storage.SaveScrollback(cp.SessionName, cp.ID, pane.ID, content)
 		if err != nil {
 			continue
 		}

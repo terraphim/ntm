@@ -82,6 +82,7 @@ func sanitizeName(name string) string {
 		"<", "-",
 		">", "-",
 		"|", "-",
+		"%", "_",
 		" ", "_",
 	)
 	safe := replacer.Replace(strings.TrimSpace(name))
@@ -234,13 +235,14 @@ func (s *Storage) GetLatest(sessionName string) (*Checkpoint, error) {
 }
 
 // SaveScrollback writes pane scrollback to a file.
-func (s *Storage) SaveScrollback(sessionName, checkpointID string, paneIndex int, content string) (string, error) {
+func (s *Storage) SaveScrollback(sessionName, checkpointID string, paneID string, content string) (string, error) {
 	panesDir := s.PanesDirPath(sessionName, checkpointID)
 	if err := os.MkdirAll(panesDir, 0755); err != nil {
 		return "", fmt.Errorf("creating panes directory: %w", err)
 	}
 
-	filename := fmt.Sprintf("pane_%d.txt", paneIndex)
+	// Use sanitized pane ID for filename to handle % and other chars
+	filename := fmt.Sprintf("pane_%s.txt", sanitizeName(paneID))
 	fullPath := filepath.Join(panesDir, filename)
 
 	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
@@ -251,8 +253,8 @@ func (s *Storage) SaveScrollback(sessionName, checkpointID string, paneIndex int
 }
 
 // LoadScrollback reads pane scrollback from a file.
-func (s *Storage) LoadScrollback(sessionName, checkpointID string, paneIndex int) (string, error) {
-	filename := fmt.Sprintf("pane_%d.txt", paneIndex)
+func (s *Storage) LoadScrollback(sessionName, checkpointID string, paneID string) (string, error) {
+	filename := fmt.Sprintf("pane_%s.txt", sanitizeName(paneID))
 	fullPath := filepath.Join(s.PanesDirPath(sessionName, checkpointID), filename)
 
 	data, err := os.ReadFile(fullPath)
