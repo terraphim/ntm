@@ -141,7 +141,28 @@ export function activate(context: vscode.ExtensionContext) {
         await handleSend(prompt);
     });
 
-	context.subscriptions.push(dispStatus, dispSpawn, dispOpenPalette, dispDashboard, dispSendSelection, dispSendFile);
+    let dispOpenTerminal = vscode.commands.registerCommand('ntm.openTerminal', async () => {
+        try {
+            let session = currentSession;
+            if (!session) {
+                const status = await client.getStatus();
+                const primary = pickPrimarySession(status);
+                session = primary?.name;
+            }
+
+            const chosenSession = session ?? await vscode.window.showInputBox({ prompt: 'NTM Session to attach' });
+            if (!chosenSession) return;
+            currentSession = chosenSession;
+
+            const terminal = vscode.window.createTerminal({ name: `NTM: ${chosenSession}` });
+            terminal.show(true);
+            terminal.sendText(`ntm attach ${chosenSession}`, true);
+        } catch (e) {
+            vscode.window.showErrorMessage(`Failed to open terminal: ${e}`);
+        }
+    });
+
+	context.subscriptions.push(dispStatus, dispSpawn, dispOpenPalette, dispDashboard, dispSendSelection, dispSendFile, dispOpenTerminal);
 }
 
 function pickPrimarySession(status: ReturnType<NtmClient['getStatus']> extends Promise<infer T> ? T : never) {

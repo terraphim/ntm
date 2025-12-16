@@ -52,16 +52,36 @@ export interface StatusSummary {
 
 export interface RobotMail {
     generated_at: string;
+    session?: string;
     project_key?: string;
     available: boolean;
     server_url?: string;
+    session_agent?: SessionAgentInfo;
     agents?: MailAgent[];
-    locks?: MailLock[];
+    unmapped_agents?: MailAgent[];
+    messages?: MailMessageCounts;
+    file_reservations?: MailReservation[];
+    conflicts?: MailConflict[];
     error?: string;
 }
 
-export interface MailAgent {
+export interface SessionAgentInfo {
     name: string;
+    model?: string;
+    program?: string;
+}
+
+export interface MailMessageCounts {
+    total: number;
+    unread: number;
+    urgent: number;
+    pending_ack: number;
+}
+
+export interface MailAgent {
+    pane?: string;
+    agent_name?: string;
+    name?: string;  // Alias for agent_name used in display
     program?: string;
     model?: string;
     unread_count?: number;
@@ -69,15 +89,18 @@ export interface MailAgent {
     last_active_ts?: string;
 }
 
-export interface MailLock {
+export interface MailReservation {
     id: number;
-    path_pattern: string;
-    agent_name: string;
+    pattern: string;
+    agent: string;
     exclusive: boolean;
+    expires_in_seconds: number;
     reason?: string;
-    expires_ts?: string;
-    created_ts?: string;
-    released_ts?: string | null;
+}
+
+export interface MailConflict {
+    pattern: string;
+    holders: string[];
 }
 
 export class NtmClient {

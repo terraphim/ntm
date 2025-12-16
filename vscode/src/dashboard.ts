@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { MailAgent, MailLock, NtmClient, RobotMail, RobotStatus, SessionInfo } from './ntmClient';
+import { MailAgent, MailReservation, NtmClient, RobotMail, RobotStatus, SessionInfo } from './ntmClient';
 
 export class NtmDashboard {
     public static currentPanel: NtmDashboard | undefined;
@@ -174,7 +174,7 @@ export class NtmDashboard {
         const sessionsHtml = status.sessions.map(s => this.renderSessionCard(s)).join('');
         const primary = this.pickPrimarySession(status);
         const mailHtml = this.renderMail(mail);
-        const lockHtml = this.renderLocks(mail?.locks || []);
+        const lockHtml = this.renderReservations(mail?.file_reservations || []);
 
         return `<!DOCTYPE html>
             <html lang="en">
@@ -216,8 +216,8 @@ export class NtmDashboard {
 
                 <div class="card">
                     <div class="card-header">
-                        <span>Locks</span>
-                        <span class="pill">${mail?.locks?.length || 0} active</span>
+                        <span>File Reservations</span>
+                        <span class="pill">${mail?.file_reservations?.length || 0} active</span>
                     </div>
                     ${lockHtml}
                 </div>
@@ -284,13 +284,14 @@ export class NtmDashboard {
         const urgent = agent.urgent_count || 0;
         const unread = agent.unread_count || 0;
         const dotClass = urgent > 0 ? 'status-inactive' : unread > 0 ? 'status-active' : '';
+        const displayName = agent.agent_name || agent.name || 'Unknown';
         return `
             <div class="agent">
                 <div style="display:flex; align-items:center; gap:6px;">
                     <div class="status-dot ${dotClass}"></div>
                     <div>
-                        <div>${agent.name}</div>
-                        <div class="muted">${agent.program ?? ''} ${agent.model ? '· ' + agent.model : ''}</div>
+                        <div>${displayName}</div>
+                        <div class="muted">${agent.program ?? ''} ${agent.model ? '· ' + agent.model : ''}${agent.pane ? ' · ' + agent.pane : ''}</div>
                     </div>
                 </div>
                 <div class="muted">${unread} unread / ${urgent} urgent</div>
@@ -298,20 +299,21 @@ export class NtmDashboard {
         `;
     }
 
-    private renderLocks(locks: MailLock[]): string {
-        if (!locks.length) {
-            return `<div class="muted">No active locks.</div>`;
+    private renderReservations(reservations: MailReservation[]): string {
+        if (!reservations.length) {
+            return `<div class="muted">No active file reservations.</div>`;
         }
-        const rows = locks.slice(0, 20).map(lock => `
+        const rows = reservations.slice(0, 20).map(res => `
             <tr>
-                <td class="mono">${lock.path_pattern}</td>
-                <td>${lock.agent_name}</td>
-                <td class="muted">${lock.exclusive ? 'exclusive' : 'shared'}</td>
+                <td class="mono">${res.pattern}</td>
+                <td>${res.agent}</td>
+                <td class="muted">${res.exclusive ? 'exclusive' : 'shared'}</td>
+                <td class="muted">${res.expires_in_seconds > 0 ? Math.round(res.expires_in_seconds / 60) + 'm' : ''}</td>
             </tr>
         `).join('');
         return `
             <table>
-                <tr><th>Path</th><th>Agent</th><th>Mode</th></tr>
+                <tr><th>Pattern</th><th>Agent</th><th>Mode</th><th>Expires</th></tr>
                 ${rows}
             </table>
         `;
