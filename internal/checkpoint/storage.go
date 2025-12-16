@@ -52,6 +52,11 @@ func (s *Storage) CheckpointDir(sessionName, checkpointID string) string {
 	return filepath.Join(s.BaseDir, sessionName, checkpointID)
 }
 
+// GitPatchPath returns the file path for the git patch.
+func (s *Storage) GitPatchPath(sessionName, checkpointID string) string {
+	return filepath.Join(s.CheckpointDir(sessionName, checkpointID), GitPatchFile)
+}
+
 // PanesDir returns the panes subdirectory for a checkpoint.
 func (s *Storage) PanesDirPath(sessionName, checkpointID string) string {
 	return filepath.Join(s.CheckpointDir(sessionName, checkpointID), PanesDir)
@@ -59,14 +64,20 @@ func (s *Storage) PanesDirPath(sessionName, checkpointID string) string {
 
 // GenerateID creates a unique checkpoint ID from timestamp and name.
 func GenerateID(name string) string {
-	// Use milliseconds to prevent collisions in automated scenarios
+	// Use milliseconds + random suffix to prevent collisions
 	timestamp := time.Now().Format("20060102-150405.000")
+	
+	// Add 4 random hex digits (pseudo-random based on time is sufficient here)
+	// We don't need crypto/rand complexity for this, just collision avoidance
+	randSuffix := time.Now().UnixNano() % 0xffff
+	id := fmt.Sprintf("%s-%04x", timestamp, randSuffix)
+
 	// Sanitize name for filesystem safety
 	safeName := sanitizeName(name)
 	if safeName == "" {
-		return timestamp
+		return id
 	}
-	return fmt.Sprintf("%s-%s", timestamp, safeName)
+	return fmt.Sprintf("%s-%s", id, safeName)
 }
 
 // sanitizeName makes a name safe for use in file paths.
@@ -84,6 +95,7 @@ func sanitizeName(name string) string {
 		"|", "-",
 		"%", "_",
 		" ", "_",
+		".", "_", // Prevent dotfiles and directory traversal
 	)
 	safe := replacer.Replace(strings.TrimSpace(name))
 
