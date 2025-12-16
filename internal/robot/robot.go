@@ -1016,39 +1016,39 @@ func getGraphMetrics() *GraphMetrics {
 
 	wd := mustGetwd()
 
-	// Get health summary (drift + bottleneck count)
-	health, err := bv.GetHealthSummary(wd)
-	if err == nil && health != nil {
-		switch health.DriftStatus {
-		case bv.DriftOK:
-			metrics.HealthStatus = "ok"
-		case bv.DriftWarning:
-			metrics.HealthStatus = "warning"
-		case bv.DriftCritical:
-			metrics.HealthStatus = "critical"
-		case bv.DriftNoBaseline:
-			metrics.HealthStatus = "unknown"
-		default:
-			metrics.HealthStatus = "unknown"
-		}
-		metrics.DriftMessage = health.DriftMessage
+	// Get drift status directly
+	drift := bv.CheckDrift(wd)
+	switch drift.Status {
+	case bv.DriftOK:
+		metrics.HealthStatus = "ok"
+	case bv.DriftWarning:
+		metrics.HealthStatus = "warning"
+	case bv.DriftCritical:
+		metrics.HealthStatus = "critical"
+	case bv.DriftNoBaseline:
+		metrics.HealthStatus = "unknown"
+	default:
+		metrics.HealthStatus = "unknown"
 	}
+	metrics.DriftMessage = drift.Message
 
-	// Get top bottlenecks
-	bottlenecks, err := bv.GetTopBottlenecks(wd, 3)
-	if err == nil {
-		for _, b := range bottlenecks {
+	// Get insights once for bottlenecks and keystones
+	insights, err := bv.GetInsights(wd)
+	if err == nil && insights != nil {
+		metrics.Keystones = len(insights.Keystones)
+
+		// Top 3 bottlenecks
+		limit := 3
+		if len(insights.Bottlenecks) < limit {
+			limit = len(insights.Bottlenecks)
+		}
+		for i := 0; i < limit; i++ {
+			b := insights.Bottlenecks[i]
 			metrics.TopBottlenecks = append(metrics.TopBottlenecks, BottleneckInfo{
 				ID:    b.ID,
 				Score: b.Value,
 			})
 		}
-	}
-
-	// Get keystone count
-	insights, err := bv.GetInsights(wd)
-	if err == nil && insights != nil {
-		metrics.Keystones = len(insights.Keystones)
 	}
 
 	return metrics
