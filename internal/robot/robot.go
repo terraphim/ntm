@@ -490,6 +490,13 @@ func PrintStatus() error {
 		return encodeJSON(output)
 	}
 
+	// Optimization: Fetch all panes in one go to avoid N+1 tmux calls
+	allPanes, err := tmux.GetAllPanes()
+	if err != nil {
+		// Fallback or just empty panes if this fails (e.g. race condition)
+		allPanes = make(map[string][]tmux.Pane)
+	}
+
 	for _, sess := range sessions {
 		info := SessionInfo{
 			Name:     sess.Name,
@@ -498,9 +505,7 @@ func PrintStatus() error {
 			Windows:  sess.Windows,
 		}
 
-		// Try to get agents from panes
-		panes, err := tmux.GetPanes(sess.Name)
-		if err == nil {
+		if panes, ok := allPanes[sess.Name]; ok {
 			info.Panes = len(panes)
 			for _, pane := range panes {
 				agent := Agent{
@@ -557,10 +562,6 @@ func PrintStatus() error {
 	if summary := getAgentMailSummary(); summary != nil {
 		output.AgentMail = summary
 	}
-
-	// Include recent file changes (best-effort, bounded).
-	appendFileChanges(&output)
-	appendConflicts(&output)
 
 	return encodeJSON(output)
 }

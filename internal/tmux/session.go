@@ -300,6 +300,61 @@ func GetPanesContext(ctx context.Context, session string) ([]Pane, error) {
 	return DefaultClient.GetPanesContext(ctx, session)
 }
 
+// GetAllPanes returns all panes across all sessions grouped by session name
+func (c *Client) GetAllPanes() (map[string][]Pane, error) {
+	return c.GetAllPanesContext(context.Background())
+}
+
+// GetAllPanesContext returns all panes across all sessions with cancellation support.
+func (c *Client) GetAllPanesContext(ctx context.Context) (map[string][]Pane, error) {
+	sep := "|||||"
+	format := fmt.Sprintf("#{session_name}%[1]s#{pane_id}%[1]s#{pane_index}%[1]s#{pane_title}%[1]s#{pane_current_command}%[1]s#{pane_width}%[1]s#{pane_height}%[1]s#{pane_active}", sep)
+	output, err := c.RunContext(ctx, "list-panes", "-a", "-F", format)
+	if err != nil {
+		return nil, err
+	}
+
+	sessions := make(map[string][]Pane)
+	for _, line := range strings.Split(output, "\n") {
+		if line == "" {
+			continue
+		}
+
+		parts := strings.Split(line, sep)
+		if len(parts) < 8 {
+			continue
+		}
+
+		sessionName := parts[0]
+		index, _ := strconv.Atoi(parts[2])
+		width, _ := strconv.Atoi(parts[5])
+		height, _ := strconv.Atoi(parts[6])
+		active := parts[7] == "1"
+
+		pane := Pane{
+			ID:      parts[1],
+			Index:   index,
+			Title:   parts[3],
+			Command: parts[4],
+			Width:   width,
+			Height:  height,
+			Active:  active,
+		}
+
+		// Parse pane title using regex to extract type, variant, and tags
+		pane.Type, pane.Variant, pane.Tags = parseAgentFromTitle(pane.Title)
+
+		sessions[sessionName] = append(sessions[sessionName], pane)
+	}
+
+	return sessions, nil
+}
+
+// GetAllPanes returns all panes across all sessions (default client)
+func GetAllPanes() (map[string][]Pane, error) {
+	return DefaultClient.GetAllPanes()
+}
+
 // GetFirstWindow returns the first window index for a session
 func (c *Client) GetFirstWindow(session string) (int, error) {
 	output, err := c.Run("list-windows", "-t", session, "-F", "#{window_index}")
