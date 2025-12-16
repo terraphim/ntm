@@ -46,8 +46,14 @@ func TestNewLoader_RespectsProjectTemplatesDir(t *testing.T) {
 		t.Fatalf("expected SourceProject, got %s", tmpl.Source.String())
 	}
 	// Resolve symlinks for comparison (macOS /var -> /private/var)
-	expectedPath, _ := filepath.EvalSymlinks(templatePath)
-	gotPath, _ := filepath.EvalSymlinks(tmpl.SourcePath)
+	expectedPath, err := filepath.EvalSymlinks(templatePath)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(expected) failed: %v", err)
+	}
+	gotPath, err := filepath.EvalSymlinks(tmpl.SourcePath)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(got) failed: %v", err)
+	}
 	if gotPath != expectedPath {
 		t.Fatalf("expected %s, got %s", expectedPath, gotPath)
 	}
@@ -93,8 +99,14 @@ func TestNewLoader_IgnoresTemplateDirTraversal(t *testing.T) {
 		t.Fatalf("expected SourceProject, got %s", tmpl.Source.String())
 	}
 	// Resolve symlinks for comparison (macOS /var -> /private/var)
-	expectedPath, _ := filepath.EvalSymlinks(templatePath)
-	gotPath, _ := filepath.EvalSymlinks(tmpl.SourcePath)
+	expectedPath, err := filepath.EvalSymlinks(templatePath)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(expected) failed: %v", err)
+	}
+	gotPath, err := filepath.EvalSymlinks(tmpl.SourcePath)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(got) failed: %v", err)
+	}
 	if gotPath != expectedPath {
 		t.Fatalf("expected %s, got %s", expectedPath, gotPath)
 	}
