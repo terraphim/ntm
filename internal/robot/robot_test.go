@@ -1681,3 +1681,208 @@ func TestTerseStateMarshal(t *testing.T) {
 		t.Errorf("Marshal/Unmarshal round trip failed: got %+v, want %+v", result, state)
 	}
 }
+
+// ====================
+// Test Context Functions
+// ====================
+
+func TestGetUsageLevel(t *testing.T) {
+	tests := []struct {
+		pct      float64
+		expected string
+	}{
+		{0, "Low"},
+		{20, "Low"},
+		{39, "Low"},
+		{40, "Medium"},
+		{60, "Medium"},
+		{69, "Medium"},
+		{70, "High"},
+		{80, "High"},
+		{84, "High"},
+		{85, "Critical"},
+		{100, "Critical"},
+		{150, "Critical"},
+	}
+
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("%.0f%%", tc.pct), func(t *testing.T) {
+			got := getUsageLevel(tc.pct)
+			if got != tc.expected {
+				t.Errorf("getUsageLevel(%.1f) = %q, want %q", tc.pct, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestDetectModel(t *testing.T) {
+	tests := []struct {
+		name      string
+		agentType string
+		title     string
+		expected  string
+	}{
+		// Model hints in title
+		{"opus in title", "claude", "claude opus session", "opus"},
+		{"sonnet in title", "claude", "sonnet-3.5 agent", "sonnet"},
+		{"haiku in title", "claude", "haiku fast", "haiku"},
+		{"gpt4 in title", "codex", "gpt4 turbo", "gpt4"},
+		{"gpt-4 in title", "codex", "gpt-4o session", "gpt4"},
+		{"o1 in title", "codex", "o1 preview", "o1"},
+		{"gemini in title", "gemini", "gemini session", "gemini"},
+		{"pro in title", "gemini", "google pro session", "pro"},
+		{"flash in title", "gemini", "flash fast model", "flash"},
+
+		// Fallback to defaults by agent type
+		{"claude default", "claude", "some session", "sonnet"},
+		{"codex default", "codex", "coding session", "gpt4"},
+		{"gemini default", "gemini", "ai session", "gemini"},
+		{"unknown agent", "unknown", "random session", "unknown"},
+
+		// Empty/edge cases
+		{"empty title", "claude", "", "sonnet"},
+		{"empty agent and title", "", "", "unknown"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := detectModel(tc.agentType, tc.title)
+			if got != tc.expected {
+				t.Errorf("detectModel(%q, %q) = %q, want %q", tc.agentType, tc.title, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestGenerateContextHints(t *testing.T) {
+	tests := []struct {
+		name       string
+		lowUsage   []string
+		highUsage  []string
+		highCount  int
+		total      int
+		wantNil    bool
+		checkHints func(*testing.T, *ContextAgentHints)
+	}{
+		{
+			name:      "all healthy",
+			lowUsage:  []string{"0", "1", "2"},
+			highUsage: nil,
+			highCount: 0,
+			total:     3,
+			wantNil:   false,
+			checkHints: func(t *testing.T, h *ContextAgentHints) {
+				if len(h.LowUsageAgents) != 3 {
+					t.Errorf("expected 3 low usage agents, got %d", len(h.LowUsageAgents))
+				}
+				if len(h.Suggestions) == 0 || !strings.Contains(h.Suggestions[0], "healthy") {
+					t.Errorf("expected healthy suggestion")
+				}
+			},
+		},
+		{
+			name:      "some high usage",
+			lowUsage:  []string{"0"},
+			highUsage: []string{"1", "2"},
+			highCount: 2,
+			total:     3,
+			wantNil:   false,
+			checkHints: func(t *testing.T, h *ContextAgentHints) {
+				if len(h.HighUsageAgents) != 2 {
+					t.Errorf("expected 2 high usage agents, got %d", len(h.HighUsageAgents))
+				}
+				// Should have suggestions about high usage and available room
+				if len(h.Suggestions) < 2 {
+					t.Errorf("expected at least 2 suggestions, got %d", len(h.Suggestions))
+				}
+			},
+		},
+		{
+			name:      "all high usage",
+			lowUsage:  nil,
+			highUsage: []string{"0", "1"},
+			highCount: 2,
+			total:     2,
+			wantNil:   false,
+			checkHints: func(t *testing.T, h *ContextAgentHints) {
+				if len(h.Suggestions) == 0 || !strings.Contains(h.Suggestions[0], "All agents") {
+					t.Errorf("expected 'all agents' suggestion")
+				}
+			},
+		},
+		{
+			name:      "empty",
+			lowUsage:  nil,
+			highUsage: nil,
+			highCount: 0,
+			total:     0,
+			wantNil:   true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := generateContextHints(tc.lowUsage, tc.highUsage, tc.highCount, tc.total)
+			if tc.wantNil {
+				if got != nil {
+					t.Errorf("expected nil hints, got %+v", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("expected non-nil hints")
+			}
+			if tc.checkHints != nil {
+				tc.checkHints(t, got)
+			}
+		})
+	}
+}
+
+func TestContextOutputJSON(t *testing.T) {
+	output := ContextOutput{
+		RobotResponse: NewRobotResponse(true),
+		Session:       "test-session",
+		CapturedAt:    time.Now().UTC(),
+		Agents: []AgentContextInfo{
+			{
+				Pane:            "0",
+				PaneIdx:         0,
+				AgentType:       "claude",
+				Model:           "sonnet",
+				EstimatedTokens: 10000,
+				WithOverhead:    25000,
+				ContextLimit:    200000,
+				UsagePercent:    12.5,
+				UsageLevel:      "Low",
+				Confidence:      "low",
+				State:           "idle",
+			},
+		},
+		Summary: ContextSummary{
+			TotalAgents:    1,
+			HighUsageCount: 0,
+			AvgUsage:       12.5,
+		},
+	}
+
+	data, err := json.Marshal(output)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	var result ContextOutput
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if result.Session != output.Session {
+		t.Errorf("Session mismatch: got %q, want %q", result.Session, output.Session)
+	}
+	if len(result.Agents) != 1 {
+		t.Errorf("Agents count mismatch: got %d, want 1", len(result.Agents))
+	}
+	if result.Agents[0].Model != "sonnet" {
+		t.Errorf("Model mismatch: got %q, want %q", result.Agents[0].Model, "sonnet")
+	}
+}

@@ -22,6 +22,7 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/config"
 	"github.com/Dicklesworthstone/ntm/internal/recipe"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
+	"github.com/Dicklesworthstone/ntm/internal/tokens"
 	"github.com/Dicklesworthstone/ntm/internal/tracker"
 )
 
@@ -1348,6 +1349,53 @@ type PaneOutput struct {
 	Truncated bool     `json:"truncated"`
 }
 
+// ContextOutput is the structured output for --robot-context
+type ContextOutput struct {
+	RobotResponse
+	Session    string               `json:"session"`
+	CapturedAt time.Time            `json:"captured_at"`
+	Agents     []AgentContextInfo   `json:"agents"`
+	Summary    ContextSummary       `json:"summary"`
+	Warnings   []ContextWarning     `json:"warnings,omitempty"`
+	AgentHints *ContextAgentHints   `json:"_agent_hints,omitempty"`
+}
+
+// AgentContextInfo contains context usage info for a single agent
+type AgentContextInfo struct {
+	Pane            string  `json:"pane"`
+	PaneIdx         int     `json:"pane_idx"`
+	AgentType       string  `json:"agent_type"`          // claude, codex, gemini
+	Model           string  `json:"model"`               // Detected or configured model
+	EstimatedTokens int     `json:"estimated_tokens"`    // Visible tokens (estimated)
+	WithOverhead    int     `json:"with_overhead"`       // Including hidden context (2.5x multiplier)
+	ContextLimit    int     `json:"context_limit"`       // Model's max context
+	UsagePercent    float64 `json:"usage_percent"`       // Percentage used (with overhead)
+	UsageLevel      string  `json:"usage_level"`         // Low, Medium, High, Critical
+	Confidence      string  `json:"confidence"`          // Always "low" - we're estimating
+	State           string  `json:"state"`               // active, idle, unknown
+}
+
+// ContextSummary provides aggregate context stats
+type ContextSummary struct {
+	TotalAgents    int     `json:"total_agents"`
+	HighUsageCount int     `json:"high_usage_count"` // Agents above 80%
+	AvgUsage       float64 `json:"avg_usage_percent"`
+}
+
+// ContextWarning represents a context usage warning
+type ContextWarning struct {
+	Pane           string `json:"pane"`
+	Message        string `json:"message"`
+	Recommendation string `json:"recommendation"`
+}
+
+// ContextAgentHints provides actionable suggestions for AI agents
+type ContextAgentHints struct {
+	LowUsageAgents    []string `json:"low_usage_agents,omitempty"`    // Panes with plenty of context room
+	HighUsageAgents   []string `json:"high_usage_agents,omitempty"`   // Panes approaching limit
+	Suggestions       []string `json:"suggestions,omitempty"`         // Actionable hints
+}
+
 // PrintTail outputs recent pane output for AI consumption
 func PrintTail(session string, lines int, paneFilter []string) error {
 	if !tmux.SessionExists(session) {
@@ -1465,6 +1513,202 @@ func generateTailHints(panes map[string]PaneOutput) *TailAgentHints {
 		IdleAgents:   idle,
 		ActiveAgents: active,
 		Suggestions:  suggestions,
+	}
+}
+
+// PrintContext outputs context window usage for all agents in a session.
+// This helps AI agents understand how much context capacity remains.
+func PrintContext(session string, scrollbackLines int) error {
+	if !tmux.SessionExists(session) {
+		return RobotError(
+			fmt.Errorf("session '%s' not found", session),
+			ErrCodeSessionNotFound,
+			"Use 'ntm list' to see available sessions",
+		)
+	}
+
+	panes, err := tmux.GetPanes(session)
+	if err != nil {
+		return RobotError(
+			fmt.Errorf("failed to get panes: %w", err),
+			ErrCodeInternalError,
+			"Check tmux is running and session is accessible",
+		)
+	}
+
+	output := ContextOutput{
+		RobotResponse: NewRobotResponse(true),
+		Session:       session,
+		CapturedAt:    time.Now().UTC(),
+		Agents:        make([]AgentContextInfo, 0, len(panes)),
+		Warnings:      make([]ContextWarning, 0),
+	}
+
+	var totalUsage float64
+	var highUsageCount int
+	var lowUsageAgents, highUsageAgents []string
+
+	for _, pane := range panes {
+		// Capture pane scrollback
+		scrollback, err := tmux.CapturePaneOutput(pane.ID, scrollbackLines)
+		if err != nil {
+			continue // Skip panes we can't capture
+		}
+
+		// Strip ANSI codes for accurate estimation
+		cleanText := stripANSI(scrollback)
+
+		// Detect agent type and model
+		agentType := detectAgentType(pane.Title)
+		model := detectModel(agentType, pane.Title)
+
+		// Estimate tokens
+		visibleTokens := tokens.SmartEstimate(cleanText)
+		withOverhead := tokens.EstimateWithOverhead(cleanText, 2.5) // 2.5x overhead multiplier
+		contextLimit := tokens.GetContextLimit(model)
+		usagePercent := float64(withOverhead) * 100.0 / float64(contextLimit)
+
+		// Determine usage level
+		usageLevel := getUsageLevel(usagePercent)
+
+		// Detect agent state
+		lines := splitLines(cleanText)
+		state := detectState(lines, pane.Title)
+
+		paneKey := fmt.Sprintf("%d", pane.Index)
+
+		agentInfo := AgentContextInfo{
+			Pane:            paneKey,
+			PaneIdx:         pane.Index,
+			AgentType:       agentType,
+			Model:           model,
+			EstimatedTokens: visibleTokens,
+			WithOverhead:    withOverhead,
+			ContextLimit:    contextLimit,
+			UsagePercent:    usagePercent,
+			UsageLevel:      usageLevel,
+			Confidence:      "low", // Always low - we're estimating
+			State:           state,
+		}
+		output.Agents = append(output.Agents, agentInfo)
+
+		// Track stats
+		totalUsage += usagePercent
+		if usagePercent >= 80 {
+			highUsageCount++
+			highUsageAgents = append(highUsageAgents, paneKey)
+			output.Warnings = append(output.Warnings, ContextWarning{
+				Pane:           paneKey,
+				Message:        fmt.Sprintf("Context at %.0f%%, approaching limit", usagePercent),
+				Recommendation: "Consider compaction or starting fresh",
+			})
+		} else if usagePercent < 40 {
+			lowUsageAgents = append(lowUsageAgents, paneKey)
+		}
+	}
+
+	// Sort pane lists for deterministic output
+	sort.Strings(lowUsageAgents)
+	sort.Strings(highUsageAgents)
+
+	// Calculate summary
+	agentCount := len(output.Agents)
+	avgUsage := 0.0
+	if agentCount > 0 {
+		avgUsage = totalUsage / float64(agentCount)
+	}
+
+	output.Summary = ContextSummary{
+		TotalAgents:    agentCount,
+		HighUsageCount: highUsageCount,
+		AvgUsage:       avgUsage,
+	}
+
+	// Generate agent hints
+	output.AgentHints = generateContextHints(lowUsageAgents, highUsageAgents, highUsageCount, agentCount)
+
+	return encodeJSON(output)
+}
+
+// getUsageLevel returns a qualitative level for context usage percentage
+func getUsageLevel(pct float64) string {
+	switch {
+	case pct < 40:
+		return "Low"
+	case pct < 70:
+		return "Medium"
+	case pct < 85:
+		return "High"
+	default:
+		return "Critical"
+	}
+}
+
+// detectModel attempts to determine the model from agent type and pane title
+func detectModel(agentType, title string) string {
+	title = strings.ToLower(title)
+
+	// Check for model hints in the title
+	modelHints := map[string]string{
+		"opus":    "opus",
+		"sonnet":  "sonnet",
+		"haiku":   "haiku",
+		"gpt4":    "gpt4",
+		"gpt-4":   "gpt4",
+		"o1":      "o1",
+		"gemini":  "gemini",
+		"pro":     "pro",
+		"flash":   "flash",
+	}
+
+	for hint, model := range modelHints {
+		if strings.Contains(title, hint) {
+			return model
+		}
+	}
+
+	// Fall back to defaults by agent type
+	switch agentType {
+	case "claude":
+		return "sonnet" // Default Claude model
+	case "codex":
+		return "gpt4" // Default OpenAI model
+	case "gemini":
+		return "gemini" // Default Google model
+	default:
+		return "unknown"
+	}
+}
+
+// generateContextHints creates actionable hints based on context analysis
+func generateContextHints(lowUsage, highUsage []string, highCount, total int) *ContextAgentHints {
+	var suggestions []string
+
+	if highCount > 0 {
+		if highCount == total {
+			suggestions = append(suggestions, "All agents approaching context limit - consider starting fresh sessions")
+		} else {
+			suggestions = append(suggestions, fmt.Sprintf("%d of %d agents above 80%% - consider compacting or reassigning work", highCount, total))
+		}
+	}
+
+	if len(lowUsage) > 0 && highCount > 0 {
+		suggestions = append(suggestions, fmt.Sprintf("%d agents have plenty of context room - consider moving work there", len(lowUsage)))
+	}
+
+	if len(lowUsage) == total && total > 0 {
+		suggestions = append(suggestions, "All agents have ample context room - system healthy")
+	}
+
+	// Return nil if no useful hints
+	if len(lowUsage) == 0 && len(highUsage) == 0 && len(suggestions) == 0 {
+		return nil
+	}
+
+	return &ContextAgentHints{
+		LowUsageAgents:  lowUsage,
+		HighUsageAgents: highUsage,
+		Suggestions:     suggestions,
 	}
 }
 

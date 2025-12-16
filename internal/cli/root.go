@@ -156,6 +156,18 @@ Shell Integration:
 			}
 			return
 		}
+		if robotContext != "" {
+			// Use --lines flag for scrollback (default 20, or as specified)
+			scrollbackLines := robotLines
+			if scrollbackLines <= 0 {
+				scrollbackLines = 1000 // Default to capturing more for context estimation
+			}
+			if err := robot.PrintContext(robotContext, scrollbackLines); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 		if robotMail {
 			projectKey, _ := os.Getwd()
 			sessionName := ""
@@ -494,6 +506,7 @@ var (
 	robotGraph     bool   // bv insights passthrough
 	robotBeadLimit int    // limit for ready/in-progress beads in snapshot
 	robotDashboard bool   // dashboard summary output
+	robotContext   string // session name for context usage
 
 	// Robot-send flags
 	robotSend        string // session name for send
@@ -596,6 +609,7 @@ func init() {
 	rootCmd.Flags().StringVar(&robotPanes, "panes", "", "Filter to specific pane indices. Optional with --robot-tail, --robot-send, --robot-ack, --robot-interrupt. Example: --panes=1,2")
 	rootCmd.Flags().BoolVar(&robotGraph, "robot-graph", false, "Get bv dependency graph insights: PageRank, critical path, cycles (JSON)")
 	rootCmd.Flags().BoolVar(&robotDashboard, "robot-dashboard", false, "Get dashboard summary as markdown (or JSON with --json). Token-efficient overview")
+	rootCmd.Flags().StringVar(&robotContext, "robot-context", "", "Get context window usage for all agents in a session. Required: SESSION. Example: ntm --robot-context=myproject")
 	rootCmd.Flags().IntVar(&robotBeadLimit, "bead-limit", 5, "Max beads per category in snapshot. Optional with --robot-snapshot, --robot-status. Example: --bead-limit=10")
 
 	// Robot-send flags for batch messaging
@@ -1022,7 +1036,8 @@ func needsConfigLoading(cmdName string) bool {
 		if robotStatus || robotPlan || robotSnapshot || robotTail != "" ||
 			robotSend != "" || robotAck != "" || robotSpawn != "" ||
 			robotInterrupt != "" || robotGraph || robotMail || robotHealth ||
-			robotTerse || robotMarkdown || robotSave != "" || robotRestore != "" {
+			robotTerse || robotMarkdown || robotSave != "" || robotRestore != "" ||
+			robotContext != "" {
 			return true
 		}
 	}
