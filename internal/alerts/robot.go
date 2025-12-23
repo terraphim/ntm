@@ -21,8 +21,8 @@ func GenerateAndTrack(cfg Config) *Tracker {
 	SetGlobalTrackerConfig(cfg)
 
 	generator := NewGenerator(cfg)
-	detected := generator.GenerateAll()
-	tracker.Update(detected)
+	detected, failed := generator.GenerateAll()
+	tracker.Update(detected, failed)
 
 	return tracker
 }

@@ -49,8 +49,9 @@ func (m Model) fetchAlertsCmd() tea.Cmd {
 			cfg = alerts.DefaultConfig()
 		}
 
-		gen := alerts.NewGenerator(cfg)
-		activeAlerts := gen.GenerateAll()
+		// Use GenerateAndTrack to benefit from lifecycle management and error handling
+		tracker := alerts.GenerateAndTrack(cfg)
+		activeAlerts := tracker.GetActive()
 		return AlertsUpdateMsg{Alerts: activeAlerts}
 	}
 }

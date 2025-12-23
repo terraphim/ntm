@@ -365,7 +365,7 @@ func TestGeneratorDisabled(t *testing.T) {
 	cfg.Enabled = false
 
 	gen := NewGenerator(cfg)
-	alerts := gen.GenerateAll()
+	alerts, _ := gen.GenerateAll()
 
 	if len(alerts) != 0 {
 		t.Errorf("expected 0 alerts when disabled, got %d", len(alerts))

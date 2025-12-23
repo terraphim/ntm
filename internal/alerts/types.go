@@ -52,6 +52,8 @@ type Alert struct {
 	Type AlertType `json:"type"`
 	// Severity indicates urgency
 	Severity Severity `json:"severity"`
+	// Source indicates the origin/check that generated this alert
+	Source string `json:"source,omitempty"`
 	// Message is a human-readable description
 	Message string `json:"message"`
 	// Session is the tmux session this alert relates to (if applicable)
@@ -99,8 +101,10 @@ type Config struct {
 	ResolvedPruneMinutes int `toml:"resolved_prune_minutes" json:"resolved_prune_minutes"`
 	// Enabled controls whether alert generation is active
 	Enabled bool `toml:"enabled" json:"enabled"`
-	// ProjectsDir is the base directory for projects (used for disk space check)
+	// ProjectsDir is the base directory for projects (used for disk space check and bead analysis)
 	ProjectsDir string `json:"projects_dir,omitempty"`
+	// SessionFilter restricts agent checks to a specific session (runtime only)
+	SessionFilter string `json:"session_filter,omitempty"`
 }
 
 // DefaultConfig returns sensible default alert thresholds

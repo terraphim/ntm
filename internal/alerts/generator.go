@@ -56,39 +56,62 @@ func NewGenerator(cfg Config) *Generator {
 }
 
 // GenerateAll analyzes the current system state and returns all detected alerts
-func (g *Generator) GenerateAll() []Alert {
+// plus a list of sources that failed to check (to prevent false resolution).
+func (g *Generator) GenerateAll() ([]Alert, []string) {
 	if !g.config.Enabled {
-		return nil
+		return nil, nil
 	}
 
 	var alerts []Alert
+	var failed []string
 
 	// Check agent states
-	alerts = append(alerts, g.checkAgentStates()...)
+	if agentAlerts, err := g.checkAgentStates(); err != nil {
+		failed = append(failed, "agents")
+	} else {
+		alerts = append(alerts, agentAlerts...)
+	}
 
 	// Check disk space
-	if alert := g.checkDiskSpace(); alert != nil {
+	if alert, err := g.checkDiskSpace(); err != nil {
+		failed = append(failed, "disk")
+	} else if alert != nil {
 		alerts = append(alerts, *alert)
 	}
 
 	// Check bead state
-	alerts = append(alerts, g.checkBeadState()...)
+	if beadAlerts, err := g.checkBeadState(); err != nil {
+		failed = append(failed, "beads")
+	} else {
+		alerts = append(alerts, beadAlerts...)
+	}
 
-	return alerts
+	return alerts, failed
 }
 
 // checkAgentStates analyzes tmux panes for stuck, crashed, or error states
-func (g *Generator) checkAgentStates() []Alert {
+func (g *Generator) checkAgentStates() ([]Alert, error) {
 	var alerts []Alert
 
 	sessions, err := tmux.ListSessions()
 	if err != nil {
-		return alerts
+		return nil, err
 	}
 
 	for _, sess := range sessions {
+		// Filter by session if configured
+		if g.config.SessionFilter != "" && sess.Name != g.config.SessionFilter {
+			continue
+		}
+
 		panes, err := tmux.GetPanes(sess.Name)
 		if err != nil {
+			// If we can't get panes for a session, log it but don't fail the whole check?
+			// Actually if we can't check panes, we shouldn't resolve alerts for this session.
+			// But checkAgentStates is session-scoped? No, it iterates all.
+			// Let's treat getPanes error as a partial failure or ignore it?
+			// If session is gone, getPanes fails.
+			// If session is gone, agents are gone.
 			continue
 		}
 
@@ -101,6 +124,7 @@ func (g *Generator) checkAgentStates() []Alert {
 					ID:         generateAlertID(AlertAgentCrashed, sess.Name, pane.ID),
 					Type:       AlertAgentCrashed,
 					Severity:   SeverityError,
+					Source:     "agents",
 					Message:    fmt.Sprintf("Cannot capture output from pane %s (may have crashed)", pane.ID),
 					Session:    sess.Name,
 					Pane:       pane.ID,
@@ -127,7 +151,7 @@ func (g *Generator) checkAgentStates() []Alert {
 		}
 	}
 
-	return alerts
+	return alerts, nil
 }
 
 // detectErrorState checks pane output for error patterns
@@ -145,6 +169,7 @@ func (g *Generator) detectErrorState(session string, pane tmux.Pane, lines []str
 					ID:         generateAlertID(AlertAgentError, session, pane.ID),
 					Type:       AlertAgentError,
 					Severity:   ep.severity,
+					Source:     "agents",
 					Message:    ep.msg,
 					Session:    session,
 					Pane:       pane.ID,
@@ -174,6 +199,7 @@ func (g *Generator) detectRateLimit(session string, pane tmux.Pane, lines []stri
 					ID:         generateAlertID(AlertRateLimit, session, pane.ID),
 					Type:       AlertRateLimit,
 					Severity:   SeverityWarning,
+					Source:     "agents",
 					Message:    "Rate limiting detected",
 					Session:    session,
 					Pane:       pane.ID,
@@ -194,7 +220,7 @@ func (g *Generator) detectRateLimit(session string, pane tmux.Pane, lines []stri
 // - (stub implementation returns nil on unsupported platforms)
 
 // checkBeadState analyzes beads for stale in-progress items and dependency cycles
-func (g *Generator) checkBeadState() []Alert {
+func (g *Generator) checkBeadState() ([]Alert, error) {
 	var alerts []Alert
 
 	// Check for stale in-progress beads
@@ -205,14 +231,17 @@ func (g *Generator) checkBeadState() []Alert {
 		alerts = append(alerts, *alert)
 	}
 
-	return alerts
+	return alerts, nil
 }
 
 // checkStaleBeads finds in-progress beads that haven't been updated recently
 func (g *Generator) checkStaleBeads() []Alert {
 	var alerts []Alert
 
-	wd, _ := os.Getwd()
+	wd := g.config.ProjectsDir
+	if wd == "" {
+		wd, _ = os.Getwd()
+	}
 	// Get all in-progress beads (limit 100)
 	beads := bv.GetInProgressList(wd, 100)
 
@@ -225,6 +254,7 @@ func (g *Generator) checkStaleBeads() []Alert {
 				ID:       generateAlertID(AlertBeadStale, "", bead.ID),
 				Type:     AlertBeadStale,
 				Severity: SeverityWarning,
+				Source:   "beads",
 				Message:  fmt.Sprintf("Bead %s has been in_progress for >%d hours without update", bead.ID, g.config.BeadStaleHours),
 				BeadID:   bead.ID,
 				Context: map[string]interface{}{
@@ -245,7 +275,10 @@ func (g *Generator) checkStaleBeads() []Alert {
 
 // checkDependencyCycles uses bv to detect cycles in the dependency graph
 func (g *Generator) checkDependencyCycles() *Alert {
-	wd, _ := os.Getwd()
+	wd := g.config.ProjectsDir
+	if wd == "" {
+		wd, _ = os.Getwd()
+	}
 	// Run bv --robot-insights and check for cycles
 	insights, err := bv.GetInsights(wd)
 	if err != nil {
@@ -265,6 +298,7 @@ func (g *Generator) checkDependencyCycles() *Alert {
 			ID:       generateAlertID(AlertDependencyCycle, "", ""),
 			Type:     AlertDependencyCycle,
 			Severity: SeverityError,
+			Source:   "beads",
 			Message:  fmt.Sprintf("Dependency cycle detected: %d cycle(s) found", len(insights.Cycles)),
 			Context: map[string]interface{}{
 				"cycle_count": len(insights.Cycles),

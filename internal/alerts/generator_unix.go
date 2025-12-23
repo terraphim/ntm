@@ -9,7 +9,7 @@ import (
 )
 
 // checkDiskSpace verifies available disk space (Unix implementation)
-func (g *Generator) checkDiskSpace() *Alert {
+func (g *Generator) checkDiskSpace() (*Alert, error) {
 	var stat syscall.Statfs_t
 
 	// Check space on project directory if configured, otherwise root
@@ -25,7 +25,7 @@ func (g *Generator) checkDiskSpace() *Alert {
 			err = syscall.Statfs("/", &stat)
 		}
 		if err != nil {
-			return nil
+			return nil, err
 		}
 	}
 
@@ -44,6 +44,7 @@ func (g *Generator) checkDiskSpace() *Alert {
 			ID:       generateAlertID(AlertDiskLow, "", ""),
 			Type:     AlertDiskLow,
 			Severity: severity,
+			Source:   "disk",
 			Message:  fmt.Sprintf("Low disk space: %.1f GB remaining on %s", freeGB, checkPath),
 			Context: map[string]interface{}{
 				"free_gb":      freeGB,
@@ -53,8 +54,8 @@ func (g *Generator) checkDiskSpace() *Alert {
 			CreatedAt:  time.Now(),
 			LastSeenAt: time.Now(),
 			Count:      1,
-		}
+		}, nil
 	}
 
-	return nil
+	return nil, nil
 }

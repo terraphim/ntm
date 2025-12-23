@@ -27,12 +27,17 @@ func NewTracker(cfg Config) *Tracker {
 // Update processes new alerts and manages lifecycle.
 // It adds new alerts, refreshes existing ones, and resolves alerts
 // that are no longer detected.
-func (t *Tracker) Update(detected []Alert) {
+// failedChecks is a list of sources that failed to report; alerts from these sources will be preserved.
+func (t *Tracker) Update(detected []Alert, failedChecks []string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	now := time.Now()
 	seenIDs := make(map[string]bool)
+	failedSet := make(map[string]bool)
+	for _, s := range failedChecks {
+		failedSet[s] = true
+	}
 
 	// Process detected alerts
 	for _, alert := range detected {
@@ -63,6 +68,11 @@ func (t *Tracker) Update(detected []Alert) {
 	// Resolve alerts that weren't detected this cycle
 	for id, alert := range t.active {
 		if !seenIDs[id] {
+			// If the check for this source failed, assume the alert might still be active
+			if failedSet[alert.Source] {
+				continue
+			}
+
 			resolved := now
 			alert.ResolvedAt = &resolved
 			t.resolved = append(t.resolved, alert)
