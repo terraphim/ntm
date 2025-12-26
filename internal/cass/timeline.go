@@ -19,7 +19,8 @@ func (c *Client) Timeline(ctx context.Context, since, groupBy string) (*Timeline
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	args := []string{"robot", "timeline"}
+	// Build arguments for: cass timeline --json [flags]
+	args := []string{"timeline", "--json"}
 	if since != "" {
 		args = append(args, fmt.Sprintf("--since=%s", since))
 	}

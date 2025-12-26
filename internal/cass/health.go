@@ -12,7 +12,7 @@ func (c *Client) Health(ctx context.Context) (*StatusResponse, error) {
 	if !c.IsInstalled() {
 		return nil, ErrNotInstalled
 	}
-	// Use "status" as health check for now, unless "health" is distinct in CASS robot mode
+	// Use "status" as health check for now, unless "health" is distinct in CASS
 	return c.runStatusCmd(ctx, "status")
 }
 
@@ -28,7 +28,8 @@ func (c *Client) runStatusCmd(ctx context.Context, cmd string) (*StatusResponse,
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	output, err := c.executor.Run(ctx, "robot", cmd)
+	// Call: cass <cmd> --json (e.g., cass status --json)
+	output, err := c.executor.Run(ctx, cmd, "--json")
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +51,8 @@ func (c *Client) Capabilities(ctx context.Context) (*Capabilities, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	output, err := c.executor.Run(ctx, "robot", "capabilities")
+	// Call: cass capabilities --json
+	output, err := c.executor.Run(ctx, "capabilities", "--json")
 	if err != nil {
 		return nil, err
 	}

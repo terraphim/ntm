@@ -15,8 +15,8 @@ func (c *Client) Search(ctx context.Context, opts SearchOptions) (*SearchRespons
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	// Build arguments for: cass robot search [flags] -- <query>
-	args := []string{"robot", "search"}
+	// Build arguments for: cass search --json [flags] -- <query>
+	args := []string{"search", "--json"}
 
 	if opts.Limit > 0 {
 		args = append(args, fmt.Sprintf("--limit=%d", opts.Limit))
