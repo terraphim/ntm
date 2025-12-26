@@ -180,6 +180,7 @@ type Model struct {
 	lastAlertsFetch      time.Time
 	lastBeadsFetch       time.Time
 	lastCassContextFetch time.Time
+	lastScanFetch        time.Time
 
 	// Fetch state tracking to prevent pile-up
 	fetchingSession     bool
@@ -208,6 +209,7 @@ type Model struct {
 	alertsRefreshInterval      time.Duration
 	beadsRefreshInterval       time.Duration
 	cassContextRefreshInterval time.Duration
+	scanRefreshInterval        time.Duration
 
 	// Pane output capture budgeting/caching
 	paneOutputLines         int
@@ -344,6 +346,7 @@ const (
 	AlertsRefreshInterval      = 3 * time.Second
 	BeadsRefreshInterval       = 5 * time.Second
 	CassContextRefreshInterval = 15 * time.Minute
+	ScanRefreshInterval        = 1 * time.Minute
 )
 
 func (m *Model) initRenderer(width int) {
@@ -407,6 +410,7 @@ func New(session, projectDir string) Model {
 		alertsRefreshInterval:      AlertsRefreshInterval,
 		beadsRefreshInterval:       BeadsRefreshInterval,
 		cassContextRefreshInterval: CassContextRefreshInterval,
+		scanRefreshInterval:        ScanRefreshInterval,
 		paneOutputLines:            50,
 		paneOutputCaptureBudget:    20,
 		paneOutputCache:            make(map[string]string),
@@ -446,6 +450,7 @@ func New(session, projectDir string) Model {
 	m.lastAlertsFetch = now
 	m.lastBeadsFetch = now
 	m.lastCassContextFetch = now
+	m.lastScanFetch = now
 
 	applyDashboardEnvOverrides(&m)
 
@@ -1126,10 +1131,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if cmd := m.requestSessionFetch(false); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-				if !m.fetchingScan {
-					if cmd := m.requestScanFetch(false); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
+			}
+			if now.Sub(m.lastScanFetch) >= m.scanRefreshInterval && !m.fetchingScan {
+				m.lastScanFetch = now
+				if cmd := m.requestScanFetch(false); cmd != nil {
+					cmds = append(cmds, cmd)
 				}
 			}
 			if now.Sub(m.lastContextFetch) >= m.contextRefreshInterval && !m.fetchingContext {
