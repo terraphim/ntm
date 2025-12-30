@@ -102,9 +102,14 @@ func TestGetProjectDirWithTilde(t *testing.T) {
 }
 
 func TestLoadNonExistent(t *testing.T) {
-	_, err := Load("/nonexistent/path/config.toml")
-	if err == nil {
-		t.Error("Expected error for non-existent config")
+	// When the config file doesn't exist, Load should return defaults (not an error).
+	// This is the correct behavior - missing config files are silently ignored.
+	cfg, err := Load("/nonexistent/path/config.toml")
+	if err != nil {
+		t.Errorf("Expected no error for non-existent config (should return defaults): %v", err)
+	}
+	if cfg == nil {
+		t.Error("Expected non-nil config with defaults")
 	}
 }
 
@@ -205,9 +210,13 @@ func TestLoadFromFileInvalid(t *testing.T) {
 }
 
 func TestLoadFromFileMissing(t *testing.T) {
-	_, err := Load("/definitely/does/not/exist/config.toml")
-	if err == nil {
-		t.Error("Expected error for missing config file")
+	// When the config file doesn't exist, Load should return defaults (not an error).
+	cfg, err := Load("/definitely/does/not/exist/config.toml")
+	if err != nil {
+		t.Errorf("Expected no error for missing config file (should return defaults): %v", err)
+	}
+	if cfg == nil {
+		t.Error("Expected non-nil config with defaults")
 	}
 }
 

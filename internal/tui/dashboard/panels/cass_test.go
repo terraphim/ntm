@@ -58,8 +58,8 @@ func TestCASSPanelSetData(t *testing.T) {
 	now := time.Now()
 
 	hits := []cass.SearchHit{
-		{Title: "Low score", Score: 0.10, CreatedAt: ptrInt64(now.Add(-2 * time.Hour).Unix())},
-		{Title: "High score", Score: 0.90, CreatedAt: ptrInt64(now.Add(-10 * time.Minute).Unix())},
+		{Title: "Low score", Score: 0.10, CreatedAt: ptrFlexTime(now.Add(-2 * time.Hour))},
+		{Title: "High score", Score: 0.90, CreatedAt: ptrFlexTime(now.Add(-10 * time.Minute))},
 	}
 
 	panel.SetData(hits, nil)
@@ -129,8 +129,8 @@ func TestCASSPanelViewWithHits(t *testing.T) {
 
 	now := time.Now()
 	hits := []cass.SearchHit{
-		{Title: "Session: auth refactor", Score: 0.90, CreatedAt: ptrInt64(now.Add(-2 * time.Hour).Unix())},
-		{Title: "Session: ui polish", Score: 0.50, CreatedAt: ptrInt64(now.Add(-25 * time.Hour).Unix())},
+		{Title: "Session: auth refactor", Score: 0.90, CreatedAt: ptrFlexTime(now.Add(-2 * time.Hour))},
+		{Title: "Session: ui polish", Score: 0.50, CreatedAt: ptrFlexTime(now.Add(-25 * time.Hour))},
 	}
 	panel.SetData(hits, nil)
 
@@ -149,4 +149,4 @@ func TestCASSPanelViewWithHits(t *testing.T) {
 	}
 }
 
-func ptrInt64(v int64) *int64 { return &v }
+func ptrFlexTime(t time.Time) *cass.FlexTime { return &cass.FlexTime{Time: t} }

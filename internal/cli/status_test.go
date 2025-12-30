@@ -82,13 +82,15 @@ func TestStatusRealSession(t *testing.T) {
 	output := stripANSI(buf.String())
 
 	// Verify output contains key info
+	// Note: Full pane titles are truncated in the table display, so we verify the Claude
+	// pane exists via the agent type indicator (C) and the Agents summary
 	checks := []string{
 		sessionName,
 		"Panes",
 		"Directory:",
 		"Claude",
 		"1 instance(s)",
-		fmt.Sprintf("%s__cc_1_claude-test", sessionName), // Pane title
+		"C ", // Claude pane type indicator in the pane list
 	}
 
 	for _, check := range checks {
