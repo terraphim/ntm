@@ -351,9 +351,19 @@ func TestPersonaInheritance(t *testing.T) {
 		t.Error("expected appended system prompt")
 	}
 
-	// Should have merged tags
-	if len(resolved.Tags) < 2 {
-		t.Errorf("expected merged tags, got %v", resolved.Tags)
+	// Should have merged tags (parent: base, claude + child: senior = 3 unique)
+	if len(resolved.Tags) != 3 {
+		t.Errorf("expected 3 merged tags (base, claude, senior), got %d: %v", len(resolved.Tags), resolved.Tags)
+	}
+	// Verify specific tags are present
+	tagMap := make(map[string]bool)
+	for _, tag := range resolved.Tags {
+		tagMap[tag] = true
+	}
+	for _, expected := range []string{"base", "claude", "senior"} {
+		if !tagMap[expected] {
+			t.Errorf("expected tag %q in merged tags, got %v", expected, resolved.Tags)
+		}
 	}
 }
 

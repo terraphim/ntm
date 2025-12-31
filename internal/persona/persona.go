@@ -209,11 +209,22 @@ func mergePersonas(parent, child *Persona) *Persona {
 		Model:              child.Model,
 		SystemPrompt:       child.SystemPrompt,
 		Temperature:        child.Temperature,
-		ContextFiles:       child.ContextFiles,
-		Tags:               child.Tags,
-		FocusPatterns:      child.FocusPatterns,
 		Extends:            child.Extends,
 		SystemPromptAppend: child.SystemPromptAppend,
+	}
+
+	// Deep copy slices to avoid aliasing with child
+	if len(child.ContextFiles) > 0 {
+		merged.ContextFiles = make([]string, len(child.ContextFiles))
+		copy(merged.ContextFiles, child.ContextFiles)
+	}
+	if len(child.Tags) > 0 {
+		merged.Tags = make([]string, len(child.Tags))
+		copy(merged.Tags, child.Tags)
+	}
+	if len(child.FocusPatterns) > 0 {
+		merged.FocusPatterns = make([]string, len(child.FocusPatterns))
+		copy(merged.FocusPatterns, child.FocusPatterns)
 	}
 
 	// Inherit from parent if child doesn't specify
@@ -241,11 +252,16 @@ func mergePersonas(parent, child *Persona) *Persona {
 	}
 
 	// Merge arrays (child extends parent)
-	if len(merged.ContextFiles) == 0 {
-		merged.ContextFiles = parent.ContextFiles
+	// Deep copy parent slices when inheriting to avoid aliasing
+	if len(merged.ContextFiles) == 0 && len(parent.ContextFiles) > 0 {
+		merged.ContextFiles = make([]string, len(parent.ContextFiles))
+		copy(merged.ContextFiles, parent.ContextFiles)
 	}
 	if len(merged.Tags) == 0 {
-		merged.Tags = parent.Tags
+		if len(parent.Tags) > 0 {
+			merged.Tags = make([]string, len(parent.Tags))
+			copy(merged.Tags, parent.Tags)
+		}
 	} else if len(parent.Tags) > 0 {
 		// Merge tags, avoiding duplicates
 		tagSet := make(map[string]bool)
@@ -260,8 +276,9 @@ func mergePersonas(parent, child *Persona) *Persona {
 			merged.Tags = append(merged.Tags, t)
 		}
 	}
-	if len(merged.FocusPatterns) == 0 {
-		merged.FocusPatterns = parent.FocusPatterns
+	if len(merged.FocusPatterns) == 0 && len(parent.FocusPatterns) > 0 {
+		merged.FocusPatterns = make([]string, len(parent.FocusPatterns))
+		copy(merged.FocusPatterns, parent.FocusPatterns)
 	}
 
 	return merged
