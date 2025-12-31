@@ -546,6 +546,43 @@ func TestStateClassifier_applyHysteresis_ErrorImmediate(t *testing.T) {
 	}
 }
 
+func TestStateClassifier_applyHysteresis_FirstClassificationImmediate(t *testing.T) {
+	sc := NewStateClassifier("test", nil)
+
+	// First classification should transition immediately (except to UNKNOWN)
+	// This ensures single-shot queries like PrintActivity get useful results
+	result := sc.applyHysteresis(StateWaiting, 0.90, "idle_prompt")
+
+	if result != StateWaiting {
+		t.Errorf("expected immediate transition to WAITING on first classification, got %s", result)
+	}
+	if sc.currentState != StateWaiting {
+		t.Errorf("current state should be WAITING, got %s", sc.currentState)
+	}
+	if len(sc.stateHistory) != 1 {
+		t.Errorf("expected 1 transition in history, got %d", len(sc.stateHistory))
+	}
+
+	// After first classification, hysteresis should apply normally
+	// Reset for second test
+	sc2 := NewStateClassifier("test2", nil)
+
+	// First call with GENERATING
+	result = sc2.applyHysteresis(StateGenerating, 0.85, "high_velocity")
+	if result != StateGenerating {
+		t.Errorf("expected immediate GENERATING on first call, got %s", result)
+	}
+
+	// Second call with WAITING should NOT transition immediately (hysteresis)
+	result = sc2.applyHysteresis(StateWaiting, 0.90, "idle_prompt")
+	if result != StateGenerating {
+		t.Errorf("expected hysteresis to keep GENERATING, got %s", result)
+	}
+	if sc2.pendingState != StateWaiting {
+		t.Errorf("expected WAITING as pending state, got %s", sc2.pendingState)
+	}
+}
+
 func TestStateClassifier_applyHysteresis_RequiresStability(t *testing.T) {
 	sc := NewStateClassifier("test", &ClassifierConfig{
 		HysteresisDuration: 2 * time.Second,

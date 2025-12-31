@@ -574,6 +574,16 @@ func (sc *StateClassifier) applyHysteresis(proposed AgentState, confidence float
 		return StateError
 	}
 
+	// First classification - transition immediately to establish baseline
+	// This ensures single-shot queries (like PrintActivity) get useful results
+	// rather than always returning UNKNOWN due to hysteresis delay
+	if len(sc.stateHistory) == 0 && sc.currentState == StateUnknown && proposed != StateUnknown {
+		sc.recordTransition(sc.currentState, proposed, confidence, trigger)
+		sc.currentState = proposed
+		sc.stateSince = now
+		return proposed
+	}
+
 	// If state matches current, reset pending
 	if proposed == sc.currentState {
 		sc.pendingState = ""
