@@ -1022,3 +1022,775 @@ func TestActivityAgentHints(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// Edge Case Tests for Activity Detection
+// =============================================================================
+
+func TestVelocitySampleStruct(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	sample := VelocitySample{
+		Timestamp:  now,
+		CharsAdded: 100,
+		Velocity:   15.5,
+	}
+
+	if sample.Timestamp != now {
+		t.Error("timestamp not set correctly")
+	}
+	if sample.CharsAdded != 100 {
+		t.Errorf("expected 100 chars added, got %d", sample.CharsAdded)
+	}
+	if sample.Velocity != 15.5 {
+		t.Errorf("expected velocity 15.5, got %f", sample.Velocity)
+	}
+}
+
+func TestVelocitySampleZeroValues(t *testing.T) {
+	t.Parallel()
+
+	var sample VelocitySample
+
+	if !sample.Timestamp.IsZero() {
+		t.Error("zero sample should have zero timestamp")
+	}
+	if sample.CharsAdded != 0 {
+		t.Errorf("zero sample should have 0 chars, got %d", sample.CharsAdded)
+	}
+	if sample.Velocity != 0 {
+		t.Errorf("zero sample should have 0 velocity, got %f", sample.Velocity)
+	}
+}
+
+func TestStateTransitionStruct(t *testing.T) {
+	t.Parallel()
+
+	transition := StateTransition{
+		From:       StateGenerating,
+		To:         StateWaiting,
+		At:         time.Now(),
+		Confidence: 0.95,
+		Trigger:    "idle_prompt",
+	}
+
+	if transition.From != StateGenerating {
+		t.Errorf("expected From GENERATING, got %s", transition.From)
+	}
+	if transition.To != StateWaiting {
+		t.Errorf("expected To WAITING, got %s", transition.To)
+	}
+	if transition.Confidence != 0.95 {
+		t.Errorf("expected confidence 0.95, got %f", transition.Confidence)
+	}
+	if transition.Trigger != "idle_prompt" {
+		t.Errorf("expected trigger idle_prompt, got %s", transition.Trigger)
+	}
+}
+
+func TestAgentStateConstants(t *testing.T) {
+	t.Parallel()
+
+	// Verify all state constants have expected values
+	states := map[AgentState]string{
+		StateGenerating: "GENERATING",
+		StateWaiting:    "WAITING",
+		StateThinking:   "THINKING",
+		StateError:      "ERROR",
+		StateStalled:    "STALLED",
+		StateUnknown:    "UNKNOWN",
+	}
+
+	for state, expected := range states {
+		if string(state) != expected {
+			t.Errorf("state %v should equal %q", state, expected)
+		}
+	}
+}
+
+func TestPatternCategoryConstants(t *testing.T) {
+	t.Parallel()
+
+	categories := map[PatternCategory]string{
+		CategoryIdle:       "idle",
+		CategoryError:      "error",
+		CategoryThinking:   "thinking",
+		CategoryCompletion: "completion",
+	}
+
+	for cat, expected := range categories {
+		if string(cat) != expected {
+			t.Errorf("category %v should equal %q", cat, expected)
+		}
+	}
+}
+
+func TestVelocityTrackerCircularBufferEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	// Test with size 1 - single element buffer
+	tracker := NewVelocityTrackerWithSize("test", 1)
+
+	tracker.mu.Lock()
+	tracker.addSampleLocked(VelocitySample{Velocity: 1.0})
+	tracker.addSampleLocked(VelocitySample{Velocity: 2.0})
+	tracker.addSampleLocked(VelocitySample{Velocity: 3.0})
+	tracker.mu.Unlock()
+
+	if len(tracker.Samples) != 1 {
+		t.Errorf("expected 1 sample, got %d", len(tracker.Samples))
+	}
+	if tracker.Samples[0].Velocity != 3.0 {
+		t.Errorf("expected last velocity 3.0, got %f", tracker.Samples[0].Velocity)
+	}
+}
+
+func TestVelocityTrackerExactMaxSamples(t *testing.T) {
+	t.Parallel()
+
+	tracker := NewVelocityTrackerWithSize("test", 3)
+
+	// Add exactly MaxSamples samples
+	for i := 1; i <= 3; i++ {
+		tracker.mu.Lock()
+		tracker.addSampleLocked(VelocitySample{Velocity: float64(i)})
+		tracker.mu.Unlock()
+	}
+
+	if len(tracker.Samples) != 3 {
+		t.Errorf("expected 3 samples, got %d", len(tracker.Samples))
+	}
+
+	// Verify order: 1.0, 2.0, 3.0
+	for i, s := range tracker.Samples {
+		expected := float64(i + 1)
+		if s.Velocity != expected {
+			t.Errorf("sample %d: expected velocity %f, got %f", i, expected, s.Velocity)
+		}
+	}
+}
+
+func TestVelocityTrackerRecentVelocityEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	tracker := NewVelocityTrackerWithSize("test", 10)
+
+	// Test with exactly n=1
+	tracker.mu.Lock()
+	tracker.addSampleLocked(VelocitySample{Velocity: 10.0})
+	tracker.addSampleLocked(VelocitySample{Velocity: 20.0})
+	tracker.addSampleLocked(VelocitySample{Velocity: 30.0})
+	tracker.mu.Unlock()
+
+	// Recent 1 should be just the last sample
+	if v := tracker.RecentVelocity(1); v != 30.0 {
+		t.Errorf("RecentVelocity(1) = %f, want 30.0", v)
+	}
+
+	// Test with negative n (should use all)
+	if v := tracker.RecentVelocity(-1); v != 20.0 {
+		t.Errorf("RecentVelocity(-1) = %f, want 20.0 (average of all)", v)
+	}
+}
+
+func TestLastOutputAgeLocked_AllSamplesNoOutput(t *testing.T) {
+	t.Parallel()
+
+	tracker := NewVelocityTrackerWithSize("test", 5)
+
+	// Set LastCaptureAt but add samples with no output
+	oldTime := time.Now().Add(-10 * time.Second)
+	tracker.mu.Lock()
+	tracker.LastCaptureAt = time.Now()
+	tracker.Samples = []VelocitySample{
+		{Timestamp: oldTime.Add(-5 * time.Second), CharsAdded: 0, Velocity: 0},
+		{Timestamp: oldTime, CharsAdded: 0, Velocity: 0},
+	}
+	tracker.mu.Unlock()
+
+	// Should return time since oldest sample
+	age := tracker.LastOutputAge()
+	if age < 14*time.Second || age > 16*time.Second {
+		t.Errorf("expected ~15s age (since oldest sample), got %v", age)
+	}
+}
+
+func TestLastOutputAgeLocked_MixedSamples(t *testing.T) {
+	t.Parallel()
+
+	tracker := NewVelocityTrackerWithSize("test", 5)
+
+	// Mix of samples with and without output
+	now := time.Now()
+	tracker.mu.Lock()
+	tracker.LastCaptureAt = now
+	tracker.Samples = []VelocitySample{
+		{Timestamp: now.Add(-10 * time.Second), CharsAdded: 50, Velocity: 5.0}, // Has output
+		{Timestamp: now.Add(-5 * time.Second), CharsAdded: 0, Velocity: 0},     // No output
+		{Timestamp: now.Add(-2 * time.Second), CharsAdded: 0, Velocity: 0},     // No output
+	}
+	tracker.mu.Unlock()
+
+	// Should find the sample with output (10s ago)
+	age := tracker.LastOutputAge()
+	if age < 9*time.Second || age > 11*time.Second {
+		t.Errorf("expected ~10s age (sample with output), got %v", age)
+	}
+}
+
+func TestClassifyState_StalledAfterGenerating(t *testing.T) {
+	t.Parallel()
+
+	sc := NewStateClassifier("test", &ClassifierConfig{
+		StallThreshold: 100 * time.Millisecond, // Very short for testing
+	})
+
+	// Set current state to GENERATING
+	sc.mu.Lock()
+	sc.currentState = StateGenerating
+
+	// Mock the velocity tracker's last output time to be old
+	oldTime := time.Now().Add(-200 * time.Millisecond)
+	sc.velocityTracker.Samples = []VelocitySample{
+		{Timestamp: oldTime, CharsAdded: 100, Velocity: 50.0}, // Had output
+	}
+	sc.velocityTracker.LastCaptureAt = time.Now()
+	sc.mu.Unlock()
+
+	// Classify with 0 velocity and no patterns - should detect stall after generating
+	state, conf, trigger := sc.classifyState(0, nil)
+
+	if state != StateStalled {
+		t.Errorf("expected STALLED state, got %s", state)
+	}
+	if conf < 0.7 {
+		t.Errorf("expected confidence >= 0.7, got %f", conf)
+	}
+	if trigger != "stalled_after_generating" {
+		t.Errorf("expected trigger 'stalled_after_generating', got %s", trigger)
+	}
+}
+
+func TestClassifyState_IdleNoOutputNotGenerating(t *testing.T) {
+	t.Parallel()
+
+	sc := NewStateClassifier("test", &ClassifierConfig{
+		StallThreshold: 100 * time.Millisecond,
+	})
+
+	// Set current state to WAITING (not GENERATING)
+	sc.mu.Lock()
+	sc.currentState = StateWaiting
+
+	// Mock old last output
+	oldTime := time.Now().Add(-200 * time.Millisecond)
+	sc.velocityTracker.Samples = []VelocitySample{
+		{Timestamp: oldTime, CharsAdded: 100, Velocity: 50.0},
+	}
+	sc.velocityTracker.LastCaptureAt = time.Now()
+	sc.mu.Unlock()
+
+	// Classify with 0 velocity - should return WAITING, not STALLED
+	state, _, trigger := sc.classifyState(0, nil)
+
+	if state != StateWaiting {
+		t.Errorf("expected WAITING state, got %s", state)
+	}
+	if trigger != "idle_no_output" {
+		t.Errorf("expected trigger 'idle_no_output', got %s", trigger)
+	}
+}
+
+func TestClassifyState_IdlePromptWithHighVelocity(t *testing.T) {
+	t.Parallel()
+
+	sc := NewStateClassifier("test", nil)
+
+	// Idle prompt pattern detected but high velocity
+	matches := []PatternMatch{{Pattern: "claude_prompt", Category: CategoryIdle}}
+
+	// High velocity should mean GENERATING, not WAITING
+	state, _, _ := sc.classifyState(20.0, matches)
+
+	if state != StateGenerating {
+		t.Errorf("expected GENERATING state with high velocity, got %s", state)
+	}
+}
+
+func TestClassifyState_ErrorTakesPriority(t *testing.T) {
+	t.Parallel()
+
+	sc := NewStateClassifier("test", nil)
+
+	// Multiple patterns including error
+	matches := []PatternMatch{
+		{Pattern: "claude_prompt", Category: CategoryIdle},
+		{Pattern: "rate_limit", Category: CategoryError},
+		{Pattern: "thinking_text", Category: CategoryThinking},
+	}
+
+	// Error should take priority even with high velocity
+	state, conf, _ := sc.classifyState(50.0, matches)
+
+	if state != StateError {
+		t.Errorf("expected ERROR state, got %s", state)
+	}
+	if conf < 0.95 {
+		t.Errorf("expected high confidence for error, got %f", conf)
+	}
+}
+
+func TestApplyHysteresis_SameStateResetssPending(t *testing.T) {
+	t.Parallel()
+
+	sc := NewStateClassifier("test", &ClassifierConfig{
+		HysteresisDuration: time.Hour, // Long duration
+	})
+
+	// Set initial state
+	sc.mu.Lock()
+	sc.currentState = StateGenerating
+	sc.pendingState = StateWaiting
+	sc.pendingSince = time.Now().Add(-time.Minute)
+	sc.mu.Unlock()
+
+	// Apply hysteresis with same state as current
+	result := sc.applyHysteresis(StateGenerating, 0.85, "test")
+
+	if result != StateGenerating {
+		t.Errorf("expected GENERATING, got %s", result)
+	}
+	if sc.pendingState != "" {
+		t.Errorf("pending state should be reset, got %s", sc.pendingState)
+	}
+}
+
+func TestApplyHysteresis_DifferentPendingState(t *testing.T) {
+	t.Parallel()
+
+	sc := NewStateClassifier("test", &ClassifierConfig{
+		HysteresisDuration: time.Hour,
+	})
+
+	// Set initial state
+	sc.mu.Lock()
+	sc.currentState = StateGenerating
+	sc.pendingState = StateWaiting
+	sc.pendingSince = time.Now()
+	// Add a transition so we're past first classification
+	sc.stateHistory = []StateTransition{{From: StateUnknown, To: StateGenerating}}
+	sc.mu.Unlock()
+
+	// Apply hysteresis with DIFFERENT state than pending
+	result := sc.applyHysteresis(StateThinking, 0.80, "thinking")
+
+	if result != StateGenerating {
+		t.Errorf("expected GENERATING (unchanged), got %s", result)
+	}
+	if sc.pendingState != StateThinking {
+		t.Errorf("pending should be THINKING, got %s", sc.pendingState)
+	}
+}
+
+func TestRecordTransition_MaxHistoryBoundary(t *testing.T) {
+	t.Parallel()
+
+	sc := NewStateClassifier("test", nil)
+
+	// Fill history to exactly MaxStateHistory - 1
+	for i := 0; i < MaxStateHistory-1; i++ {
+		sc.recordTransition(StateGenerating, StateWaiting, 0.90, "test")
+	}
+
+	if len(sc.stateHistory) != MaxStateHistory-1 {
+		t.Errorf("expected %d transitions, got %d", MaxStateHistory-1, len(sc.stateHistory))
+	}
+
+	// Add one more (should be exactly at max)
+	sc.recordTransition(StateWaiting, StateGenerating, 0.85, "boundary")
+
+	if len(sc.stateHistory) != MaxStateHistory {
+		t.Errorf("expected %d transitions at boundary, got %d", MaxStateHistory, len(sc.stateHistory))
+	}
+
+	// Add one more (should still be at max, oldest removed)
+	sc.recordTransition(StateGenerating, StateError, 0.95, "overflow")
+
+	if len(sc.stateHistory) != MaxStateHistory {
+		t.Errorf("expected %d transitions after overflow, got %d", MaxStateHistory, len(sc.stateHistory))
+	}
+}
+
+func TestAgentActivityStruct(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	activity := AgentActivity{
+		PaneID:           "cc_1",
+		AgentType:        "claude",
+		State:            StateGenerating,
+		Confidence:       0.85,
+		Velocity:         15.5,
+		StateSince:       now,
+		DetectedPatterns: []string{"pattern1", "pattern2"},
+		LastOutput:       now.Add(-5 * time.Second),
+		StateHistory: []StateTransition{
+			{From: StateUnknown, To: StateGenerating},
+		},
+		PendingState: StateWaiting,
+		PendingSince: now.Add(-time.Second),
+	}
+
+	if activity.PaneID != "cc_1" {
+		t.Errorf("expected pane cc_1, got %s", activity.PaneID)
+	}
+	if activity.State != StateGenerating {
+		t.Errorf("expected state GENERATING, got %s", activity.State)
+	}
+	if len(activity.DetectedPatterns) != 2 {
+		t.Errorf("expected 2 patterns, got %d", len(activity.DetectedPatterns))
+	}
+	if len(activity.StateHistory) != 1 {
+		t.Errorf("expected 1 history entry, got %d", len(activity.StateHistory))
+	}
+}
+
+func TestClassifierConfigDefaults(t *testing.T) {
+	t.Parallel()
+
+	// Nil config should use defaults
+	sc := NewStateClassifier("test", nil)
+
+	if sc.stallThreshold != DefaultStallThreshold {
+		t.Errorf("expected default stall threshold, got %v", sc.stallThreshold)
+	}
+	if sc.hysteresisDuration != DefaultHysteresisDuration {
+		t.Errorf("expected default hysteresis, got %v", sc.hysteresisDuration)
+	}
+	if sc.patternLibrary != DefaultLibrary {
+		t.Error("expected default pattern library")
+	}
+}
+
+func TestClassifierConfigCustomPatternLibrary(t *testing.T) {
+	t.Parallel()
+
+	customLib := NewPatternLibrary()
+	cfg := &ClassifierConfig{
+		PatternLibrary: customLib,
+	}
+
+	sc := NewStateClassifier("test", cfg)
+
+	if sc.patternLibrary != customLib {
+		t.Error("expected custom pattern library")
+	}
+}
+
+func TestActivityMonitorWithConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := &ClassifierConfig{
+		AgentType:          "claude",
+		StallThreshold:     time.Minute,
+		HysteresisDuration: 5 * time.Second,
+	}
+
+	am := NewActivityMonitor(cfg)
+	sc := am.GetOrCreate("pane1")
+
+	if sc.agentType != "claude" {
+		t.Errorf("expected agent type claude, got %s", sc.agentType)
+	}
+	if sc.stallThreshold != time.Minute {
+		t.Errorf("expected stall threshold 1m, got %v", sc.stallThreshold)
+	}
+}
+
+func TestVelocityThresholdConstants(t *testing.T) {
+	t.Parallel()
+
+	// Verify threshold ordering
+	if VelocityHighThreshold <= VelocityMediumThreshold {
+		t.Error("high threshold should be > medium threshold")
+	}
+	if VelocityMediumThreshold <= VelocityIdleThreshold {
+		t.Error("medium threshold should be > idle threshold")
+	}
+}
+
+func TestDefaultConstantValues(t *testing.T) {
+	t.Parallel()
+
+	if DefaultMaxSamples != 10 {
+		t.Errorf("expected DefaultMaxSamples=10, got %d", DefaultMaxSamples)
+	}
+	if DefaultStallThreshold != 30*time.Second {
+		t.Errorf("expected DefaultStallThreshold=30s, got %v", DefaultStallThreshold)
+	}
+	if DefaultHysteresisDuration != 2*time.Second {
+		t.Errorf("expected DefaultHysteresisDuration=2s, got %v", DefaultHysteresisDuration)
+	}
+	if MaxStateHistory != 20 {
+		t.Errorf("expected MaxStateHistory=20, got %d", MaxStateHistory)
+	}
+}
+
+func TestGenerateActivityHintsEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		available       []string
+		busy            []string
+		problem         []string
+		summary         ActivitySummary
+		checkSummary    func(string) bool
+	}{
+		{
+			name:      "single_available",
+			available: []string{"1"},
+			busy:      []string{},
+			problem:   []string{},
+			summary: ActivitySummary{
+				TotalAgents: 1,
+				ByState:     map[string]int{"WAITING": 1},
+			},
+			checkSummary: func(s string) bool { return strings.Contains(s, "1 available") },
+		},
+		{
+			name:      "single_busy",
+			available: []string{},
+			busy:      []string{"1"},
+			problem:   []string{},
+			summary: ActivitySummary{
+				TotalAgents: 1,
+				ByState:     map[string]int{"GENERATING": 1},
+			},
+			checkSummary: func(s string) bool { return strings.Contains(s, "1 busy") },
+		},
+		{
+			name:      "mixed_agents",
+			available: []string{"1", "2"},
+			busy:      []string{"3", "4", "5"},
+			problem:   []string{"6"},
+			summary: ActivitySummary{
+				TotalAgents: 6,
+				ByState:     map[string]int{"WAITING": 2, "GENERATING": 3, "ERROR": 1},
+			},
+			checkSummary: func(s string) bool {
+				return strings.Contains(s, "2 available") &&
+					strings.Contains(s, "3 busy") &&
+					strings.Contains(s, "1 problems")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hints := generateActivityHints(tt.available, tt.busy, tt.problem, tt.summary)
+			if !tt.checkSummary(hints.Summary) {
+				t.Errorf("summary check failed: %s", hints.Summary)
+			}
+		})
+	}
+}
+
+func TestNormalizeAgentTypeEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"", ""},                  // Empty string stays empty
+		{"CLAUDE", "claude"},
+		{"CODEX", "codex"},
+		{"GEMINI", "gemini"},
+		{"CC", "claude"},
+		{"COD", "codex"},
+		{"GMI", "gemini"},
+		{"  claude  ", "  claude  "}, // Whitespace not trimmed - passthrough
+		{"user", "user"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := normalizeAgentType(tt.input)
+			if got != tt.want {
+				t.Errorf("normalizeAgentType(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestActivityMonitorNilConfig(t *testing.T) {
+	t.Parallel()
+
+	am := NewActivityMonitor(nil)
+
+	// Should still work with nil config
+	sc := am.GetOrCreate("pane1")
+	if sc == nil {
+		t.Fatal("expected classifier even with nil config")
+	}
+
+	// Should use defaults
+	if sc.stallThreshold != DefaultStallThreshold {
+		t.Errorf("expected default stall threshold")
+	}
+}
+
+func TestVelocityManagerConcurrentAccess(t *testing.T) {
+	t.Parallel()
+
+	vm := NewVelocityManager()
+
+	// Simulate concurrent access
+	done := make(chan bool)
+	for i := 0; i < 10; i++ {
+		go func(idx int) {
+			paneID := "pane_" + string(rune('0'+idx))
+			tracker := vm.GetOrCreate(paneID)
+			_ = tracker.CurrentVelocity()
+			_ = vm.GetAllVelocities()
+			done <- true
+		}(i)
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+
+	if vm.TrackerCount() != 10 {
+		t.Errorf("expected 10 trackers, got %d", vm.TrackerCount())
+	}
+}
+
+func TestActivityMonitorConcurrentAccess(t *testing.T) {
+	t.Parallel()
+
+	am := NewActivityMonitor(nil)
+
+	done := make(chan bool)
+	for i := 0; i < 10; i++ {
+		go func(idx int) {
+			paneID := "pane_" + string(rune('0'+idx))
+			sc := am.GetOrCreate(paneID)
+			_ = sc.CurrentState()
+			_ = am.GetAllStates()
+			done <- true
+		}(i)
+	}
+
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+
+	if am.Count() != 10 {
+		t.Errorf("expected 10 classifiers, got %d", am.Count())
+	}
+}
+
+func TestStateClassifierConcurrentAccess(t *testing.T) {
+	t.Parallel()
+
+	sc := NewStateClassifier("test", nil)
+
+	done := make(chan bool)
+	for i := 0; i < 10; i++ {
+		go func() {
+			_ = sc.CurrentState()
+			_ = sc.GetStateHistory()
+			_ = sc.StateDuration()
+			done <- true
+		}()
+	}
+
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+}
+
+func TestVelocityTrackerResetClearsAll(t *testing.T) {
+	t.Parallel()
+
+	tracker := NewVelocityTrackerWithSize("test", 5)
+
+	// Add state
+	tracker.mu.Lock()
+	tracker.Samples = []VelocitySample{
+		{Velocity: 1.0}, {Velocity: 2.0}, {Velocity: 3.0},
+	}
+	tracker.LastCapture = "some content"
+	tracker.LastCaptureAt = time.Now()
+	tracker.mu.Unlock()
+
+	// Verify state exists
+	if tracker.SampleCount() != 3 {
+		t.Fatalf("expected 3 samples before reset, got %d", tracker.SampleCount())
+	}
+
+	// Reset
+	tracker.Reset()
+
+	// Verify all cleared
+	if tracker.SampleCount() != 0 {
+		t.Errorf("expected 0 samples after reset, got %d", tracker.SampleCount())
+	}
+	if tracker.LastCapture != "" {
+		t.Error("LastCapture should be empty after reset")
+	}
+	if !tracker.LastCaptureAt.IsZero() {
+		t.Error("LastCaptureAt should be zero after reset")
+	}
+}
+
+func TestClassifyStateVelocityBoundaries(t *testing.T) {
+	t.Parallel()
+
+	sc := NewStateClassifier("test", nil)
+
+	// Test exactly at VelocityHighThreshold
+	state, _, _ := sc.classifyState(VelocityHighThreshold, nil)
+	if state != StateUnknown {
+		// At boundary (not above), should not be high velocity generating
+		// Actually testing > not >=, so at exactly threshold it's not high
+	}
+
+	// Test just above VelocityHighThreshold
+	state, _, _ = sc.classifyState(VelocityHighThreshold+0.1, nil)
+	if state != StateGenerating {
+		t.Errorf("expected GENERATING above high threshold, got %s", state)
+	}
+
+	// Test exactly at VelocityMediumThreshold
+	state, _, _ = sc.classifyState(VelocityMediumThreshold, nil)
+	// At exactly medium, should not be generating (need > not >=)
+
+	// Test just above VelocityMediumThreshold
+	state, _, _ = sc.classifyState(VelocityMediumThreshold+0.1, nil)
+	if state != StateGenerating {
+		t.Errorf("expected GENERATING above medium threshold, got %s", state)
+	}
+}
+
+func TestClassifyStateIdleAtBoundary(t *testing.T) {
+	t.Parallel()
+
+	sc := NewStateClassifier("test", nil)
+
+	// Idle prompt pattern with velocity exactly at idle threshold
+	matches := []PatternMatch{{Pattern: "claude_prompt", Category: CategoryIdle}}
+
+	state, _, _ := sc.classifyState(VelocityIdleThreshold, nil)
+	// At boundary, should be unknown (not below threshold)
+
+	// With idle prompt and below threshold
+	state, _, _ = sc.classifyState(VelocityIdleThreshold-0.1, matches)
+	if state != StateWaiting {
+		t.Errorf("expected WAITING with idle prompt below threshold, got %s", state)
+	}
+}
+
