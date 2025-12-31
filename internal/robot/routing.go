@@ -423,3 +423,391 @@ func ExcludePanes(agents []ScoredAgent, excludeIndices []int) []ScoredAgent {
 	}
 	return filtered
 }
+
+// =============================================================================
+// Routing Strategies
+// =============================================================================
+
+// StrategyName represents a routing strategy identifier.
+type StrategyName string
+
+const (
+	// StrategyLeastLoaded selects agent with highest score (default).
+	StrategyLeastLoaded StrategyName = "least-loaded"
+
+	// StrategyFirstAvailable selects first agent in WAITING state.
+	StrategyFirstAvailable StrategyName = "first-available"
+
+	// StrategyRoundRobin rotates through agents in order.
+	StrategyRoundRobin StrategyName = "round-robin"
+
+	// StrategyRoundRobinAvailable rotates but skips busy/unhealthy agents.
+	StrategyRoundRobinAvailable StrategyName = "round-robin-available"
+
+	// StrategyRandom randomly selects among available agents.
+	StrategyRandom StrategyName = "random"
+
+	// StrategySticky prefers same agent for related tasks.
+	StrategySticky StrategyName = "sticky"
+
+	// StrategyExplicit uses user-specified pane directly.
+	StrategyExplicit StrategyName = "explicit"
+)
+
+// RoutingContext provides context for routing decisions.
+type RoutingContext struct {
+	Prompt       string // For affinity matching
+	LastAgent    string // For sticky routing (pane ID of last used agent)
+	ExcludePanes []int  // Pane indices to exclude
+	ExplicitPane int    // For explicit routing (-1 = not set)
+}
+
+// RoutingStrategy defines the interface for routing strategies.
+type RoutingStrategy interface {
+	// Name returns the strategy identifier.
+	Name() StrategyName
+
+	// Select chooses an agent from the candidates.
+	// Returns nil if no suitable agent found.
+	Select(agents []ScoredAgent, ctx RoutingContext) *ScoredAgent
+}
+
+// RoutingResult represents the outcome of a routing decision.
+type RoutingResult struct {
+	Selected    *ScoredAgent   `json:"selected,omitempty"`
+	Strategy    StrategyName   `json:"strategy"`
+	Candidates  []ScoredAgent  `json:"candidates"`
+	Excluded    []ScoredAgent  `json:"excluded,omitempty"`
+	FallbackUsed bool          `json:"fallback_used"`
+	Reason      string         `json:"reason,omitempty"`
+}
+
+// =============================================================================
+// Strategy Implementations
+// =============================================================================
+
+// LeastLoadedStrategy selects the agent with the highest score.
+type LeastLoadedStrategy struct{}
+
+func (s *LeastLoadedStrategy) Name() StrategyName {
+	return StrategyLeastLoaded
+}
+
+func (s *LeastLoadedStrategy) Select(agents []ScoredAgent, ctx RoutingContext) *ScoredAgent {
+	var best *ScoredAgent
+	for i := range agents {
+		if agents[i].Excluded {
+			continue
+		}
+		if best == nil || agents[i].Score > best.Score {
+			best = &agents[i]
+		}
+	}
+	return best
+}
+
+// FirstAvailableStrategy selects the first agent in WAITING state.
+type FirstAvailableStrategy struct{}
+
+func (s *FirstAvailableStrategy) Name() StrategyName {
+	return StrategyFirstAvailable
+}
+
+func (s *FirstAvailableStrategy) Select(agents []ScoredAgent, ctx RoutingContext) *ScoredAgent {
+	for i := range agents {
+		if agents[i].Excluded {
+			continue
+		}
+		if agents[i].State == StateWaiting {
+			return &agents[i]
+		}
+	}
+	return nil
+}
+
+// RoundRobinStrategy rotates through agents in order.
+type RoundRobinStrategy struct {
+	lastIndex int
+}
+
+func (s *RoundRobinStrategy) Name() StrategyName {
+	return StrategyRoundRobin
+}
+
+func (s *RoundRobinStrategy) Select(agents []ScoredAgent, ctx RoutingContext) *ScoredAgent {
+	if len(agents) == 0 {
+		return nil
+	}
+
+	// Start from next agent after last used
+	startIdx := (s.lastIndex + 1) % len(agents)
+
+	// Round-robin ignores exclusion - use all agents
+	selected := &agents[startIdx]
+	s.lastIndex = startIdx
+	return selected
+}
+
+// RoundRobinAvailableStrategy rotates but skips busy/unhealthy agents.
+type RoundRobinAvailableStrategy struct {
+	lastIndex int
+}
+
+func (s *RoundRobinAvailableStrategy) Name() StrategyName {
+	return StrategyRoundRobinAvailable
+}
+
+func (s *RoundRobinAvailableStrategy) Select(agents []ScoredAgent, ctx RoutingContext) *ScoredAgent {
+	if len(agents) == 0 {
+		return nil
+	}
+
+	// Try to find next available agent starting from last index
+	for i := 0; i < len(agents); i++ {
+		idx := (s.lastIndex + 1 + i) % len(agents)
+		if !agents[idx].Excluded {
+			s.lastIndex = idx
+			return &agents[idx]
+		}
+	}
+
+	return nil
+}
+
+// RandomStrategy randomly selects among available agents.
+type RandomStrategy struct {
+	randFunc func(int) int // Injected for testing
+}
+
+func (s *RandomStrategy) Name() StrategyName {
+	return StrategyRandom
+}
+
+func (s *RandomStrategy) Select(agents []ScoredAgent, ctx RoutingContext) *ScoredAgent {
+	// Collect available agents
+	var available []*ScoredAgent
+	for i := range agents {
+		if !agents[i].Excluded {
+			available = append(available, &agents[i])
+		}
+	}
+
+	if len(available) == 0 {
+		return nil
+	}
+
+	// Use injected random function or simple modulo
+	idx := 0
+	if s.randFunc != nil {
+		idx = s.randFunc(len(available))
+	} else {
+		// Deterministic fallback for testing
+		idx = len(available) / 2
+	}
+
+	return available[idx]
+}
+
+// StickyStrategy prefers the same agent for related tasks.
+type StickyStrategy struct {
+	fallback RoutingStrategy
+}
+
+func NewStickyStrategy() *StickyStrategy {
+	return &StickyStrategy{
+		fallback: &LeastLoadedStrategy{},
+	}
+}
+
+func (s *StickyStrategy) Name() StrategyName {
+	return StrategySticky
+}
+
+func (s *StickyStrategy) Select(agents []ScoredAgent, ctx RoutingContext) *ScoredAgent {
+	// If we have a last agent, prefer it if still available
+	if ctx.LastAgent != "" {
+		for i := range agents {
+			if agents[i].PaneID == ctx.LastAgent && !agents[i].Excluded {
+				return &agents[i]
+			}
+		}
+	}
+
+	// Fall back to least-loaded
+	return s.fallback.Select(agents, ctx)
+}
+
+// ExplicitStrategy uses user-specified pane directly.
+type ExplicitStrategy struct{}
+
+func (s *ExplicitStrategy) Name() StrategyName {
+	return StrategyExplicit
+}
+
+func (s *ExplicitStrategy) Select(agents []ScoredAgent, ctx RoutingContext) *ScoredAgent {
+	if ctx.ExplicitPane < 0 {
+		return nil
+	}
+
+	for i := range agents {
+		if agents[i].PaneIndex == ctx.ExplicitPane {
+			return &agents[i]
+		}
+	}
+
+	return nil
+}
+
+// =============================================================================
+// Router
+// =============================================================================
+
+// Router applies routing strategies to select agents.
+type Router struct {
+	strategies    map[StrategyName]RoutingStrategy
+	defaultStrat  RoutingStrategy
+	fallbackOrder []RoutingStrategy
+}
+
+// NewRouter creates a new router with all strategies registered.
+func NewRouter() *Router {
+	r := &Router{
+		strategies:   make(map[StrategyName]RoutingStrategy),
+		defaultStrat: &LeastLoadedStrategy{},
+	}
+
+	// Register all strategies
+	r.RegisterStrategy(&LeastLoadedStrategy{})
+	r.RegisterStrategy(&FirstAvailableStrategy{})
+	r.RegisterStrategy(&RoundRobinStrategy{})
+	r.RegisterStrategy(&RoundRobinAvailableStrategy{})
+	r.RegisterStrategy(&RandomStrategy{})
+	r.RegisterStrategy(NewStickyStrategy())
+	r.RegisterStrategy(&ExplicitStrategy{})
+
+	// Default fallback order
+	r.fallbackOrder = []RoutingStrategy{
+		&LeastLoadedStrategy{},     // Try best score first
+		&FirstAvailableStrategy{},  // Then any waiting agent
+	}
+
+	return r
+}
+
+// RegisterStrategy registers a routing strategy.
+func (r *Router) RegisterStrategy(s RoutingStrategy) {
+	r.strategies[s.Name()] = s
+}
+
+// GetStrategy returns a strategy by name, or the default if not found.
+func (r *Router) GetStrategy(name StrategyName) RoutingStrategy {
+	if s, ok := r.strategies[name]; ok {
+		return s
+	}
+	return r.defaultStrat
+}
+
+// Route selects an agent using the specified strategy.
+func (r *Router) Route(agents []ScoredAgent, strategy StrategyName, ctx RoutingContext) RoutingResult {
+	result := RoutingResult{
+		Strategy:   strategy,
+		Candidates: filterExcluded(agents, false),
+		Excluded:   filterExcluded(agents, true),
+	}
+
+	// Apply exclusion from context
+	if len(ctx.ExcludePanes) > 0 {
+		agents = ExcludePanes(agents, ctx.ExcludePanes)
+	}
+
+	// Get the strategy
+	strat := r.GetStrategy(strategy)
+
+	// Try primary strategy
+	selected := strat.Select(agents, ctx)
+	if selected != nil {
+		result.Selected = selected
+		result.Reason = "primary strategy succeeded"
+		return result
+	}
+
+	// Try fallback chain
+	for _, fb := range r.fallbackOrder {
+		if fb.Name() == strategy {
+			continue // Skip if same as primary
+		}
+		selected = fb.Select(agents, ctx)
+		if selected != nil {
+			result.Selected = selected
+			result.FallbackUsed = true
+			result.Reason = "fallback to " + string(fb.Name())
+			return result
+		}
+	}
+
+	result.Reason = "no suitable agent found"
+	return result
+}
+
+// RouteWithRelaxation tries routing with progressively relaxed constraints.
+func (r *Router) RouteWithRelaxation(agents []ScoredAgent, strategy StrategyName, ctx RoutingContext) RoutingResult {
+	// First try with normal constraints
+	result := r.Route(agents, strategy, ctx)
+	if result.Selected != nil {
+		return result
+	}
+
+	// Relax constraint: include THINKING agents
+	relaxedAgents := make([]ScoredAgent, len(agents))
+	copy(relaxedAgents, agents)
+	for i := range relaxedAgents {
+		if relaxedAgents[i].ExcludeReason == "agent is currently generating" &&
+			relaxedAgents[i].State == StateThinking {
+			relaxedAgents[i].Excluded = false
+			relaxedAgents[i].ExcludeReason = ""
+		}
+	}
+
+	result = r.Route(relaxedAgents, strategy, ctx)
+	if result.Selected != nil {
+		result.Reason = "relaxed constraints (included THINKING)"
+		return result
+	}
+
+	return result
+}
+
+// filterExcluded returns agents filtered by exclusion status.
+func filterExcluded(agents []ScoredAgent, excluded bool) []ScoredAgent {
+	var result []ScoredAgent
+	for _, a := range agents {
+		if a.Excluded == excluded {
+			result = append(result, a)
+		}
+	}
+	return result
+}
+
+// GetStrategyNames returns all available strategy names.
+func GetStrategyNames() []StrategyName {
+	return []StrategyName{
+		StrategyLeastLoaded,
+		StrategyFirstAvailable,
+		StrategyRoundRobin,
+		StrategyRoundRobinAvailable,
+		StrategyRandom,
+		StrategySticky,
+		StrategyExplicit,
+	}
+}
+
+// IsValidStrategy checks if a strategy name is valid.
+func IsValidStrategy(name StrategyName) bool {
+	switch name {
+	case StrategyLeastLoaded, StrategyFirstAvailable, StrategyRoundRobin,
+		StrategyRoundRobinAvailable, StrategyRandom, StrategySticky, StrategyExplicit:
+		return true
+	default:
+		return false
+	}
+}

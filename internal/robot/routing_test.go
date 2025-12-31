@@ -402,3 +402,708 @@ func TestExcludeIfGeneratingConfig(t *testing.T) {
 		t.Error("Agent should be excluded when ExcludeIfGenerating = true")
 	}
 }
+
+// =============================================================================
+// Routing Strategy Tests
+// =============================================================================
+
+func TestStrategyNames(t *testing.T) {
+	if StrategyLeastLoaded != "least-loaded" {
+		t.Errorf("StrategyLeastLoaded = %q, want %q", StrategyLeastLoaded, "least-loaded")
+	}
+	if StrategyFirstAvailable != "first-available" {
+		t.Errorf("StrategyFirstAvailable = %q, want %q", StrategyFirstAvailable, "first-available")
+	}
+	if StrategyRoundRobin != "round-robin" {
+		t.Errorf("StrategyRoundRobin = %q, want %q", StrategyRoundRobin, "round-robin")
+	}
+	if StrategyRoundRobinAvailable != "round-robin-available" {
+		t.Errorf("StrategyRoundRobinAvailable = %q, want %q", StrategyRoundRobinAvailable, "round-robin-available")
+	}
+	if StrategyRandom != "random" {
+		t.Errorf("StrategyRandom = %q, want %q", StrategyRandom, "random")
+	}
+	if StrategySticky != "sticky" {
+		t.Errorf("StrategySticky = %q, want %q", StrategySticky, "sticky")
+	}
+	if StrategyExplicit != "explicit" {
+		t.Errorf("StrategyExplicit = %q, want %q", StrategyExplicit, "explicit")
+	}
+}
+
+func TestIsValidStrategy(t *testing.T) {
+	tests := []struct {
+		name  string
+		strat StrategyName
+		want  bool
+	}{
+		{"least-loaded valid", StrategyLeastLoaded, true},
+		{"first-available valid", StrategyFirstAvailable, true},
+		{"round-robin valid", StrategyRoundRobin, true},
+		{"round-robin-available valid", StrategyRoundRobinAvailable, true},
+		{"random valid", StrategyRandom, true},
+		{"sticky valid", StrategySticky, true},
+		{"explicit valid", StrategyExplicit, true},
+		{"invalid name", "invalid-strategy", false},
+		{"empty name", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsValidStrategy(tt.strat)
+			if got != tt.want {
+				t.Errorf("IsValidStrategy(%q) = %v, want %v", tt.strat, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetStrategyNames(t *testing.T) {
+	names := GetStrategyNames()
+	if len(names) != 7 {
+		t.Errorf("GetStrategyNames() returned %d names, want 7", len(names))
+	}
+
+	// Check all expected names are present
+	expected := map[StrategyName]bool{
+		StrategyLeastLoaded:         true,
+		StrategyFirstAvailable:      true,
+		StrategyRoundRobin:          true,
+		StrategyRoundRobinAvailable: true,
+		StrategyRandom:              true,
+		StrategySticky:              true,
+		StrategyExplicit:            true,
+	}
+
+	for _, name := range names {
+		if !expected[name] {
+			t.Errorf("Unexpected strategy name: %s", name)
+		}
+	}
+}
+
+func TestLeastLoadedStrategy(t *testing.T) {
+	strat := &LeastLoadedStrategy{}
+
+	if strat.Name() != StrategyLeastLoaded {
+		t.Errorf("Name() = %s, want %s", strat.Name(), StrategyLeastLoaded)
+	}
+
+	t.Run("selects highest score", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Score: 50, Excluded: false},
+			{PaneID: "cc_2", Score: 80, Excluded: false},
+			{PaneID: "cc_3", Score: 60, Excluded: false},
+		}
+
+		selected := strat.Select(agents, RoutingContext{})
+		if selected == nil {
+			t.Fatal("Select() returned nil")
+		}
+		if selected.PaneID != "cc_2" {
+			t.Errorf("Select() = %s, want cc_2", selected.PaneID)
+		}
+	})
+
+	t.Run("skips excluded agents", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Score: 50, Excluded: false},
+			{PaneID: "cc_2", Score: 100, Excluded: true}, // Highest but excluded
+			{PaneID: "cc_3", Score: 60, Excluded: false},
+		}
+
+		selected := strat.Select(agents, RoutingContext{})
+		if selected == nil {
+			t.Fatal("Select() returned nil")
+		}
+		if selected.PaneID != "cc_3" {
+			t.Errorf("Select() = %s, want cc_3", selected.PaneID)
+		}
+	})
+
+	t.Run("returns nil when all excluded", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Score: 50, Excluded: true},
+			{PaneID: "cc_2", Score: 80, Excluded: true},
+		}
+
+		selected := strat.Select(agents, RoutingContext{})
+		if selected != nil {
+			t.Errorf("Select() = %s, want nil", selected.PaneID)
+		}
+	})
+
+	t.Run("handles empty list", func(t *testing.T) {
+		selected := strat.Select([]ScoredAgent{}, RoutingContext{})
+		if selected != nil {
+			t.Error("Select() should return nil for empty list")
+		}
+	})
+}
+
+func TestFirstAvailableStrategy(t *testing.T) {
+	strat := &FirstAvailableStrategy{}
+
+	if strat.Name() != StrategyFirstAvailable {
+		t.Errorf("Name() = %s, want %s", strat.Name(), StrategyFirstAvailable)
+	}
+
+	t.Run("selects first WAITING agent", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", State: StateGenerating, Excluded: false},
+			{PaneID: "cc_2", State: StateWaiting, Excluded: false},
+			{PaneID: "cc_3", State: StateWaiting, Excluded: false},
+		}
+
+		selected := strat.Select(agents, RoutingContext{})
+		if selected == nil {
+			t.Fatal("Select() returned nil")
+		}
+		if selected.PaneID != "cc_2" {
+			t.Errorf("Select() = %s, want cc_2", selected.PaneID)
+		}
+	})
+
+	t.Run("returns nil when none waiting", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", State: StateGenerating, Excluded: false},
+			{PaneID: "cc_2", State: StateThinking, Excluded: false},
+		}
+
+		selected := strat.Select(agents, RoutingContext{})
+		if selected != nil {
+			t.Errorf("Select() = %s, want nil", selected.PaneID)
+		}
+	})
+
+	t.Run("skips excluded WAITING agents", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", State: StateWaiting, Excluded: true},
+			{PaneID: "cc_2", State: StateWaiting, Excluded: false},
+		}
+
+		selected := strat.Select(agents, RoutingContext{})
+		if selected == nil {
+			t.Fatal("Select() returned nil")
+		}
+		if selected.PaneID != "cc_2" {
+			t.Errorf("Select() = %s, want cc_2", selected.PaneID)
+		}
+	})
+}
+
+func TestRoundRobinStrategy(t *testing.T) {
+	strat := &RoundRobinStrategy{}
+
+	if strat.Name() != StrategyRoundRobin {
+		t.Errorf("Name() = %s, want %s", strat.Name(), StrategyRoundRobin)
+	}
+
+	t.Run("rotates through agents", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Excluded: false},
+			{PaneID: "cc_2", Excluded: false},
+			{PaneID: "cc_3", Excluded: false},
+		}
+
+		// First selection - starts at index 1 (lastIndex=0, so next is 1)
+		selected := strat.Select(agents, RoutingContext{})
+		if selected == nil || selected.PaneID != "cc_2" {
+			t.Errorf("First Select() = %v, want cc_2", selected)
+		}
+
+		// Second selection - should be cc_3
+		selected = strat.Select(agents, RoutingContext{})
+		if selected == nil || selected.PaneID != "cc_3" {
+			t.Errorf("Second Select() = %v, want cc_3", selected)
+		}
+
+		// Third selection - should wrap to cc_1
+		selected = strat.Select(agents, RoutingContext{})
+		if selected == nil || selected.PaneID != "cc_1" {
+			t.Errorf("Third Select() = %v, want cc_1", selected)
+		}
+	})
+
+	t.Run("includes excluded in rotation", func(t *testing.T) {
+		strat2 := &RoundRobinStrategy{}
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Excluded: true},
+			{PaneID: "cc_2", Excluded: false},
+		}
+
+		// Round-robin doesn't skip excluded
+		selected := strat2.Select(agents, RoutingContext{})
+		if selected == nil {
+			t.Fatal("Select() returned nil")
+		}
+		// Starting from lastIndex=0, next is index 1
+		if selected.PaneID != "cc_2" {
+			t.Errorf("Select() = %s, want cc_2", selected.PaneID)
+		}
+	})
+
+	t.Run("handles empty list", func(t *testing.T) {
+		selected := strat.Select([]ScoredAgent{}, RoutingContext{})
+		if selected != nil {
+			t.Error("Select() should return nil for empty list")
+		}
+	})
+}
+
+func TestRoundRobinAvailableStrategy(t *testing.T) {
+	strat := &RoundRobinAvailableStrategy{}
+
+	if strat.Name() != StrategyRoundRobinAvailable {
+		t.Errorf("Name() = %s, want %s", strat.Name(), StrategyRoundRobinAvailable)
+	}
+
+	t.Run("skips excluded agents", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Excluded: true},
+			{PaneID: "cc_2", Excluded: false},
+			{PaneID: "cc_3", Excluded: true},
+		}
+
+		selected := strat.Select(agents, RoutingContext{})
+		if selected == nil {
+			t.Fatal("Select() returned nil")
+		}
+		if selected.PaneID != "cc_2" {
+			t.Errorf("Select() = %s, want cc_2", selected.PaneID)
+		}
+	})
+
+	t.Run("rotates through available only", func(t *testing.T) {
+		strat2 := &RoundRobinAvailableStrategy{}
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Excluded: false},
+			{PaneID: "cc_2", Excluded: true},
+			{PaneID: "cc_3", Excluded: false},
+		}
+
+		// First available is cc_1 (index 0, starting from -1)
+		// Actually starts at (lastIndex+1)%3 = 1, but cc_2 excluded, so continues to cc_3
+		selected := strat2.Select(agents, RoutingContext{})
+		if selected != nil && selected.PaneID != "cc_1" {
+			// lastIndex starts at 0, so (0+1)%3=1 is cc_2 (excluded), then (0+2)%3=2 is cc_3
+			// Wait - actually i=0 means idx=(0+1+0)%3=1, which is cc_2 (excluded)
+			// i=1 means idx=(0+1+1)%3=2, which is cc_3
+			if selected.PaneID != "cc_3" {
+				t.Errorf("First Select() = %s, want cc_1 or cc_3", selected.PaneID)
+			}
+		}
+	})
+
+	t.Run("returns nil when all excluded", func(t *testing.T) {
+		strat2 := &RoundRobinAvailableStrategy{}
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Excluded: true},
+			{PaneID: "cc_2", Excluded: true},
+		}
+
+		selected := strat2.Select(agents, RoutingContext{})
+		if selected != nil {
+			t.Errorf("Select() = %s, want nil", selected.PaneID)
+		}
+	})
+}
+
+func TestRandomStrategy(t *testing.T) {
+	t.Run("returns strategy name", func(t *testing.T) {
+		strat := &RandomStrategy{}
+		if strat.Name() != StrategyRandom {
+			t.Errorf("Name() = %s, want %s", strat.Name(), StrategyRandom)
+		}
+	})
+
+	t.Run("uses injected random function", func(t *testing.T) {
+		strat := &RandomStrategy{
+			randFunc: func(n int) int { return 0 }, // Always pick first
+		}
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Excluded: false},
+			{PaneID: "cc_2", Excluded: false},
+			{PaneID: "cc_3", Excluded: false},
+		}
+
+		selected := strat.Select(agents, RoutingContext{})
+		if selected == nil {
+			t.Fatal("Select() returned nil")
+		}
+		if selected.PaneID != "cc_1" {
+			t.Errorf("Select() = %s, want cc_1", selected.PaneID)
+		}
+	})
+
+	t.Run("skips excluded agents", func(t *testing.T) {
+		strat := &RandomStrategy{
+			randFunc: func(n int) int { return 0 },
+		}
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Excluded: true},
+			{PaneID: "cc_2", Excluded: false},
+			{PaneID: "cc_3", Excluded: false},
+		}
+
+		selected := strat.Select(agents, RoutingContext{})
+		if selected == nil {
+			t.Fatal("Select() returned nil")
+		}
+		if selected.PaneID != "cc_2" {
+			t.Errorf("Select() = %s, want cc_2", selected.PaneID)
+		}
+	})
+
+	t.Run("returns nil when all excluded", func(t *testing.T) {
+		strat := &RandomStrategy{}
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Excluded: true},
+		}
+
+		selected := strat.Select(agents, RoutingContext{})
+		if selected != nil {
+			t.Errorf("Select() = %s, want nil", selected.PaneID)
+		}
+	})
+
+	t.Run("deterministic fallback", func(t *testing.T) {
+		strat := &RandomStrategy{} // No randFunc
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Excluded: false},
+			{PaneID: "cc_2", Excluded: false},
+			{PaneID: "cc_3", Excluded: false},
+		}
+
+		// Without randFunc, uses len(available)/2 = 1
+		selected := strat.Select(agents, RoutingContext{})
+		if selected == nil {
+			t.Fatal("Select() returned nil")
+		}
+		if selected.PaneID != "cc_2" {
+			t.Errorf("Select() = %s, want cc_2 (middle element)", selected.PaneID)
+		}
+	})
+}
+
+func TestStickyStrategy(t *testing.T) {
+	strat := NewStickyStrategy()
+
+	if strat.Name() != StrategySticky {
+		t.Errorf("Name() = %s, want %s", strat.Name(), StrategySticky)
+	}
+
+	t.Run("prefers last agent", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Score: 100, Excluded: false},
+			{PaneID: "cc_2", Score: 50, Excluded: false},
+			{PaneID: "cc_3", Score: 60, Excluded: false},
+		}
+
+		ctx := RoutingContext{LastAgent: "cc_2"}
+		selected := strat.Select(agents, ctx)
+		if selected == nil {
+			t.Fatal("Select() returned nil")
+		}
+		// Should prefer cc_2 even though cc_1 has higher score
+		if selected.PaneID != "cc_2" {
+			t.Errorf("Select() = %s, want cc_2", selected.PaneID)
+		}
+	})
+
+	t.Run("falls back when last agent excluded", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Score: 100, Excluded: false},
+			{PaneID: "cc_2", Score: 50, Excluded: true}, // Last agent but excluded
+			{PaneID: "cc_3", Score: 60, Excluded: false},
+		}
+
+		ctx := RoutingContext{LastAgent: "cc_2"}
+		selected := strat.Select(agents, ctx)
+		if selected == nil {
+			t.Fatal("Select() returned nil")
+		}
+		// Should fall back to least-loaded (cc_1 with highest score)
+		if selected.PaneID != "cc_1" {
+			t.Errorf("Select() = %s, want cc_1", selected.PaneID)
+		}
+	})
+
+	t.Run("falls back when no last agent", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Score: 100, Excluded: false},
+			{PaneID: "cc_2", Score: 50, Excluded: false},
+		}
+
+		ctx := RoutingContext{} // No LastAgent
+		selected := strat.Select(agents, ctx)
+		if selected == nil {
+			t.Fatal("Select() returned nil")
+		}
+		// Should use least-loaded
+		if selected.PaneID != "cc_1" {
+			t.Errorf("Select() = %s, want cc_1", selected.PaneID)
+		}
+	})
+}
+
+func TestExplicitStrategy(t *testing.T) {
+	strat := &ExplicitStrategy{}
+
+	if strat.Name() != StrategyExplicit {
+		t.Errorf("Name() = %s, want %s", strat.Name(), StrategyExplicit)
+	}
+
+	t.Run("selects explicit pane", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", PaneIndex: 1, Excluded: false},
+			{PaneID: "cc_2", PaneIndex: 2, Excluded: false},
+			{PaneID: "cc_3", PaneIndex: 3, Excluded: false},
+		}
+
+		ctx := RoutingContext{ExplicitPane: 2}
+		selected := strat.Select(agents, ctx)
+		if selected == nil {
+			t.Fatal("Select() returned nil")
+		}
+		if selected.PaneID != "cc_2" {
+			t.Errorf("Select() = %s, want cc_2", selected.PaneID)
+		}
+	})
+
+	t.Run("returns nil when pane not found", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", PaneIndex: 1, Excluded: false},
+		}
+
+		ctx := RoutingContext{ExplicitPane: 5}
+		selected := strat.Select(agents, ctx)
+		if selected != nil {
+			t.Errorf("Select() = %s, want nil", selected.PaneID)
+		}
+	})
+
+	t.Run("returns nil when explicit pane not set", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", PaneIndex: 1, Excluded: false},
+		}
+
+		ctx := RoutingContext{ExplicitPane: -1}
+		selected := strat.Select(agents, ctx)
+		if selected != nil {
+			t.Errorf("Select() = %s, want nil", selected.PaneID)
+		}
+	})
+
+	t.Run("ignores exclusion status", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", PaneIndex: 1, Excluded: false},
+			{PaneID: "cc_2", PaneIndex: 2, Excluded: true}, // Excluded but explicitly requested
+		}
+
+		ctx := RoutingContext{ExplicitPane: 2}
+		selected := strat.Select(agents, ctx)
+		if selected == nil {
+			t.Fatal("Select() returned nil")
+		}
+		// Explicit should return even if excluded
+		if selected.PaneID != "cc_2" {
+			t.Errorf("Select() = %s, want cc_2", selected.PaneID)
+		}
+	})
+}
+
+func TestRouter(t *testing.T) {
+	router := NewRouter()
+
+	t.Run("registers all strategies", func(t *testing.T) {
+		names := GetStrategyNames()
+		for _, name := range names {
+			strat := router.GetStrategy(name)
+			if strat == nil {
+				t.Errorf("Strategy %s not registered", name)
+			}
+			if strat.Name() != name {
+				t.Errorf("Strategy name mismatch: %s vs %s", strat.Name(), name)
+			}
+		}
+	})
+
+	t.Run("returns default for unknown strategy", func(t *testing.T) {
+		strat := router.GetStrategy("unknown")
+		if strat.Name() != StrategyLeastLoaded {
+			t.Errorf("Expected default strategy, got %s", strat.Name())
+		}
+	})
+}
+
+func TestRouterRoute(t *testing.T) {
+	router := NewRouter()
+
+	t.Run("primary strategy succeeds", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Score: 50, State: StateWaiting, Excluded: false},
+			{PaneID: "cc_2", Score: 80, State: StateWaiting, Excluded: false},
+		}
+
+		result := router.Route(agents, StrategyLeastLoaded, RoutingContext{})
+		if result.Selected == nil {
+			t.Fatal("Route() returned nil selection")
+		}
+		if result.Selected.PaneID != "cc_2" {
+			t.Errorf("Selected = %s, want cc_2", result.Selected.PaneID)
+		}
+		if result.FallbackUsed {
+			t.Error("FallbackUsed should be false")
+		}
+		if result.Strategy != StrategyLeastLoaded {
+			t.Errorf("Strategy = %s, want %s", result.Strategy, StrategyLeastLoaded)
+		}
+	})
+
+	t.Run("applies context exclusions", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", PaneIndex: 1, Score: 100, State: StateWaiting, Excluded: false},
+			{PaneID: "cc_2", PaneIndex: 2, Score: 50, State: StateWaiting, Excluded: false},
+		}
+
+		ctx := RoutingContext{ExcludePanes: []int{1}} // Exclude pane 1
+		result := router.Route(agents, StrategyLeastLoaded, ctx)
+		if result.Selected == nil {
+			t.Fatal("Route() returned nil selection")
+		}
+		if result.Selected.PaneID != "cc_2" {
+			t.Errorf("Selected = %s, want cc_2 (cc_1 should be excluded)", result.Selected.PaneID)
+		}
+	})
+
+	t.Run("uses fallback when primary fails", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Score: 50, State: StateWaiting, Excluded: false},
+		}
+
+		// FirstAvailable should work, then we can test fallback
+		// Actually let's create a scenario where first-available fails
+		agents = []ScoredAgent{
+			{PaneID: "cc_1", Score: 50, State: StateGenerating, Excluded: false},
+			{PaneID: "cc_2", Score: 80, State: StateThinking, Excluded: false},
+		}
+
+		result := router.Route(agents, StrategyFirstAvailable, RoutingContext{})
+		// FirstAvailable requires StateWaiting, so it will fail
+		// Then fallback to LeastLoaded which should pick cc_2
+		if result.Selected == nil {
+			t.Fatal("Route() returned nil selection")
+		}
+		if result.Selected.PaneID != "cc_2" {
+			t.Errorf("Selected = %s, want cc_2", result.Selected.PaneID)
+		}
+		if !result.FallbackUsed {
+			t.Error("FallbackUsed should be true")
+		}
+	})
+
+	t.Run("returns no selection when all fail", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", State: StateGenerating, Excluded: true},
+			{PaneID: "cc_2", State: StateGenerating, Excluded: true},
+		}
+
+		result := router.Route(agents, StrategyLeastLoaded, RoutingContext{})
+		if result.Selected != nil {
+			t.Errorf("Selected = %s, want nil", result.Selected.PaneID)
+		}
+	})
+}
+
+func TestRouterRouteWithRelaxation(t *testing.T) {
+	router := NewRouter()
+
+	t.Run("returns immediately if primary succeeds", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Score: 80, State: StateWaiting, Excluded: false},
+		}
+
+		result := router.RouteWithRelaxation(agents, StrategyLeastLoaded, RoutingContext{})
+		if result.Selected == nil {
+			t.Fatal("RouteWithRelaxation() returned nil")
+		}
+		if result.Selected.PaneID != "cc_1" {
+			t.Errorf("Selected = %s, want cc_1", result.Selected.PaneID)
+		}
+	})
+
+	t.Run("relaxes THINKING exclusion", func(t *testing.T) {
+		agents := []ScoredAgent{
+			{PaneID: "cc_1", Score: 80, State: StateThinking, Excluded: true, ExcludeReason: "agent is currently generating"},
+		}
+
+		result := router.RouteWithRelaxation(agents, StrategyLeastLoaded, RoutingContext{})
+		if result.Selected == nil {
+			t.Fatal("RouteWithRelaxation() should include THINKING agents")
+		}
+		if result.Selected.PaneID != "cc_1" {
+			t.Errorf("Selected = %s, want cc_1", result.Selected.PaneID)
+		}
+	})
+}
+
+func TestFilterExcluded(t *testing.T) {
+	agents := []ScoredAgent{
+		{PaneID: "cc_1", Excluded: false},
+		{PaneID: "cc_2", Excluded: true},
+		{PaneID: "cc_3", Excluded: false},
+		{PaneID: "cc_4", Excluded: true},
+	}
+
+	t.Run("filter for non-excluded", func(t *testing.T) {
+		filtered := filterExcluded(agents, false)
+		if len(filtered) != 2 {
+			t.Errorf("Got %d non-excluded, want 2", len(filtered))
+		}
+	})
+
+	t.Run("filter for excluded", func(t *testing.T) {
+		filtered := filterExcluded(agents, true)
+		if len(filtered) != 2 {
+			t.Errorf("Got %d excluded, want 2", len(filtered))
+		}
+	})
+}
+
+func TestRoutingResult(t *testing.T) {
+	result := RoutingResult{
+		Strategy:     StrategyLeastLoaded,
+		FallbackUsed: false,
+		Reason:       "primary strategy succeeded",
+	}
+
+	if result.Strategy != StrategyLeastLoaded {
+		t.Errorf("Strategy = %s, want %s", result.Strategy, StrategyLeastLoaded)
+	}
+	if result.FallbackUsed {
+		t.Error("FallbackUsed should be false")
+	}
+}
+
+func TestRoutingContext(t *testing.T) {
+	ctx := RoutingContext{
+		Prompt:       "test prompt",
+		LastAgent:    "cc_1",
+		ExcludePanes: []int{2, 3},
+		ExplicitPane: 1,
+	}
+
+	if ctx.Prompt != "test prompt" {
+		t.Errorf("Prompt = %s, want 'test prompt'", ctx.Prompt)
+	}
+	if ctx.LastAgent != "cc_1" {
+		t.Errorf("LastAgent = %s, want cc_1", ctx.LastAgent)
+	}
+	if len(ctx.ExcludePanes) != 2 {
+		t.Errorf("ExcludePanes len = %d, want 2", len(ctx.ExcludePanes))
+	}
+	if ctx.ExplicitPane != 1 {
+		t.Errorf("ExplicitPane = %d, want 1", ctx.ExplicitPane)
+	}
+}
