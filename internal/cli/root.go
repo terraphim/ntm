@@ -13,6 +13,7 @@ import (
 
 	"github.com/Dicklesworthstone/ntm/internal/config"
 	"github.com/Dicklesworthstone/ntm/internal/output"
+	"github.com/Dicklesworthstone/ntm/internal/pipeline"
 	"github.com/Dicklesworthstone/ntm/internal/plugins"
 	"github.com/Dicklesworthstone/ntm/internal/robot"
 	"github.com/Dicklesworthstone/ntm/internal/startup"
@@ -322,6 +323,35 @@ Shell Integration:
 				ExcludePanes: excludePanes,
 			}
 			exitCode := robot.PrintRoute(opts)
+			os.Exit(exitCode)
+		}
+		// Robot-pipeline commands
+		if robotPipelineRun != "" {
+			vars, err := pipeline.ParsePipelineVars(robotPipelineVars)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(2)
+			}
+			opts := pipeline.PipelineRunOptions{
+				WorkflowFile: robotPipelineRun,
+				Session:      robotPipelineSession,
+				Variables:    vars,
+				DryRun:       robotPipelineDryRun,
+				Background:   robotPipelineBG,
+			}
+			exitCode := pipeline.PrintPipelineRun(opts)
+			os.Exit(exitCode)
+		}
+		if robotPipelineStatus != "" {
+			exitCode := pipeline.PrintPipelineStatus(robotPipelineStatus)
+			os.Exit(exitCode)
+		}
+		if robotPipelineList {
+			exitCode := pipeline.PrintPipelineList()
+			os.Exit(exitCode)
+		}
+		if robotPipelineCancel != "" {
+			exitCode := pipeline.PrintPipelineCancel(robotPipelineCancel)
 			os.Exit(exitCode)
 		}
 		if robotTail != "" {
@@ -732,6 +762,16 @@ var (
 	robotRouteStrategy string // routing strategy (least-loaded, first-available, round-robin, etc.)
 	robotRouteType     string // filter by agent type (claude, codex, gemini)
 	robotRouteExclude  string // comma-separated pane indices to exclude
+
+	// Robot-pipeline flags for workflow execution
+	robotPipelineRun     string // workflow file to run
+	robotPipelineStatus  string // run ID to check status
+	robotPipelineList    bool   // list all pipelines
+	robotPipelineCancel  string // run ID to cancel
+	robotPipelineSession string // session name for pipeline execution
+	robotPipelineVars    string // JSON variables for pipeline
+	robotPipelineDryRun  bool   // validate without executing
+	robotPipelineBG      bool   // run in background
 )
 
 func init() {
@@ -874,6 +914,16 @@ func init() {
 	rootCmd.Flags().StringVar(&robotRouteStrategy, "route-strategy", "least-loaded", "Routing strategy: least-loaded, first-available, round-robin, round-robin-available, random, sticky, explicit. Optional with --robot-route")
 	rootCmd.Flags().StringVar(&robotRouteType, "route-type", "", "Filter by agent type: claude, codex, gemini. Optional with --robot-route. Example: --route-type=claude")
 	rootCmd.Flags().StringVar(&robotRouteExclude, "route-exclude", "", "Exclude pane indices (comma-separated). Optional with --robot-route. Example: --route-exclude=0,3")
+
+	// Robot-pipeline flags for workflow execution
+	rootCmd.Flags().StringVar(&robotPipelineRun, "robot-pipeline-run", "", "Run a workflow. Required: WORKFLOW_FILE, --pipeline-session. Example: ntm --robot-pipeline-run=workflow.yaml --pipeline-session=proj")
+	rootCmd.Flags().StringVar(&robotPipelineStatus, "robot-pipeline", "", "Get pipeline status. Required: RUN_ID. Example: ntm --robot-pipeline=run-20241230-123456-abcd")
+	rootCmd.Flags().BoolVar(&robotPipelineList, "robot-pipeline-list", false, "List all tracked pipelines. Example: ntm --robot-pipeline-list")
+	rootCmd.Flags().StringVar(&robotPipelineCancel, "robot-pipeline-cancel", "", "Cancel a running pipeline. Required: RUN_ID. Example: ntm --robot-pipeline-cancel=run-20241230-123456-abcd")
+	rootCmd.Flags().StringVar(&robotPipelineSession, "pipeline-session", "", "Tmux session for pipeline execution. Required with --robot-pipeline-run. Example: --pipeline-session=myproject")
+	rootCmd.Flags().StringVar(&robotPipelineVars, "pipeline-vars", "", "JSON variables for pipeline. Optional with --robot-pipeline-run. Example: --pipeline-vars='{\"env\":\"prod\"}'")
+	rootCmd.Flags().BoolVar(&robotPipelineDryRun, "pipeline-dry-run", false, "Validate workflow without executing. Optional with --robot-pipeline-run")
+	rootCmd.Flags().BoolVar(&robotPipelineBG, "pipeline-background", false, "Run pipeline in background. Optional with --robot-pipeline-run")
 
 	// Sync version info with robot package
 	robot.Version = Version
