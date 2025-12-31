@@ -476,7 +476,7 @@ func showPipelineStatus(runID string) error {
 
 func showPipelineList() error {
 	fmt.Println("Tracked Pipelines")
-	fmt.Println("=================\n")
+	fmt.Println("=================")
 	pipeline.PrintPipelineList()
 	return nil
 }
