@@ -282,8 +282,17 @@ func runPersonasShow(name string) error {
 	branch := "├"
 	bottomLeft := "╰"
 
-	// Header
-	fmt.Println(headerStyle.Render(topLeft + "─ " + ic.Claude + " Profile: " + p.Name))
+	// Header - use appropriate icon for agent type
+	agentIcon := ic.Robot
+	switch strings.ToLower(p.AgentType) {
+	case "claude", "cc":
+		agentIcon = ic.Claude
+	case "codex", "cod":
+		agentIcon = ic.Codex
+	case "gemini", "gmi":
+		agentIcon = ic.Gemini
+	}
+	fmt.Println(headerStyle.Render(topLeft + "─ " + agentIcon + " Profile: " + p.Name))
 	fmt.Println(borderStyle.Render(vertical))
 
 	// Basic info with tree structure

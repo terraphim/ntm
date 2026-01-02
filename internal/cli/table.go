@@ -133,12 +133,6 @@ func (t *StyledTable) Render() string {
 	textColor := lipgloss.NewStyle().Foreground(th.Text)
 	subtextColor := lipgloss.NewStyle().Foreground(th.Subtext)
 
-	// Calculate total width
-	totalWidth := 1 // Left border
-	for _, w := range t.widths {
-		totalWidth += w + 3 // content + padding + separator
-	}
-
 	// Build horizontal lines
 	buildHLine := func(left, mid, right, fill string) string {
 		var line strings.Builder
