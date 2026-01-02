@@ -62,6 +62,7 @@ type IconSet struct {
 	Coordination  string
 	Investigation string
 	General       string
+	Profile       string
 
 	// Decorations
 	Sparkle   string
@@ -129,6 +130,7 @@ var NerdFonts = IconSet{
 	Coordination:  "󰍹",
 	Investigation: "",
 	General:       "",
+	Profile:       "",
 
 	// Decorations
 	Sparkle:   "✦",
@@ -196,6 +198,7 @@ var Unicode = IconSet{
 	Coordination:  "⇄",
 	Investigation: "⌕",
 	General:       "•",
+	Profile:       "◈",
 
 	// Decorations
 	Sparkle:   "✦",
@@ -263,6 +266,7 @@ var ASCII = IconSet{
 	Coordination:  "<>",
 	Investigation: "?",
 	General:       "-",
+	Profile:       "@",
 
 	// Decorations
 	Sparkle:   "*",

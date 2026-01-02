@@ -7,9 +7,11 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
 	"github.com/Dicklesworthstone/ntm/internal/persona"
+	"github.com/Dicklesworthstone/ntm/internal/tui/icons"
 	"github.com/Dicklesworthstone/ntm/internal/tui/theme"
 )
 
@@ -124,83 +126,98 @@ func runPersonasList(filterAgent, filterTag string) error {
 		return json.NewEncoder(os.Stdout).Encode(output)
 	}
 
-	// Count sources
-	builtinCount := len(persona.BuiltinPersonas())
-	userCount := 0
-	projectCount := 0
-	// These counts are approximations since we don't track source in registry
-
-	t := theme.Current()
+	th := theme.Current()
+	ic := icons.Current()
 
 	if len(filtered) == 0 {
-		fmt.Println("No personas found matching filters.")
+		fmt.Println(InfoMessage("No personas found matching filters."))
 		return nil
 	}
 
-	// Print header
-	fmt.Printf("%s%-14s %-8s %-8s %s%s\n",
-		colorize(t.Primary), "NAME", "AGENT", "MODEL", "DESCRIPTION", "\033[0m")
-	fmt.Println(strings.Repeat("─", 70))
+	// Build styled table
+	table := NewStyledTable("NAME", "AGENT", "MODEL", "DESCRIPTION")
+	table.WithTitle(ic.Profile + " Agent Profiles")
 
-	// Print personas
 	for _, p := range filtered {
-		desc := truncateRunes(p.Description, 32, "...")
-
+		desc := truncateRunes(p.Description, 38, "...")
 		model := p.Model
 		if model == "" {
 			model = "(default)"
 		}
 		model = truncateRunes(model, 6, "..")
 
-		fmt.Printf("%-14s %-8s %-8s %s\n",
+		table.AddRow(
 			p.Name,
-			p.AgentTypeFlag(),
+			formatAgentType(p.AgentTypeFlag(), th, ic),
 			model,
 			desc,
 		)
 	}
 
-	fmt.Println(strings.Repeat("─", 70))
-	fmt.Printf("Total: %d personas (%d built-in)\n", len(filtered), builtinCount)
+	builtinCount := len(persona.BuiltinPersonas())
+	table.WithFooter(fmt.Sprintf("  %s %d profiles (%d built-in)", ic.Info, len(filtered), builtinCount))
+	fmt.Print(table.Render())
 
 	// Show profile sets
 	sets := registry.ListSets()
 	if len(sets) > 0 {
 		fmt.Println()
-		fmt.Printf("%sPROFILE SETS:%s\n", colorize(t.Primary), "\033[0m")
-		sort.Slice(sets, func(i, j int) bool {
-			return sets[i].Name < sets[j].Name
-		})
-		for _, s := range sets {
-			members := truncateRunes(strings.Join(s.Personas, ", "), 37, "...")
-			desc := s.Description
-			if desc == "" {
-				desc = members
-			}
-			fmt.Printf("  %-16s %s\n", s.Name, desc)
-		}
-	}
-
-	// Show source hint if user/project files exist
-	if _, err := os.Stat(persona.DefaultUserPath()); err == nil {
-		userCount++
-	}
-	projectPath := ".ntm/personas.toml"
-	if _, err := os.Stat(projectPath); err == nil {
-		projectCount++
-	}
-	if userCount > 0 || projectCount > 0 {
-		sources := []string{}
-		if userCount > 0 {
-			sources = append(sources, "user")
-		}
-		if projectCount > 0 {
-			sources = append(sources, "project")
-		}
-		fmt.Printf("Custom sources: %s\n", strings.Join(sources, ", "))
+		renderProfileSets(sets, th, ic)
 	}
 
 	return nil
+}
+
+// formatAgentType formats an agent type with icon and color
+func formatAgentType(agentType string, th theme.Theme, ic icons.IconSet) string {
+	var icon string
+	var color lipgloss.Color
+
+	switch strings.ToLower(agentType) {
+	case "cc", "claude":
+		icon = ic.Claude
+		color = th.Claude
+	case "cod", "codex":
+		icon = ic.Codex
+		color = th.Codex
+	case "gmi", "gemini":
+		icon = ic.Gemini
+		color = th.Gemini
+	default:
+		icon = ic.Robot
+		color = th.Overlay
+	}
+
+	style := lipgloss.NewStyle().Foreground(color)
+	return style.Render(icon + " " + agentType)
+}
+
+// renderProfileSets renders profile sets section with styling
+func renderProfileSets(sets []*persona.PersonaSet, th theme.Theme, ic icons.IconSet) {
+	headerStyle := lipgloss.NewStyle().Foreground(th.Primary).Bold(true)
+	nameStyle := lipgloss.NewStyle().Foreground(th.Text).Bold(true)
+	countStyle := lipgloss.NewStyle().Foreground(th.Subtext)
+	descStyle := lipgloss.NewStyle().Foreground(th.Subtext)
+
+	fmt.Println(headerStyle.Render("╭─ " + ic.Folder + " Profile Sets ─"))
+
+	sort.Slice(sets, func(i, j int) bool {
+		return sets[i].Name < sets[j].Name
+	})
+
+	for _, s := range sets {
+		desc := s.Description
+		if desc == "" {
+			desc = strings.Join(s.Personas, ", ")
+		}
+		desc = truncateRunes(desc, 60, "...")
+
+		fmt.Printf("  %s %s %s\n",
+			nameStyle.Render(s.Name),
+			countStyle.Render(fmt.Sprintf("(%d)", len(s.Personas))),
+			descStyle.Render(desc),
+		)
+	}
 }
 
 func newPersonasShowCmd() *cobra.Command {
@@ -228,7 +245,6 @@ func runPersonasShow(name string) error {
 	p, ok := registry.Get(name)
 	if !ok {
 		if jsonOutput {
-			// Output JSON error but still return error for proper exit code
 			_ = json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
 				"success": false,
 				"error":   fmt.Sprintf("persona %q not found", name),
@@ -238,7 +254,6 @@ func runPersonasShow(name string) error {
 	}
 
 	if jsonOutput {
-		// Add source field for JSON output
 		type personaWithSource struct {
 			*persona.Persona
 			Source string `json:"source"`
@@ -250,54 +265,114 @@ func runPersonasShow(name string) error {
 		return json.NewEncoder(os.Stdout).Encode(output)
 	}
 
-	t := theme.Current()
+	th := theme.Current()
+	ic := icons.Current()
+
+	// Styles
+	headerStyle := lipgloss.NewStyle().Foreground(th.Primary).Bold(true)
+	labelStyle := lipgloss.NewStyle().Foreground(th.Subtext)
+	valueStyle := lipgloss.NewStyle().Foreground(th.Text)
+	borderStyle := lipgloss.NewStyle().Foreground(th.Surface2)
+	sectionStyle := lipgloss.NewStyle().Foreground(th.Primary).Bold(true)
+	bulletStyle := lipgloss.NewStyle().Foreground(th.Blue)
+
+	// Box-drawing characters
+	topLeft := "╭"
+	vertical := "│"
+	branch := "├"
+	bottomLeft := "╰"
 
 	// Header
-	fmt.Printf("%sPersona: %s%s\n", colorize(t.Primary), p.Name, "\033[0m")
-	fmt.Println(strings.Repeat("─", 60))
+	fmt.Println(headerStyle.Render(topLeft + "─ " + ic.Claude + " Profile: " + p.Name))
+	fmt.Println(borderStyle.Render(vertical))
 
-	// Basic info
-	fmt.Printf("Agent Type:   %s\n", p.AgentType)
-	fmt.Printf("Model:        %s\n", valueOrDefault(p.Model, "(default)"))
-
-	if p.Temperature != nil {
-		fmt.Printf("Temperature:  %.1f\n", *p.Temperature)
-	}
+	// Basic info with tree structure
+	fmt.Println(borderStyle.Render(vertical) + " " + labelStyle.Render("Agent Type:") + "    " + formatAgentType(p.AgentType, th, ic))
+	fmt.Println(borderStyle.Render(vertical) + " " + labelStyle.Render("Model:") + "         " + valueStyle.Render(valueOrDefault(p.Model, "(default)")))
 
 	if p.Description != "" {
-		fmt.Printf("Description:  %s\n", p.Description)
+		fmt.Println(borderStyle.Render(vertical) + " " + labelStyle.Render("Description:") + "   " + valueStyle.Render(p.Description))
 	}
 
 	if len(p.Tags) > 0 {
-		fmt.Printf("Tags:         %s\n", strings.Join(p.Tags, ", "))
+		fmt.Println(borderStyle.Render(vertical) + " " + labelStyle.Render("Tags:") + "          " + renderTags(p.Tags, th))
 	}
 
-	fmt.Printf("Source:       %s\n", determineSource(p.Name))
+	if p.Temperature != nil {
+		tempStr := fmt.Sprintf("%.1f %s", *p.Temperature, renderTempBar(*p.Temperature, th))
+		fmt.Println(borderStyle.Render(vertical) + " " + labelStyle.Render("Temperature:") + "   " + valueStyle.Render(tempStr))
+	}
 
-	// System prompt
-	if p.SystemPrompt != "" {
-		fmt.Println(strings.Repeat("─", 60))
-		fmt.Printf("%sSystem Prompt:%s\n\n", colorize(t.Primary), "\033[0m")
+	fmt.Println(borderStyle.Render(vertical) + " " + labelStyle.Render("Source:") + "        " + valueStyle.Render(ic.Star+" "+determineSource(p.Name)))
 
-		// Indent and wrap the system prompt
-		lines := strings.Split(p.SystemPrompt, "\n")
-		for _, line := range lines {
-			fmt.Printf("  %s\n", line)
+	// Focus patterns
+	if len(p.FocusPatterns) > 0 {
+		fmt.Println(borderStyle.Render(vertical))
+		fmt.Println(borderStyle.Render(branch) + "─ " + sectionStyle.Render(ic.Folder+" Focus Patterns"))
+		for _, fp := range p.FocusPatterns {
+			fmt.Println(borderStyle.Render(vertical) + "   " + bulletStyle.Render("•") + " " + valueStyle.Render(fp))
 		}
 	}
 
 	// Context files
 	if len(p.ContextFiles) > 0 {
-		fmt.Println(strings.Repeat("─", 60))
-		fmt.Printf("%sContext Files:%s\n", colorize(t.Primary), "\033[0m")
+		fmt.Println(borderStyle.Render(vertical))
+		fmt.Println(borderStyle.Render(branch) + "─ " + sectionStyle.Render(ic.File+" Context Files"))
 		for _, cf := range p.ContextFiles {
-			fmt.Printf("  - %s\n", cf)
+			fmt.Println(borderStyle.Render(vertical) + "   " + bulletStyle.Render("•") + " " + valueStyle.Render(cf))
 		}
 	}
 
-	fmt.Println(strings.Repeat("─", 60))
+	// System prompt
+	if p.SystemPrompt != "" {
+		fmt.Println(borderStyle.Render(vertical))
+		fmt.Println(borderStyle.Render(branch) + "─ " + sectionStyle.Render(ic.Terminal+" System Prompt"))
+		fmt.Println(borderStyle.Render(vertical))
+		lines := strings.Split(p.SystemPrompt, "\n")
+		for _, line := range lines {
+			fmt.Println(borderStyle.Render(vertical) + "   " + valueStyle.Render(line))
+		}
+	}
+
+	// Bottom border
+	fmt.Println(borderStyle.Render(bottomLeft + strings.Repeat("─", 50)))
 
 	return nil
+}
+
+// renderTempBar renders a visual temperature indicator
+func renderTempBar(temp float64, th theme.Theme) string {
+	var color lipgloss.Color
+	var label string
+
+	switch {
+	case temp <= 0.3:
+		color = th.Blue
+		label = "focused"
+	case temp <= 0.7:
+		color = th.Green
+		label = "balanced"
+	case temp <= 1.0:
+		color = th.Yellow
+		label = "creative"
+	default:
+		color = th.Red
+		label = "wild"
+	}
+
+	style := lipgloss.NewStyle().Foreground(color)
+	return style.Render("(" + label + ")")
+}
+
+// renderTags renders tags as styled hashtags
+func renderTags(tags []string, th theme.Theme) string {
+	var parts []string
+	tagStyle := lipgloss.NewStyle().Foreground(th.Blue)
+
+	for _, tag := range tags {
+		parts = append(parts, tagStyle.Render("#"+tag))
+	}
+	return strings.Join(parts, " ")
 }
 
 // determineSource returns the source of a persona (built-in, user, or project)
