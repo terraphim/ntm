@@ -326,7 +326,19 @@ func Current() Theme {
 
 // detectDarkBackground inspects the terminal to determine if a dark background is in use.
 // It is defined as a variable for testability.
+//
+// Note: Over SSH connections, we skip OSC queries to avoid a race condition where the
+// terminal's response arrives after a TUI program has taken over stdin, causing escape
+// sequences to appear as literal text in input fields. Instead, we default to dark theme.
 var detectDarkBackground = func() bool {
+	// Skip OSC queries over SSH - responses may arrive late due to network latency,
+	// causing escape sequences to leak into TUI text input components.
+	// This is a known issue with terminals that respond to OSC 10/11 queries
+	// (Kitty, iTerm2, most modern terminals).
+	if os.Getenv("SSH_CONNECTION") != "" || os.Getenv("SSH_TTY") != "" {
+		return true // Default to dark theme over SSH
+	}
+
 	output := termenv.NewOutput(os.Stdout)
 	return output.HasDarkBackground()
 }

@@ -371,9 +371,19 @@ func SplitWindow(session string, directory string) (string, error) {
 	return DefaultClient.SplitWindow(session, directory)
 }
 
-// SetPaneTitle sets the title of a pane
+// SetPaneTitle sets the title of a pane and disables automatic-rename to prevent
+// tmux from overwriting the title when the running process changes.
+// This is essential for NTM's pane naming convention to work reliably.
 func (c *Client) SetPaneTitle(paneID, title string) error {
-	return c.RunSilent("select-pane", "-t", paneID, "-T", title)
+	if err := c.RunSilent("select-pane", "-t", paneID, "-T", title); err != nil {
+		return err
+	}
+	// Disable automatic-rename to prevent tmux from overwriting the title
+	// when the agent process (node, python, etc.) starts running.
+	// This is a per-pane option so it won't affect other panes.
+	// Errors here are non-fatal - the title is already set.
+	_ = c.RunSilent("set-option", "-p", "-t", paneID, "allow-rename", "off")
+	return nil
 }
 
 // SetPaneTitle sets the title of a pane (default client)
