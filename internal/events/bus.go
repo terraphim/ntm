@@ -160,10 +160,15 @@ func (b *EventBus) History(limit int) []BusEvent {
 	return events
 }
 
-// EnableRobotMode enables JSON streaming of all events to a writer
+// EnableRobotMode enables JSON streaming of all events to a writer.
+// Note: The handler uses a mutex to serialize Encode calls since
+// json.Encoder is not safe for concurrent use by multiple goroutines.
 func (b *EventBus) EnableRobotMode(w io.Writer) UnsubscribeFunc {
 	enc := json.NewEncoder(w)
+	var mu sync.Mutex
 	return b.SubscribeAll(func(e BusEvent) {
+		mu.Lock()
+		defer mu.Unlock()
 		enc.Encode(e)
 	})
 }
