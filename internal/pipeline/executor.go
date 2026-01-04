@@ -1156,6 +1156,7 @@ func (e *Executor) emitProgress(eventType, stepID, message string, progress floa
 }
 
 // truncatePrompt truncates a prompt for display, respecting UTF-8 boundaries.
+// Ensures the returned string is at most n bytes.
 func truncatePrompt(s string, n int) string {
 	// Replace newlines with spaces for single-line display
 	s = strings.ReplaceAll(s, "\n", " ")
@@ -1170,14 +1171,19 @@ func truncatePrompt(s string, n int) string {
 	if n <= 3 {
 		return "..."[:n]
 	}
-	// Find first rune boundary at or after n-3 bytes
+	// Find the last rune boundary that allows for "..." suffix within n bytes.
+	// targetLen is the max bytes for content (excluding "...")
 	targetLen := n - 3
+	prevI := 0
 	for i := range s {
-		if i >= targetLen {
-			return s[:i] + "..."
+		if i > targetLen {
+			// Previous position is the last safe boundary
+			return s[:prevI] + "..."
 		}
+		prevI = i
 	}
-	return s
+	// All rune starts fit within targetLen; use the last one
+	return s[:prevI] + "..."
 }
 
 // GetState returns the current execution state (for monitoring)
