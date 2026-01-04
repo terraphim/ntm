@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"strings"
 	"time"
 )
 
@@ -266,16 +267,19 @@ var AgentTypeAliases = map[string]string{
 	"google":      "gemini",
 }
 
-// NormalizeAgentType converts agent type aliases to canonical form
+// NormalizeAgentType converts agent type aliases to canonical form.
+// Case-insensitive: "Claude", "CLAUDE", "claude" all normalize to "claude".
 func NormalizeAgentType(t string) string {
-	if canonical, ok := AgentTypeAliases[t]; ok {
+	lower := strings.ToLower(t)
+	if canonical, ok := AgentTypeAliases[lower]; ok {
 		return canonical
 	}
-	return t
+	return lower
 }
 
-// IsValidAgentType checks if the given agent type is recognized
+// IsValidAgentType checks if the given agent type is recognized.
+// Case-insensitive: "Claude", "CLAUDE", "claude" are all valid.
 func IsValidAgentType(t string) bool {
-	_, ok := AgentTypeAliases[t]
+	_, ok := AgentTypeAliases[strings.ToLower(t)]
 	return ok
 }
