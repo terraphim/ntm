@@ -231,12 +231,15 @@ func truncate(s string, n int) string {
 		}
 		return s[:lastValid]
 	}
-	// Find first rune boundary at or after n-3 bytes
+	// Find the last rune boundary that allows for "..." suffix within n bytes.
 	targetLen := n - 3
+	prevI := 0
 	for i := range s {
-		if i >= targetLen {
-			return s[:i] + "..."
+		if i > targetLen {
+			return s[:prevI] + "..."
 		}
+		prevI = i
 	}
-	return s
+	// All rune starts are <= targetLen, but string is > n bytes.
+	return s[:prevI] + "..."
 }

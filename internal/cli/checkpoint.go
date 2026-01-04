@@ -443,12 +443,15 @@ func truncateStr(s string, maxLen int) string {
 	if maxLen <= 3 {
 		return "..."[:maxLen]
 	}
-	// Find first rune boundary at or after maxLen-3 bytes
+	// Find the last rune boundary that allows for "..." suffix within maxLen bytes.
 	targetLen := maxLen - 3
+	prevI := 0
 	for i := range s {
-		if i >= targetLen {
-			return s[:i] + "..."
+		if i > targetLen {
+			return s[:prevI] + "..."
 		}
+		prevI = i
 	}
-	return s
+	// All rune starts are <= targetLen, but string is > maxLen bytes.
+	return s[:prevI] + "..."
 }
