@@ -730,6 +730,7 @@ func TestNormalizeAgentType(t *testing.T) {
 		input    string
 		expected string
 	}{
+		// Lowercase (canonical)
 		{"claude", "claude"},
 		{"cc", "claude"},
 		{"claude-code", "claude"},
@@ -740,6 +741,15 @@ func TestNormalizeAgentType(t *testing.T) {
 		{"gmi", "gemini"},
 		{"google", "gemini"},
 		{"unknown", "unknown"},
+		// Case-insensitive handling
+		{"Claude", "claude"},
+		{"CLAUDE", "claude"},
+		{"CC", "claude"},
+		{"Codex", "codex"},
+		{"CODEX", "codex"},
+		{"Gemini", "gemini"},
+		{"GEMINI", "gemini"},
+		{"Unknown", "unknown"},
 	}
 
 	for _, tt := range tests {
