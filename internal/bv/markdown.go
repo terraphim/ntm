@@ -131,8 +131,8 @@ func renderFullTriage(sb *strings.Builder, triage *TriageResponse, opts Markdown
 
 	// Header with counts
 	sb.WriteString("## Beads Triage\n\n")
-	sb.WriteString(fmt.Sprintf("| Metric | Count |\n"))
-	sb.WriteString(fmt.Sprintf("|--------|-------|\n"))
+	sb.WriteString("| Metric | Count |\n")
+	sb.WriteString("|--------|-------|\n")
 	sb.WriteString(fmt.Sprintf("| Open | %d |\n", qr.OpenCount))
 	sb.WriteString(fmt.Sprintf("| Actionable | %d |\n", qr.ActionableCount))
 	sb.WriteString(fmt.Sprintf("| Blocked | %d |\n", qr.BlockedCount))
