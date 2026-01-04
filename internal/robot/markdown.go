@@ -271,24 +271,22 @@ func writeBeadsMarkdown(sb *strings.Builder, opts MarkdownOptions) {
 			sb.WriteString(fmt.Sprintf("- **In Progress**: %s\n", strings.Join(ids, ", ")))
 		}
 	} else {
-		// Detailed format with titles
+		// Detailed format with titles - NO truncation, agents need full context
 		if len(summary.ReadyPreview) > 0 {
 			sb.WriteString("\n**Ready to work on:**\n")
 			for _, b := range summary.ReadyPreview {
-				title := truncateStr(b.Title, 50)
-				sb.WriteString(fmt.Sprintf("- `%s` (%s): %s\n", b.ID, b.Priority, title))
+				sb.WriteString(fmt.Sprintf("- `%s` (%s): %s\n", b.ID, b.Priority, b.Title))
 			}
 		}
 
 		if len(summary.InProgressList) > 0 {
 			sb.WriteString("\n**In Progress:**\n")
 			for _, b := range summary.InProgressList {
-				title := truncateStr(b.Title, 50)
 				assignee := ""
 				if b.Assignee != "" {
 					assignee = fmt.Sprintf(" → %s", b.Assignee)
 				}
-				sb.WriteString(fmt.Sprintf("- `%s`%s: %s\n", b.ID, assignee, title))
+				sb.WriteString(fmt.Sprintf("- `%s`%s: %s\n", b.ID, assignee, b.Title))
 			}
 		}
 
@@ -364,11 +362,8 @@ func writeAlertsSection(sb *strings.Builder, cfg *config.Config, opts MarkdownOp
 		if a.Session != "" {
 			msg = fmt.Sprintf("[%s] %s", a.Session, msg)
 		}
-		if opts.Compact {
-			sb.WriteString(fmt.Sprintf("- %s %s\n", icon, truncateStr(msg, 60)))
-		} else {
-			sb.WriteString(fmt.Sprintf("- %s %s\n", icon, msg))
-		}
+		// No truncation - agents need full alert messages to understand issues
+		sb.WriteString(fmt.Sprintf("- %s %s\n", icon, msg))
 	}
 
 	if len(activeAlerts) > opts.MaxAlerts && opts.MaxAlerts > 0 {
