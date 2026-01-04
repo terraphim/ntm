@@ -264,3 +264,21 @@ type ContactHandshakeResult struct {
 	Link          *ContactLink `json:"link,omitempty"`
 	WelcomeMsg    *Message     `json:"welcome_message,omitempty"`
 }
+
+// ForceReleaseOptions contains options for forcibly releasing a stale reservation.
+type ForceReleaseOptions struct {
+	ProjectKey     string
+	AgentName      string // The agent requesting the force-release
+	ReservationID  int    // ID of the reservation to force-release
+	Note           string // Explanation for the force-release
+	NotifyPrevious bool   // Whether to notify the previous holder
+}
+
+// ForceReleaseResult contains the result of a force-release operation.
+type ForceReleaseResult struct {
+	Success        bool       `json:"success"`
+	ReleasedAt     *time.Time `json:"released_at,omitempty"`
+	PreviousHolder string     `json:"previous_holder,omitempty"`
+	PathPattern    string     `json:"path_pattern,omitempty"`
+	Notified       bool       `json:"notified,omitempty"`
+}

@@ -172,7 +172,6 @@ type Model struct {
 	agentStatuses map[string]status.AgentStatus // keyed by pane ID
 	lastRefresh   time.Time
 	refreshPaused bool
-	refreshCount  int
 
 	// Subsystem refresh timers
 	lastPaneFetch        time.Time
@@ -558,11 +557,6 @@ func (m Model) fetchHealthStatus() tea.Cmd {
 	}
 }
 
-// fetchScanStatus performs a quick UBS scan for badge display (diff-only)
-func (m Model) fetchScanStatus() tea.Cmd {
-	return m.fetchScanStatusWithContext(context.Background())
-}
-
 func (m Model) fetchScanStatusWithContext(ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
 		if !scanner.IsAvailable() {
@@ -680,10 +674,6 @@ func (m Model) fetchAgentMailStatus() tea.Cmd {
 			LockInfo:  lockInfo,
 		}
 	}
-}
-
-func (m Model) refresh() tea.Cmd {
-	return tea.Tick(m.refreshInterval, func(t time.Time) tea.Msg { return RefreshMsg{} })
 }
 
 // Helper struct to carry output data

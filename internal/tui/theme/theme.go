@@ -555,8 +555,8 @@ func NewStyles(t Theme) Styles {
 			Bold(true).
 			Reverse(true).
 			Padding(0, 1)
-		styles.Warning = styles.Warning.Copy().Underline(true)
-		styles.Error = styles.Error.Copy().Underline(true)
+		styles.Warning = styles.Warning.Underline(true)
+		styles.Error = styles.Error.Underline(true)
 	}
 
 	return styles

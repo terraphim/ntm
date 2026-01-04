@@ -63,11 +63,6 @@ func buildRemoteShellCommand(command string, args ...string) string {
 	return strings.Join(parts, " ")
 }
 
-// runLocal executes a tmux command locally
-func runLocal(args ...string) (string, error) {
-	return runLocalContext(context.Background(), args...)
-}
-
 func runLocalContext(ctx context.Context, args ...string) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -85,11 +80,6 @@ func runLocalContext(ctx context.Context, args ...string) (string, error) {
 		return "", fmt.Errorf("tmux %s: %w: %s", strings.Join(args, " "), err, stderr.String())
 	}
 	return strings.TrimSpace(stdout.String()), nil
-}
-
-// runSSH executes an ssh command and returns stdout
-func runSSH(args ...string) (string, error) {
-	return runSSHContext(context.Background(), args...)
 }
 
 func runSSHContext(ctx context.Context, args ...string) (string, error) {

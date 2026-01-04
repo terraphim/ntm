@@ -524,21 +524,6 @@ func (s *Supervisor) removePIDFile(name string) {
 	os.Remove(s.pidPath(name))
 }
 
-// readPIDFile reads and parses a PID file.
-func (s *Supervisor) readPIDFile(name string) (*PIDFileInfo, error) {
-	data, err := os.ReadFile(s.pidPath(name))
-	if err != nil {
-		return nil, err
-	}
-
-	var info PIDFileInfo
-	if err := json.Unmarshal(data, &info); err != nil {
-		return nil, err
-	}
-
-	return &info, nil
-}
-
 // pidPath returns the path to a daemon's PID file.
 func (s *Supervisor) pidPath(name string) string {
 	return filepath.Join(s.ntmDir, "pids", fmt.Sprintf("%s-%s.pid", name, s.sessionID))

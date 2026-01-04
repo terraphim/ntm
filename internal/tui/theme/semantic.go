@@ -296,34 +296,34 @@ func NewSemanticStyles(t Theme) SemanticStyles {
 		Overlay: lipgloss.NewStyle().
 			Background(p.Shadow),
 
-		// Badges
-		BadgeDefault: baseBadge.Copy().
+		// Badges (lipgloss styles are immutable, so method calls return new styles)
+		BadgeDefault: baseBadge.
 			Background(p.Badge).
 			Foreground(p.BadgeText),
-		BadgeSuccess: baseBadge.Copy().
+		BadgeSuccess: baseBadge.
 			Background(p.StatusSuccess).
 			Foreground(p.FgInverse),
-		BadgeWarning: baseBadge.Copy().
+		BadgeWarning: baseBadge.
 			Background(p.StatusWarning).
 			Foreground(p.FgInverse),
-		BadgeError: baseBadge.Copy().
+		BadgeError: baseBadge.
 			Background(p.StatusError).
 			Foreground(p.FgInverse),
-		BadgeInfo: baseBadge.Copy().
+		BadgeInfo: baseBadge.
 			Background(p.StatusInfo).
 			Foreground(p.FgInverse),
 
 		// Agent badges
-		BadgeClaude: baseBadge.Copy().
+		BadgeClaude: baseBadge.
 			Background(p.AgentClaude).
 			Foreground(p.FgInverse),
-		BadgeCodex: baseBadge.Copy().
+		BadgeCodex: baseBadge.
 			Background(p.AgentCodex).
 			Foreground(p.FgInverse),
-		BadgeGemini: baseBadge.Copy().
+		BadgeGemini: baseBadge.
 			Background(p.AgentGemini).
 			Foreground(p.FgInverse),
-		BadgeUser: baseBadge.Copy().
+		BadgeUser: baseBadge.
 			Background(p.AgentUser).
 			Foreground(p.FgInverse),
 
@@ -358,8 +358,8 @@ func NewSemanticStyles(t Theme) SemanticStyles {
 		styles.Selected = lipgloss.NewStyle().
 			Bold(true).
 			Reverse(true)
-		styles.TextWarning = styles.TextWarning.Copy().Underline(true)
-		styles.TextError = styles.TextError.Copy().Underline(true)
+		styles.TextWarning = styles.TextWarning.Underline(true)
+		styles.TextError = styles.TextError.Underline(true)
 	}
 
 	return styles

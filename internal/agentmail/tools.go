@@ -679,3 +679,30 @@ func (c *Client) UninstallPrecommitGuard(ctx context.Context, repoPath string) e
 	_, err := c.callTool(ctx, "uninstall_precommit_guard", args)
 	return err
 }
+
+// ForceReleaseReservation forcibly releases a stale reservation held by another agent.
+// The tool validates inactivity heuristics before allowing the release.
+// Optionally notifies the previous holder about the forced release.
+func (c *Client) ForceReleaseReservation(ctx context.Context, opts ForceReleaseOptions) (*ForceReleaseResult, error) {
+	args := map[string]interface{}{
+		"project_key":         opts.ProjectKey,
+		"agent_name":          opts.AgentName,
+		"file_reservation_id": opts.ReservationID,
+	}
+	if opts.Note != "" {
+		args["note"] = opts.Note
+	}
+	args["notify_previous"] = opts.NotifyPrevious
+
+	result, err := c.callTool(ctx, "force_release_file_reservation", args)
+	if err != nil {
+		return nil, err
+	}
+
+	var releaseResult ForceReleaseResult
+	if err := json.Unmarshal(result, &releaseResult); err != nil {
+		return nil, NewAPIError("force_release_file_reservation", 0, err)
+	}
+
+	return &releaseResult, nil
+}
