@@ -451,13 +451,14 @@ func renderHealthTUI(result *health.SessionHealth) error {
 	return nil
 }
 
-// truncateString truncates a string to maxLen with ellipsis if needed
+// truncateString truncates a string to maxLen runes with ellipsis if needed
 func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	if maxLen <= 3 {
-		return s[:maxLen]
+	if maxLen <= 1 {
+		return string(runes[:maxLen])
 	}
-	return s[:maxLen-1] + "…"
+	return string(runes[:maxLen-1]) + "…"
 }
