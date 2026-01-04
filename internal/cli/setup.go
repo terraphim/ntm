@@ -343,7 +343,15 @@ func ensureGitignoreEntry(gitignorePath, entry string) error {
 }
 
 // splitLines splits a string into lines, handling both Unix (\n) and Windows (\r\n) line endings.
+// Trailing newlines do not create empty elements; an empty string returns an empty slice.
 func splitLines(s string) []string {
+	if s == "" {
+		return []string{}
+	}
+	// Remove trailing newline to avoid empty last element
+	s = strings.TrimSuffix(s, "\n")
+	s = strings.TrimSuffix(s, "\r") // Handle lone \r at end
+
 	var lines []string
 	for _, line := range strings.Split(s, "\n") {
 		// Handle Windows line endings by trimming trailing \r
