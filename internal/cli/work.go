@@ -50,6 +50,8 @@ func newWorkTriageCmd() *cobra.Command {
 		limit      int
 		showQuick  bool
 		showHealth bool
+		format     string
+		compact    bool
 	)
 
 	cmd := &cobra.Command{
@@ -59,15 +61,21 @@ func newWorkTriageCmd() *cobra.Command {
 
 Results are cached for 30 seconds to prevent excessive bv calls.
 
+Format options:
+  --format=json      Full JSON output (default for Claude)
+  --format=markdown  Compact markdown (default for Codex/Gemini, 50% token savings)
+  --format=auto      Auto-select based on agent type
+
 Examples:
   ntm work triage              # Full triage with top recommendations
   ntm work triage --by-label   # Grouped by label
   ntm work triage --by-track   # Grouped by execution track
   ntm work triage --quick      # Just show quick wins
   ntm work triage --health     # Include project health metrics
-  ntm work triage --json       # Output as JSON`,
+  ntm work triage --json       # Output as JSON
+  ntm work triage --format=markdown --compact  # Ultra-compact markdown`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runWorkTriage(byLabel, byTrack, limit, showQuick, showHealth)
+			return runWorkTriage(byLabel, byTrack, limit, showQuick, showHealth, format, compact)
 		},
 	}
 
@@ -76,6 +84,8 @@ Examples:
 	cmd.Flags().IntVarP(&limit, "limit", "n", 10, "Maximum recommendations to show")
 	cmd.Flags().BoolVar(&showQuick, "quick", false, "Show only quick wins")
 	cmd.Flags().BoolVar(&showHealth, "health", false, "Include project health metrics")
+	cmd.Flags().StringVar(&format, "format", "", "Output format: json, markdown, or auto (default: auto for agents)")
+	cmd.Flags().BoolVar(&compact, "compact", false, "Use compact output (with --format=markdown)")
 
 	return cmd
 }
@@ -183,7 +193,7 @@ Examples:
 }
 
 // runWorkTriage executes the triage command
-func runWorkTriage(byLabel, byTrack bool, limit int, showQuick, showHealth bool) error {
+func runWorkTriage(byLabel, byTrack bool, limit int, showQuick, showHealth bool, format string, compact bool) error {
 	dir, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getting working directory: %w", err)
@@ -194,17 +204,53 @@ func runWorkTriage(byLabel, byTrack bool, limit int, showQuick, showHealth bool)
 		return runGroupedTriage(dir, byLabel, byTrack)
 	}
 
-	// Use cached triage
+	// Determine output format
+	outputFormat := resolveTriageFormat(format)
+
+	// Handle markdown output
+	if outputFormat == "markdown" {
+		opts := bv.DefaultMarkdownOptions()
+		if compact {
+			opts = bv.CompactMarkdownOptions()
+		}
+		opts.MaxRecommendations = limit
+		opts.IncludeScores = !compact
+
+		md, err := bv.GetTriageMarkdown(dir, opts)
+		if err != nil {
+			return fmt.Errorf("getting triage markdown: %w", err)
+		}
+		fmt.Print(md)
+		return nil
+	}
+
+	// Use cached triage for JSON/default output
 	triage, err := bv.GetTriage(dir)
 	if err != nil {
 		return fmt.Errorf("getting triage: %w", err)
 	}
 
-	if jsonOutput {
+	if jsonOutput || outputFormat == "json" {
 		return outputJSON(triage)
 	}
 
 	return renderTriage(triage, limit, showQuick, showHealth)
+}
+
+// resolveTriageFormat determines the output format based on flags and context.
+func resolveTriageFormat(format string) string {
+	switch strings.ToLower(format) {
+	case "json":
+		return "json"
+	case "markdown", "md":
+		return "markdown"
+	case "auto", "":
+		// Auto-detect based on context (could check agent type in future)
+		// For now, default to terminal rendering (not json or markdown)
+		return "terminal"
+	default:
+		return "terminal"
+	}
 }
 
 // runGroupedTriage runs bv with grouped output
