@@ -18,7 +18,7 @@ func newDepsCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "deps",
-		Aliases: []string{"check", "doctor"},
+		Aliases: []string{"check"},
 		Short:   "Check for required dependencies and agent CLIs",
 		Long: `Check that all required tools and AI agent CLIs are installed:
 
