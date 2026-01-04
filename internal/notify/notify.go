@@ -49,10 +49,16 @@ type Config struct {
 	Enabled bool     `toml:"enabled"`
 	Events  []string `toml:"events"` // Which events to notify on
 
-	Desktop DesktopConfig `toml:"desktop"`
-	Webhook WebhookConfig `toml:"webhook"`
-	Shell   ShellConfig   `toml:"shell"`
-	Log     LogConfig     `toml:"log"`
+	// Routing configuration (optional, for advanced routing)
+	Primary  string              `toml:"primary"`  // Primary channel name
+	Fallback string              `toml:"fallback"` // Fallback channel if primary fails
+	Routing  map[string][]string `toml:"routing"`  // Event type -> ordered channel list
+
+	Desktop  DesktopConfig  `toml:"desktop"`
+	Webhook  WebhookConfig  `toml:"webhook"`
+	Shell    ShellConfig    `toml:"shell"`
+	Log      LogConfig      `toml:"log"`
+	FileBox  FileBoxConfig  `toml:"filebox"` // File inbox for offline review
 }
 
 // DesktopConfig configures desktop notifications
@@ -83,11 +89,20 @@ type LogConfig struct {
 	Path    string `toml:"path"` // Log file path
 }
 
+// FileBoxConfig configures file inbox for offline human review
+type FileBoxConfig struct {
+	Enabled bool   `toml:"enabled"`
+	Path    string `toml:"path"` // Directory for inbox files (default: .ntm/human_inbox/)
+}
+
 // DefaultConfig returns a default notification configuration
 func DefaultConfig() Config {
 	return Config{
-		Enabled: true,
-		Events:  []string{string(EventAgentError), string(EventAgentCrashed)},
+		Enabled:  true,
+		Events:   []string{string(EventAgentError), string(EventAgentCrashed)},
+		Primary:  "desktop",
+		Fallback: "filebox",
+		Routing:  nil, // Use default (all enabled channels in parallel)
 		Desktop: DesktopConfig{
 			Enabled: true,
 			Title:   "NTM",
@@ -105,22 +120,53 @@ func DefaultConfig() Config {
 			Enabled: false,
 			Path:    "~/.config/ntm/notifications.log",
 		},
+		FileBox: FileBoxConfig{
+			Enabled: true,
+			Path:    ".ntm/human_inbox",
+		},
 	}
 }
+
+// ChannelName identifies a notification channel
+type ChannelName string
+
+const (
+	ChannelDesktop ChannelName = "desktop"
+	ChannelWebhook ChannelName = "webhook"
+	ChannelShell   ChannelName = "shell"
+	ChannelLog     ChannelName = "log"
+	ChannelFileBox ChannelName = "filebox"
+)
 
 // Notifier sends notifications through configured channels
 type Notifier struct {
 	config     Config
 	enabledSet map[EventType]bool
+	channels   map[ChannelName]bool // Which channels are enabled
 	mu         sync.Mutex
 	httpClient *http.Client
 }
 
+// expandEnvVars expands environment variables in a string (${VAR} or $VAR format)
+func expandEnvVars(s string) string {
+	return os.ExpandEnv(s)
+}
+
 // New creates a new Notifier with the given configuration
 func New(cfg Config) *Notifier {
+	// Expand environment variables in config values
+	cfg.Webhook.URL = expandEnvVars(cfg.Webhook.URL)
+	cfg.Shell.Command = expandEnvVars(cfg.Shell.Command)
+	cfg.Log.Path = expandEnvVars(cfg.Log.Path)
+	cfg.FileBox.Path = expandEnvVars(cfg.FileBox.Path)
+	for k, v := range cfg.Webhook.Headers {
+		cfg.Webhook.Headers[k] = expandEnvVars(v)
+	}
+
 	n := &Notifier{
 		config:     cfg,
 		enabledSet: make(map[EventType]bool),
+		channels:   make(map[ChannelName]bool),
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 
@@ -129,7 +175,76 @@ func New(cfg Config) *Notifier {
 		n.enabledSet[EventType(e)] = true
 	}
 
+	// Build set of enabled channels
+	if cfg.Desktop.Enabled {
+		n.channels[ChannelDesktop] = true
+	}
+	if cfg.Webhook.Enabled && cfg.Webhook.URL != "" {
+		n.channels[ChannelWebhook] = true
+	}
+	if cfg.Shell.Enabled && cfg.Shell.Command != "" {
+		n.channels[ChannelShell] = true
+	}
+	if cfg.Log.Enabled && cfg.Log.Path != "" {
+		n.channels[ChannelLog] = true
+	}
+	if cfg.FileBox.Enabled {
+		n.channels[ChannelFileBox] = true
+	}
+
 	return n
+}
+
+// sendToChannel sends an event to a specific channel
+func (n *Notifier) sendToChannel(ch ChannelName, event Event) error {
+	if !n.channels[ch] {
+		return fmt.Errorf("channel %s not enabled", ch)
+	}
+
+	switch ch {
+	case ChannelDesktop:
+		return n.sendDesktop(event)
+	case ChannelWebhook:
+		return n.sendWebhook(event)
+	case ChannelShell:
+		return n.sendShell(event)
+	case ChannelLog:
+		return n.sendLog(event)
+	case ChannelFileBox:
+		return n.sendFileBox(event)
+	default:
+		return fmt.Errorf("unknown channel: %s", ch)
+	}
+}
+
+// getChannelsForEvent returns the ordered list of channels for an event type
+func (n *Notifier) getChannelsForEvent(eventType EventType) []ChannelName {
+	// Check for routing rules first
+	if n.config.Routing != nil {
+		if channels, ok := n.config.Routing[string(eventType)]; ok && len(channels) > 0 {
+			result := make([]ChannelName, 0, len(channels))
+			for _, ch := range channels {
+				result = append(result, ChannelName(ch))
+			}
+			return result
+		}
+	}
+
+	// Fall back to primary/fallback if specified
+	if n.config.Primary != "" {
+		channels := []ChannelName{ChannelName(n.config.Primary)}
+		if n.config.Fallback != "" {
+			channels = append(channels, ChannelName(n.config.Fallback))
+		}
+		return channels
+	}
+
+	// Default: return all enabled channels
+	var channels []ChannelName
+	for ch := range n.channels {
+		channels = append(channels, ch)
+	}
+	return channels
 }
 
 // Notify sends a notification for the given event
@@ -148,13 +263,37 @@ func (n *Notifier) Notify(event Event) error {
 		event.Timestamp = time.Now().UTC()
 	}
 
+	// Get channels for this event type
+	channels := n.getChannelsForEvent(event.Type)
+	if len(channels) == 0 {
+		return nil
+	}
+
+	// If routing is configured, try channels in order (stop on first success)
+	if n.config.Routing != nil || n.config.Primary != "" {
+		var lastErr error
+		for _, ch := range channels {
+			if err := n.sendToChannel(ch, event); err != nil {
+				lastErr = err
+				continue
+			}
+			// Success on this channel
+			return nil
+		}
+		// All channels failed
+		if lastErr != nil {
+			return fmt.Errorf("all channels failed, last error: %w", lastErr)
+		}
+		return nil
+	}
+
+	// Default behavior: send through all enabled channels in parallel
 	var (
 		wg    sync.WaitGroup
 		errs  []error
 		errMu sync.Mutex
 	)
 
-	// Helper to collect errors safely
 	addErr := func(err error) {
 		if err != nil {
 			errMu.Lock()
@@ -163,43 +302,13 @@ func (n *Notifier) Notify(event Event) error {
 		}
 	}
 
-	// Send through each enabled channel in parallel
-	if n.config.Desktop.Enabled {
+	for _, ch := range channels {
+		ch := ch // Capture for goroutine
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := n.sendDesktop(event); err != nil {
-				addErr(fmt.Errorf("desktop: %w", err))
-			}
-		}()
-	}
-
-	if n.config.Webhook.Enabled && n.config.Webhook.URL != "" {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := n.sendWebhook(event); err != nil {
-				addErr(fmt.Errorf("webhook: %w", err))
-			}
-		}()
-	}
-
-	if n.config.Shell.Enabled && n.config.Shell.Command != "" {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := n.sendShell(event); err != nil {
-				addErr(fmt.Errorf("shell: %w", err))
-			}
-		}()
-	}
-
-	if n.config.Log.Enabled && n.config.Log.Path != "" {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := n.sendLog(event); err != nil {
-				addErr(fmt.Errorf("log: %w", err))
+			if err := n.sendToChannel(ch, event); err != nil {
+				addErr(fmt.Errorf("%s: %w", ch, err))
 			}
 		}()
 	}
@@ -398,6 +507,73 @@ func (n *Notifier) sendLog(event Event) error {
 
 	if _, err := fmt.Fprintln(f, line); err != nil {
 		return fmt.Errorf("failed to write to log: %w", err)
+	}
+
+	return nil
+}
+
+// sendFileBox creates a markdown file in the file inbox for offline human review
+func (n *Notifier) sendFileBox(event Event) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	path := n.config.FileBox.Path
+	if path == "" {
+		path = ".ntm/human_inbox"
+	}
+
+	// Expand ~ in path
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			path = filepath.Join(home, path[1:])
+		}
+	}
+
+	// Ensure directory exists
+	if err := os.MkdirAll(path, 0755); err != nil {
+		return fmt.Errorf("failed to create inbox directory: %w", err)
+	}
+
+	// Create filename with timestamp and event type
+	filename := fmt.Sprintf("%s_%s.md",
+		event.Timestamp.Format("2006-01-02_15-04-05"),
+		strings.ReplaceAll(string(event.Type), ".", "_"),
+	)
+	filePath := filepath.Join(path, filename)
+
+	// Format as markdown
+	var content strings.Builder
+	content.WriteString(fmt.Sprintf("# %s\n\n", event.Type))
+	content.WriteString(fmt.Sprintf("**Time:** %s\n\n", event.Timestamp.Format(time.RFC3339)))
+
+	if event.Session != "" {
+		content.WriteString(fmt.Sprintf("**Session:** %s\n\n", event.Session))
+	}
+	if event.Agent != "" {
+		content.WriteString(fmt.Sprintf("**Agent:** %s\n\n", event.Agent))
+	}
+	if event.Pane != "" {
+		content.WriteString(fmt.Sprintf("**Pane:** %s\n\n", event.Pane))
+	}
+
+	content.WriteString("## Message\n\n")
+	content.WriteString(event.Message)
+	content.WriteString("\n")
+
+	if len(event.Details) > 0 {
+		content.WriteString("\n## Details\n\n")
+		for k, v := range event.Details {
+			content.WriteString(fmt.Sprintf("- **%s:** %s\n", k, v))
+		}
+	}
+
+	content.WriteString("\n---\n")
+	content.WriteString("*This notification was saved for offline review.*\n")
+
+	// Write to file
+	if err := os.WriteFile(filePath, []byte(content.String()), 0644); err != nil {
+		return fmt.Errorf("failed to write inbox file: %w", err)
 	}
 
 	return nil
