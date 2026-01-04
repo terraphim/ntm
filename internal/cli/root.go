@@ -987,6 +987,7 @@ func init() {
 		newSafetyCmd(),
 		newPolicyCmd(),
 		newGuardsCmd(),
+		newSetupCmd(),
 		newActivityCmd(),
 		newHistoryCmd(),
 		newAnalyticsCmd(),
