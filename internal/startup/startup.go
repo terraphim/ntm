@@ -63,7 +63,9 @@ func BeginPhase1() {
 	global.phase1Start = time.Now()
 	global.phase1Time = 0
 	if profiler.IsEnabled() {
-		profiler.StartWithPhase("phase1_start", "startup")
+		// Create an instant marker span for phase1 start
+		span := profiler.StartWithPhase("phase1_start", "startup")
+		span.End()
 	}
 }
 
@@ -92,7 +94,9 @@ func BeginPhase2() {
 	global.phase2Start = time.Now()
 	global.phase2Time = 0
 	if profiler.IsEnabled() {
-		profiler.StartWithPhase("phase2_start", "deferred")
+		// Create an instant marker span for phase2 start
+		span := profiler.StartWithPhase("phase2_start", "deferred")
+		span.End()
 	}
 }
 
