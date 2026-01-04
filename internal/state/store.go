@@ -127,7 +127,7 @@ func (s *Store) GetSession(id string) (*Session, error) {
 
 	sess := &Session{}
 	err := s.db.QueryRow(`
-		SELECT id, name, project_path, created_at, status, config_snapshot, coordinator_agent
+		SELECT id, name, project_path, created_at, status, COALESCE(config_snapshot, ''), COALESCE(coordinator_agent, '')
 		FROM sessions WHERE id = ?`, id,
 	).Scan(&sess.ID, &sess.Name, &sess.ProjectPath, &sess.CreatedAt, &sess.Status, &sess.ConfigSnapshot, &sess.CoordinatorAgent)
 
@@ -171,11 +171,11 @@ func (s *Store) ListSessions(status string) ([]Session, error) {
 
 	if status == "" {
 		rows, err = s.db.Query(`
-			SELECT id, name, project_path, created_at, status, config_snapshot, coordinator_agent
+			SELECT id, name, project_path, created_at, status, COALESCE(config_snapshot, ''), COALESCE(coordinator_agent, '')
 			FROM sessions ORDER BY created_at DESC`)
 	} else {
 		rows, err = s.db.Query(`
-			SELECT id, name, project_path, created_at, status, config_snapshot, coordinator_agent
+			SELECT id, name, project_path, created_at, status, COALESCE(config_snapshot, ''), COALESCE(coordinator_agent, '')
 			FROM sessions WHERE status = ? ORDER BY created_at DESC`, status)
 	}
 
@@ -239,7 +239,7 @@ func (s *Store) GetAgent(id string) (*Agent, error) {
 
 	agent := &Agent{}
 	err := s.db.QueryRow(`
-		SELECT id, session_id, name, type, model, tmux_pane_id, last_seen, status, current_task_id, performance_data
+		SELECT id, session_id, name, type, COALESCE(model, ''), COALESCE(tmux_pane_id, ''), last_seen, status, COALESCE(current_task_id, ''), COALESCE(performance_data, '')
 		FROM agents WHERE id = ?`, id,
 	).Scan(&agent.ID, &agent.SessionID, &agent.Name, &agent.Type, &agent.Model, &agent.TmuxPaneID, &agent.LastSeen, &agent.Status, &agent.CurrentTaskID, &agent.PerformanceData)
 
@@ -259,7 +259,7 @@ func (s *Store) GetAgentByName(sessionID, name string) (*Agent, error) {
 
 	agent := &Agent{}
 	err := s.db.QueryRow(`
-		SELECT id, session_id, name, type, model, tmux_pane_id, last_seen, status, current_task_id, performance_data
+		SELECT id, session_id, name, type, COALESCE(model, ''), COALESCE(tmux_pane_id, ''), last_seen, status, COALESCE(current_task_id, ''), COALESCE(performance_data, '')
 		FROM agents WHERE session_id = ? AND name = ?`, sessionID, name,
 	).Scan(&agent.ID, &agent.SessionID, &agent.Name, &agent.Type, &agent.Model, &agent.TmuxPaneID, &agent.LastSeen, &agent.Status, &agent.CurrentTaskID, &agent.PerformanceData)
 
@@ -299,7 +299,7 @@ func (s *Store) ListAgents(sessionID string) ([]Agent, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(`
-		SELECT id, session_id, name, type, model, tmux_pane_id, last_seen, status, current_task_id, performance_data
+		SELECT id, session_id, name, type, COALESCE(model, ''), COALESCE(tmux_pane_id, ''), last_seen, status, COALESCE(current_task_id, ''), COALESCE(performance_data, '')
 		FROM agents WHERE session_id = ? ORDER BY name`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list agents: %w", err)
@@ -344,7 +344,7 @@ func (s *Store) GetTask(id string) (*Task, error) {
 
 	task := &Task{}
 	err := s.db.QueryRow(`
-		SELECT id, session_id, agent_id, bead_id, correlation_id, context_pack_id, status, created_at, assigned_at, completed_at, result
+		SELECT id, session_id, COALESCE(agent_id, ''), COALESCE(bead_id, ''), COALESCE(correlation_id, ''), COALESCE(context_pack_id, ''), status, created_at, assigned_at, completed_at, result
 		FROM tasks WHERE id = ?`, id,
 	).Scan(&task.ID, &task.SessionID, &task.AgentID, &task.BeadID, &task.CorrelationID, &task.ContextPackID, &task.Status, &task.CreatedAt, &task.AssignedAt, &task.CompletedAt, &task.Result)
 
@@ -364,7 +364,7 @@ func (s *Store) GetTaskByCorrelation(correlationID string) (*Task, error) {
 
 	task := &Task{}
 	err := s.db.QueryRow(`
-		SELECT id, session_id, agent_id, bead_id, correlation_id, context_pack_id, status, created_at, assigned_at, completed_at, result
+		SELECT id, session_id, COALESCE(agent_id, ''), COALESCE(bead_id, ''), COALESCE(correlation_id, ''), COALESCE(context_pack_id, ''), status, created_at, assigned_at, completed_at, result
 		FROM tasks WHERE correlation_id = ?`, correlationID,
 	).Scan(&task.ID, &task.SessionID, &task.AgentID, &task.BeadID, &task.CorrelationID, &task.ContextPackID, &task.Status, &task.CreatedAt, &task.AssignedAt, &task.CompletedAt, &task.Result)
 
@@ -408,11 +408,11 @@ func (s *Store) ListTasks(sessionID string, status string) ([]Task, error) {
 
 	if status == "" {
 		rows, err = s.db.Query(`
-			SELECT id, session_id, agent_id, bead_id, correlation_id, context_pack_id, status, created_at, assigned_at, completed_at, result
+			SELECT id, session_id, COALESCE(agent_id, ''), COALESCE(bead_id, ''), COALESCE(correlation_id, ''), COALESCE(context_pack_id, ''), status, created_at, assigned_at, completed_at, result
 			FROM tasks WHERE session_id = ? ORDER BY created_at DESC`, sessionID)
 	} else {
 		rows, err = s.db.Query(`
-			SELECT id, session_id, agent_id, bead_id, correlation_id, context_pack_id, status, created_at, assigned_at, completed_at, result
+			SELECT id, session_id, COALESCE(agent_id, ''), COALESCE(bead_id, ''), COALESCE(correlation_id, ''), COALESCE(context_pack_id, ''), status, created_at, assigned_at, completed_at, result
 			FROM tasks WHERE session_id = ? AND status = ? ORDER BY created_at DESC`, sessionID, status)
 	}
 
@@ -465,7 +465,7 @@ func (s *Store) GetReservation(id int64) (*Reservation, error) {
 
 	res := &Reservation{}
 	err := s.db.QueryRow(`
-		SELECT id, session_id, agent_id, path_pattern, exclusive, correlation_id, reason, expires_at, released_at, force_released_by
+		SELECT id, session_id, agent_id, path_pattern, exclusive, COALESCE(correlation_id, ''), COALESCE(reason, ''), expires_at, released_at, COALESCE(force_released_by, '')
 		FROM reservations WHERE id = ?`, id,
 	).Scan(&res.ID, &res.SessionID, &res.AgentID, &res.PathPattern, &res.Exclusive, &res.CorrelationID, &res.Reason, &res.ExpiresAt, &res.ReleasedAt, &res.ForceReleasedBy)
 
@@ -509,12 +509,12 @@ func (s *Store) ListReservations(sessionID string, activeOnly bool) ([]Reservati
 
 	if activeOnly {
 		rows, err = s.db.Query(`
-			SELECT id, session_id, agent_id, path_pattern, exclusive, correlation_id, reason, expires_at, released_at, force_released_by
+			SELECT id, session_id, agent_id, path_pattern, exclusive, COALESCE(correlation_id, ''), COALESCE(reason, ''), expires_at, released_at, COALESCE(force_released_by, '')
 			FROM reservations WHERE session_id = ? AND released_at IS NULL AND expires_at > ?
 			ORDER BY expires_at`, sessionID, time.Now())
 	} else {
 		rows, err = s.db.Query(`
-			SELECT id, session_id, agent_id, path_pattern, exclusive, correlation_id, reason, expires_at, released_at, force_released_by
+			SELECT id, session_id, agent_id, path_pattern, exclusive, COALESCE(correlation_id, ''), COALESCE(reason, ''), expires_at, released_at, COALESCE(force_released_by, '')
 			FROM reservations WHERE session_id = ? ORDER BY expires_at DESC`, sessionID)
 	}
 
@@ -541,7 +541,7 @@ func (s *Store) FindConflicts(sessionID, pattern string) ([]Reservation, error) 
 
 	// SQLite GLOB for pattern matching
 	rows, err := s.db.Query(`
-		SELECT id, session_id, agent_id, path_pattern, exclusive, correlation_id, reason, expires_at, released_at, force_released_by
+		SELECT id, session_id, agent_id, path_pattern, exclusive, COALESCE(correlation_id, ''), COALESCE(reason, ''), expires_at, released_at, COALESCE(force_released_by, '')
 		FROM reservations
 		WHERE session_id = ? AND exclusive = 1 AND released_at IS NULL AND expires_at > ?
 		AND (path_pattern = ? OR ? GLOB path_pattern OR path_pattern GLOB ?)
@@ -590,7 +590,7 @@ func (s *Store) GetApproval(id string) (*Approval, error) {
 
 	appr := &Approval{}
 	err := s.db.QueryRow(`
-		SELECT id, action, resource, reason, requested_by, correlation_id, requires_slb, created_at, expires_at, status, approved_by, approved_at, denied_reason
+		SELECT id, action, resource, COALESCE(reason, ''), requested_by, COALESCE(correlation_id, ''), requires_slb, created_at, expires_at, status, COALESCE(approved_by, ''), approved_at, COALESCE(denied_reason, '')
 		FROM approvals WHERE id = ?`, id,
 	).Scan(&appr.ID, &appr.Action, &appr.Resource, &appr.Reason, &appr.RequestedBy, &appr.CorrelationID, &appr.RequiresSLB, &appr.CreatedAt, &appr.ExpiresAt, &appr.Status, &appr.ApprovedBy, &appr.ApprovedAt, &appr.DeniedReason)
 
@@ -630,7 +630,7 @@ func (s *Store) ListPendingApprovals() ([]Approval, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(`
-		SELECT id, action, resource, reason, requested_by, correlation_id, requires_slb, created_at, expires_at, status, approved_by, approved_at, denied_reason
+		SELECT id, action, resource, COALESCE(reason, ''), requested_by, COALESCE(correlation_id, ''), requires_slb, created_at, expires_at, status, COALESCE(approved_by, ''), approved_at, COALESCE(denied_reason, '')
 		FROM approvals WHERE status = 'pending' AND expires_at > ?
 		ORDER BY created_at`, time.Now())
 
@@ -682,7 +682,7 @@ func (s *Store) GetToolHealth(tool string) (*ToolHealth, error) {
 
 	th := &ToolHealth{}
 	err := s.db.QueryRow(`
-		SELECT tool, version, capabilities, last_ok, last_error
+		SELECT tool, COALESCE(version, ''), COALESCE(capabilities, ''), last_ok, COALESCE(last_error, '')
 		FROM tool_health WHERE tool = ?`, tool,
 	).Scan(&th.Tool, &th.Version, &th.Capabilities, &th.LastOK, &th.LastError)
 
@@ -701,7 +701,7 @@ func (s *Store) ListToolHealth() ([]ToolHealth, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(`
-		SELECT tool, version, capabilities, last_ok, last_error
+		SELECT tool, COALESCE(version, ''), COALESCE(capabilities, ''), last_ok, COALESCE(last_error, '')
 		FROM tool_health ORDER BY tool`)
 	if err != nil {
 		return nil, fmt.Errorf("list tool health: %w", err)
@@ -746,7 +746,7 @@ func (s *Store) GetContextPack(id string) (*ContextPack, error) {
 
 	cp := &ContextPack{}
 	err := s.db.QueryRow(`
-		SELECT id, bead_id, agent_type, repo_rev, correlation_id, created_at, token_count, rendered_prompt
+		SELECT id, bead_id, agent_type, repo_rev, COALESCE(correlation_id, ''), created_at, COALESCE(token_count, 0), COALESCE(rendered_prompt, '')
 		FROM context_packs WHERE id = ?`, id,
 	).Scan(&cp.ID, &cp.BeadID, &cp.AgentType, &cp.RepoRev, &cp.CorrelationID, &cp.CreatedAt, &cp.TokenCount, &cp.RenderedPrompt)
 
@@ -805,7 +805,7 @@ func (s *Store) ListEvents(sessionID string, limit int) ([]EventLogEntry, error)
 	}
 
 	rows, err := s.db.Query(`
-		SELECT id, session_id, event_type, event_data, correlation_id, created_at
+		SELECT id, COALESCE(session_id, ''), event_type, event_data, COALESCE(correlation_id, ''), created_at
 		FROM event_log WHERE session_id = ?
 		ORDER BY id DESC LIMIT ?`, sessionID, limit)
 	if err != nil {
@@ -830,7 +830,7 @@ func (s *Store) ReplayEvents(sessionID string, fromID int64, handler func(EventL
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(`
-		SELECT id, session_id, event_type, event_data, correlation_id, created_at
+		SELECT id, COALESCE(session_id, ''), event_type, event_data, COALESCE(correlation_id, ''), created_at
 		FROM event_log WHERE session_id = ? AND id > ?
 		ORDER BY id ASC`, sessionID, fromID)
 	if err != nil {
