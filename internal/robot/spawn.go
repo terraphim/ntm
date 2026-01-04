@@ -76,7 +76,7 @@ func PrintSpawn(opts SpawnOptions, cfg *config.Config) error {
 
 	// Safety check: fail if session already exists (when --spawn-safety is enabled)
 	if opts.Safety && tmux.SessionExists(opts.Session) {
-		output.Error = fmt.Sprintf("session '%s' already exists (--spawn-safety mode prevents reuse)", opts.Session)
+		output.Error = fmt.Sprintf("session '%s' already exists (--spawn-safety mode prevents reuse; use 'ntm kill %s' first)", opts.Session, opts.Session)
 		return encodeJSON(output)
 	}
 
