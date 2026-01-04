@@ -659,7 +659,7 @@ func RenderAlertsList(alerts []AlertInfo) string {
 		if len(grouped[sev]) == 0 {
 			continue
 		}
-		fmt.Fprintf(&b, "### %s\n", strings.Title(sev))
+		fmt.Fprintf(&b, "### %s\n", capitalize(sev))
 		for _, a := range grouped[sev] {
 			loc := strings.TrimSpace(strings.Join([]string{a.Session, a.Pane}, " "))
 			if loc != "" {
@@ -678,7 +678,7 @@ func RenderAlertsList(alerts []AlertInfo) string {
 	}
 	sort.Strings(others)
 	for _, sev := range others {
-		fmt.Fprintf(&b, "### %s\n", strings.Title(sev))
+		fmt.Fprintf(&b, "### %s\n", capitalize(sev))
 		for _, a := range grouped[sev] {
 			fmt.Fprintf(&b, "- [%s] %s\n", a.Type, a.Message)
 		}

@@ -91,7 +91,7 @@ func getSchemaTypes() []string {
 func generateSchema(v interface{}, name string) *JSONSchema {
 	schema := &JSONSchema{
 		Schema:      "http://json-schema.org/draft-07/schema#",
-		Title:       fmt.Sprintf("NTM %s Output", strings.Title(name)),
+		Title:       fmt.Sprintf("NTM %s Output", capitalize(name)),
 		Type:        "object",
 		Properties:  make(map[string]*JSONSchema),
 		Definitions: make(map[string]*JSONSchema),

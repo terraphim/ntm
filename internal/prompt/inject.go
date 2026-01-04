@@ -166,10 +166,15 @@ func InjectFiles(specs []FileSpec, prompt string) (string, error) {
 		lang := codeblock.DetectLanguage(spec.Path)
 		header := fmt.Sprintf("# File: %s", spec.Path)
 		if spec.StartLine > 0 || spec.EndLine > 0 {
+			// Display 1 instead of 0 for StartLine since file lines are 1-indexed
+			displayStart := spec.StartLine
+			if displayStart == 0 {
+				displayStart = 1
+			}
 			if spec.EndLine > 0 {
-				header += fmt.Sprintf(" (lines %d-%d)", spec.StartLine, spec.EndLine)
+				header += fmt.Sprintf(" (lines %d-%d)", displayStart, spec.EndLine)
 			} else {
-				header += fmt.Sprintf(" (from line %d)", spec.StartLine)
+				header += fmt.Sprintf(" (from line %d)", displayStart)
 			}
 		}
 
