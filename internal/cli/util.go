@@ -268,9 +268,15 @@ func SanitizeFilename(name string) string {
 // ResolveCassContext queries CASS for relevant past sessions based on a query string
 // and returns a formatted markdown summary.
 func ResolveCassContext(query, dir string) (string, error) {
+	// Use active config or fall back to defaults
+	activeCfg := cfg
+	if activeCfg == nil {
+		activeCfg = config.Default()
+	}
+
 	var opts []cass.ClientOption
-	if cfg != nil && cfg.CASS.BinaryPath != "" {
-		opts = append(opts, cass.WithBinaryPath(cfg.CASS.BinaryPath))
+	if activeCfg.CASS.BinaryPath != "" {
+		opts = append(opts, cass.WithBinaryPath(activeCfg.CASS.BinaryPath))
 	}
 	client := cass.NewClient(opts...)
 	if !client.IsInstalled() {
@@ -278,13 +284,13 @@ func ResolveCassContext(query, dir string) (string, error) {
 	}
 
 	// Search
-	limit := cfg.CASS.Context.MaxSessions
+	limit := activeCfg.CASS.Context.MaxSessions
 	if limit <= 0 {
 		limit = 3
 	}
 
-	since := fmt.Sprintf("%dd", cfg.CASS.Context.LookbackDays)
-	if cfg.CASS.Context.LookbackDays <= 0 {
+	since := fmt.Sprintf("%dd", activeCfg.CASS.Context.LookbackDays)
+	if activeCfg.CASS.Context.LookbackDays <= 0 {
 		since = "30d"
 	}
 
