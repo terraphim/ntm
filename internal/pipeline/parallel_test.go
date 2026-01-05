@@ -334,14 +334,6 @@ func TestErrorActionFailFast_Constant(t *testing.T) {
 	}
 }
 
-// Helper for creating test steps
-func makeTestStep(id string, prompt string) Step {
-	return Step{
-		ID:     id,
-		Prompt: prompt,
-	}
-}
-
 // Test that parallel steps with conditions are evaluated correctly
 func TestExecuteParallelStep_WithCondition(t *testing.T) {
 	t.Parallel()

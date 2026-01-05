@@ -21,7 +21,6 @@ type Server struct {
 	eventBus   *events.EventBus
 	stateStore *state.Store
 	server     *http.Server
-	mu         sync.Mutex // For server-level synchronization (rate limiting, config updates, etc.)
 
 	// SSE clients
 	sseClients   map[chan events.BusEvent]struct{}

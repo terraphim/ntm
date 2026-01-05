@@ -94,9 +94,8 @@ type SlideState struct {
 	revealDone  bool
 
 	// Interactive state
-	focusIndex    int
-	selectedItems []int
-	expanded      bool
+	focusIndex int
+	expanded   bool
 
 	// Diagram animation
 	diagramStep int
@@ -400,12 +399,6 @@ func (m *Model) restartSlideAnimation() {
 	state.revealDone = false
 	state.diagramStep = 0
 	state.diagramDone = false
-}
-
-func (m *Model) spawnParticles(x, y int, count int, ptype ParticleType) {
-	for i := 0; i < count; i++ {
-		m.particles = append(m.particles, NewParticle(x, y, ptype))
-	}
 }
 
 func transitionDuration(t TransitionType) int {

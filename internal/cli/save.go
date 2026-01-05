@@ -136,13 +136,13 @@ func runSave(w io.Writer, session, outputDir string, lines int, filter AgentFilt
 		outputPath := filepath.Join(outputDir, filename)
 
 		// Add header to file
-		header := fmt.Sprintf("═══════════════════════════════════════════════════════════════\n")
+		header := "═══════════════════════════════════════════════════════════════\n"
 		header += fmt.Sprintf("Session: %s\n", session)
 		header += fmt.Sprintf("Pane: %s (index %d)\n", p.Title, p.Index)
 		header += fmt.Sprintf("Command: %s\n", p.Command)
 		header += fmt.Sprintf("Captured: %s\n", time.Now().Format(time.RFC3339))
 		header += fmt.Sprintf("Lines: %d\n", lines)
-		header += fmt.Sprintf("═══════════════════════════════════════════════════════════════\n\n")
+		header += "═══════════════════════════════════════════════════════════════\n\n"
 
 		content := header + output
 

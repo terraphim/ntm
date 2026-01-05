@@ -302,7 +302,7 @@ func runForceRelease(session string, reservationID int, note string, notify, ski
 			enc.SetIndent("", "  ")
 			return enc.Encode(result)
 		}
-		return fmt.Errorf("Agent Mail server unavailable")
+		return fmt.Errorf("agent mail server unavailable")
 	}
 
 	// Confirmation prompt (unless skipped or JSON mode)
@@ -453,7 +453,7 @@ func runRenewLocks(session string, extendMinutes int) error {
 			enc.SetIndent("", "  ")
 			return enc.Encode(result)
 		}
-		return fmt.Errorf("Agent Mail server unavailable")
+		return fmt.Errorf("agent mail server unavailable")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

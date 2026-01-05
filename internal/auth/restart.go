@@ -96,9 +96,9 @@ func (o *Orchestrator) TerminateSession(paneID string, provider string) error {
 }
 
 var shellPromptRegexps = []*regexp.Regexp{
-	regexp.MustCompile("\\$\\s*$"), // bash prompt
-	regexp.MustCompile("%\\s*$"),   // zsh prompt
-	regexp.MustCompile(">\\s*$"),   // generic prompt
+	regexp.MustCompile(`\$\s*$`), // bash prompt
+	regexp.MustCompile(`%\s*$`),  // zsh prompt
+	regexp.MustCompile(`>\s*$`),  // generic prompt
 }
 
 // WaitForShellPrompt waits until the pane shows a shell prompt

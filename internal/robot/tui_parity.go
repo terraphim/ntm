@@ -650,10 +650,7 @@ func PrintReplay(opts ReplayOptions) error {
 	} else {
 		// Execute the replay by calling send logic
 		// Build pane filter from original targets
-		var paneFilter []string
-		for _, t := range target.Targets {
-			paneFilter = append(paneFilter, t)
-		}
+		paneFilter := append([]string{}, target.Targets...)
 
 		sendOpts := SendOptions{
 			Session: target.Session,

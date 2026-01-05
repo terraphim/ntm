@@ -152,7 +152,7 @@ func (a *AMAdapter) HealthCheck(ctx context.Context) (json.RawMessage, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("Agent Mail server not responding: %w", err)
+		return nil, fmt.Errorf("agent mail server not responding: %w", err)
 	}
 	defer resp.Body.Close()
 

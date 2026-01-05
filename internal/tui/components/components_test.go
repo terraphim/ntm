@@ -169,7 +169,7 @@ func TestRenderExample(t *testing.T) {
 func TestNewBox(t *testing.T) {
 	box := NewBox()
 	if box == nil {
-		t.Error("NewBox should return non-nil box")
+		t.Fatal("NewBox should return non-nil box")
 	}
 	if box.Style != BoxRounded {
 		t.Error("NewBox should default to BoxRounded")
@@ -452,7 +452,7 @@ func TestNewList(t *testing.T) {
 	}
 	list := NewList(items)
 	if list == nil {
-		t.Error("NewList should return non-nil list")
+		t.Fatal("NewList should return non-nil list")
 	}
 	if len(list.Items) != 2 {
 		t.Error("NewList should have 2 items")
@@ -1503,12 +1503,7 @@ func TestRenderStateAlignmentModes(t *testing.T) {
 			Width:   40,
 			Align:   1, // lipgloss.Center
 		})
-		// Center-aligned should not have the left indent prefix
-		lines := strings.Split(out, "\n")
-		if len(lines) > 0 && strings.HasPrefix(lines[0], "  ") {
-			// May or may not have leading space depending on centering
-			// Just verify it rendered
-		}
+		// Center-aligned rendering should produce non-empty output
 		if out == "" {
 			t.Error("center-aligned RenderState should render")
 		}
