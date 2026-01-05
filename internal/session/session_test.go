@@ -504,3 +504,140 @@ func TestSanitize_Roundtrip(t *testing.T) {
 		})
 	}
 }
+
+// --- Session Recovery Helper Tests ---
+
+func TestGetAgentCommand(t *testing.T) {
+	t.Parallel()
+
+	cmds := AgentCommands{
+		Claude: "claude --flag",
+		Codex:  "codex-cli run",
+		Gemini: "gemini start",
+	}
+
+	tests := []struct {
+		agentType string
+		want      string
+	}{
+		{"cc", "claude --flag"},
+		{"claude", "claude --flag"},
+		{"cod", "codex-cli run"},
+		{"codex", "codex-cli run"},
+		{"gmi", "gemini start"},
+		{"gemini", "gemini start"},
+		{"unknown", ""},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.agentType, func(t *testing.T) {
+			t.Parallel()
+			got := getAgentCommand(tt.agentType, cmds)
+			if got != tt.want {
+				t.Errorf("getAgentCommand(%q) = %q, want %q", tt.agentType, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldCreateDir(t *testing.T) {
+	// Cannot run in parallel due to home directory dependency
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot get home directory")
+	}
+
+	tests := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{
+			name: "two levels under home",
+			path: filepath.Join(home, "Developer", "project"),
+			want: true,
+		},
+		{
+			name: "three levels under home",
+			path: filepath.Join(home, "Developer", "org", "project"),
+			want: true,
+		},
+		{
+			name: "one level under home",
+			path: filepath.Join(home, "project"),
+			want: false,
+		},
+		{
+			name: "home itself",
+			path: home,
+			want: false,
+		},
+		{
+			name: "root",
+			path: "/",
+			want: false,
+		},
+		{
+			name: "outside home",
+			path: "/tmp/project",
+			want: false,
+		},
+		{
+			name: "etc dir",
+			path: "/etc/something",
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldCreateDir(tt.path)
+			if got != tt.want {
+				t.Errorf("shouldCreateDir(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+// --- RestoreOptions and SaveOptions Tests ---
+
+func TestRestoreOptions_Defaults(t *testing.T) {
+	t.Parallel()
+
+	opts := RestoreOptions{}
+
+	// Verify defaults
+	if opts.Name != "" {
+		t.Errorf("RestoreOptions.Name default = %q, want empty", opts.Name)
+	}
+	if opts.SkipGitCheck {
+		t.Errorf("RestoreOptions.SkipGitCheck default = true, want false")
+	}
+	if opts.Force {
+		t.Errorf("RestoreOptions.Force default = true, want false")
+	}
+}
+
+func TestSaveOptions_Defaults(t *testing.T) {
+	t.Parallel()
+
+	opts := SaveOptions{}
+
+	// Verify defaults
+	if opts.Name != "" {
+		t.Errorf("SaveOptions.Name default = %q, want empty", opts.Name)
+	}
+	if opts.Overwrite {
+		t.Errorf("SaveOptions.Overwrite default = true, want false")
+	}
+	if opts.IncludeGit {
+		t.Errorf("SaveOptions.IncludeGit default = true, want false")
+	}
+	if opts.Description != "" {
+		t.Errorf("SaveOptions.Description default = %q, want empty", opts.Description)
+	}
+}
