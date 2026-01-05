@@ -226,6 +226,9 @@ func (e *Executor) executeWorkflow(ctx context.Context, workflow *Workflow) erro
 
 			// Handle failure based on error action
 			if result.Status == StatusFailed {
+				// Mark step as failed in dependency graph
+				_ = e.graph.MarkFailed(stepID)
+
 				onError := step.OnError
 				if onError == "" {
 					onError = workflow.Settings.OnError
@@ -238,7 +241,7 @@ func (e *Executor) executeWorkflow(ctx context.Context, workflow *Workflow) erro
 				case ErrorActionFail:
 					return fmt.Errorf("step %s failed: %s", stepID, result.Error.Message)
 				case ErrorActionContinue:
-					// Continue to next step
+					// Continue to next step, dependents will be skipped
 				case ErrorActionRetry:
 					// Retry is handled within executeStep
 				}
@@ -256,6 +259,16 @@ func (e *Executor) executeStep(ctx context.Context, step *Step, workflow *Workfl
 		Status:    StatusPending,
 		StartedAt: time.Now(),
 		Attempts:  0,
+	}
+
+	// Check for failed dependencies (in CONTINUE mode, skip steps with failed deps)
+	if e.graph.HasFailedDependency(step.ID) {
+		failedDeps := e.graph.GetFailedDependencies(step.ID)
+		result.Status = StatusSkipped
+		result.SkipReason = fmt.Sprintf("dependency failed: %v", failedDeps)
+		result.FinishedAt = time.Now()
+		e.emitProgress("step_skip", step.ID, result.SkipReason, e.calculateProgress())
+		return result
 	}
 
 	// Check conditional execution
@@ -448,9 +461,11 @@ func (e *Executor) executeStepOnce(ctx context.Context, step *Step, workflow *Wo
 			} else {
 				result.Status = StatusFailed
 				result.Error = &StepError{
-					Type:      "timeout",
-					Message:   fmt.Sprintf("timeout waiting for completion: %v", err),
-					Timestamp: time.Now(),
+					Type:       "timeout",
+					Message:    fmt.Sprintf("timeout waiting for completion: %v", err),
+					PaneOutput: e.captureErrorContext(paneID, 50),
+					AgentState: e.detectAgentState(paneID),
+					Timestamp:  time.Now(),
 				}
 			}
 			result.FinishedAt = time.Now()
@@ -793,9 +808,11 @@ func (e *Executor) executeParallelStep(ctx context.Context, step *Step, workflow
 			} else {
 				result.Status = StatusFailed
 				result.Error = &StepError{
-					Type:      "timeout",
-					Message:   fmt.Sprintf("timeout waiting for completion: %v", err),
-					Timestamp: time.Now(),
+					Type:       "timeout",
+					Message:    fmt.Sprintf("timeout waiting for completion: %v", err),
+					PaneOutput: e.captureErrorContext(paneID, 50),
+					AgentState: e.detectAgentState(paneID),
+					Timestamp:  time.Now(),
 				}
 			}
 			result.FinishedAt = time.Now()
@@ -808,9 +825,11 @@ func (e *Executor) executeParallelStep(ctx context.Context, step *Step, workflow
 	if err != nil {
 		result.Status = StatusFailed
 		result.Error = &StepError{
-			Type:      "capture",
-			Message:   fmt.Sprintf("failed to capture output: %v", err),
-			Timestamp: time.Now(),
+			Type:       "capture",
+			Message:    fmt.Sprintf("failed to capture output: %v", err),
+			PaneOutput: e.captureErrorContext(paneID, 50),
+			AgentState: e.detectAgentState(paneID),
+			Timestamp:  time.Now(),
 		}
 		result.FinishedAt = time.Now()
 		return result
@@ -1185,6 +1204,34 @@ func truncatePrompt(s string, n int) string {
 // GetState returns the current execution state (for monitoring)
 func (e *Executor) GetState() *ExecutionState {
 	return e.state
+}
+
+// captureErrorContext captures recent pane output for error debugging
+func (e *Executor) captureErrorContext(paneID string, lines int) string {
+	if paneID == "" || e.config.DryRun {
+		return ""
+	}
+	output, err := tmux.CapturePaneOutput(paneID, lines)
+	if err != nil {
+		return ""
+	}
+	// Truncate to reasonable size
+	if len(output) > 2000 {
+		output = output[len(output)-2000:]
+	}
+	return output
+}
+
+// detectAgentState detects the current agent state for error context
+func (e *Executor) detectAgentState(paneID string) string {
+	if paneID == "" || e.config.DryRun {
+		return ""
+	}
+	state, err := e.detector.Detect(paneID)
+	if err != nil {
+		return "unknown"
+	}
+	return string(state.State)
 }
 
 // Validate validates a workflow without executing it

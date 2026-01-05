@@ -467,3 +467,112 @@ func TestDependencyError_Error(t *testing.T) {
 		t.Errorf("expected error message, got %q", msg)
 	}
 }
+
+func TestDependencyGraph_MarkFailed(t *testing.T) {
+	t.Parallel()
+
+	w := &Workflow{
+		Steps: []Step{
+			{ID: "a", Prompt: "step a"},
+			{ID: "b", Prompt: "step b", DependsOn: []string{"a"}},
+		},
+	}
+
+	g := NewDependencyGraph(w)
+
+	// Initially not failed
+	if g.IsFailed("a") {
+		t.Error("a should not be failed initially")
+	}
+
+	// Mark as failed
+	if err := g.MarkFailed("a"); err != nil {
+		t.Fatalf("failed to mark step as failed: %v", err)
+	}
+
+	if !g.IsFailed("a") {
+		t.Error("a should be failed after marking")
+	}
+
+	// Mark nonexistent should error
+	if err := g.MarkFailed("nonexistent"); err == nil {
+		t.Error("expected error for nonexistent step")
+	}
+}
+
+func TestDependencyGraph_HasFailedDependency(t *testing.T) {
+	t.Parallel()
+
+	w := &Workflow{
+		Steps: []Step{
+			{ID: "a", Prompt: "step a"},
+			{ID: "b", Prompt: "step b", DependsOn: []string{"a"}},
+			{ID: "c", Prompt: "step c", DependsOn: []string{"b"}},
+			{ID: "d", Prompt: "step d"}, // No deps
+		},
+	}
+
+	g := NewDependencyGraph(w)
+
+	// Initially no failed deps
+	if g.HasFailedDependency("b") {
+		t.Error("b should not have failed dependency initially")
+	}
+
+	// Mark a as failed
+	g.MarkFailed("a")
+
+	// b should have failed dependency
+	if !g.HasFailedDependency("b") {
+		t.Error("b should have failed dependency after a fails")
+	}
+
+	// c doesn't directly depend on a, but depends on b
+	if g.HasFailedDependency("c") {
+		t.Error("c should not have failed dependency (only checks direct deps)")
+	}
+
+	// d has no deps
+	if g.HasFailedDependency("d") {
+		t.Error("d should not have failed dependency")
+	}
+}
+
+func TestDependencyGraph_GetFailedDependencies(t *testing.T) {
+	t.Parallel()
+
+	w := &Workflow{
+		Steps: []Step{
+			{ID: "a", Prompt: "step a"},
+			{ID: "b", Prompt: "step b"},
+			{ID: "c", Prompt: "step c", DependsOn: []string{"a", "b"}},
+		},
+	}
+
+	g := NewDependencyGraph(w)
+
+	// Initially empty
+	failed := g.GetFailedDependencies("c")
+	if len(failed) != 0 {
+		t.Errorf("expected 0 failed deps, got %d", len(failed))
+	}
+
+	// Mark a as failed
+	g.MarkFailed("a")
+
+	failed = g.GetFailedDependencies("c")
+	if len(failed) != 1 {
+		t.Errorf("expected 1 failed dep, got %d", len(failed))
+	}
+	if failed[0] != "a" {
+		t.Errorf("expected failed dep 'a', got %q", failed[0])
+	}
+
+	// Mark b as failed too
+	g.MarkFailed("b")
+
+	failed = g.GetFailedDependencies("c")
+	if len(failed) != 2 {
+		t.Errorf("expected 2 failed deps, got %d", len(failed))
+	}
+}

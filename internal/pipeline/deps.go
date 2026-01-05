@@ -12,6 +12,7 @@ type DependencyGraph struct {
 	reverse  map[string][]string // step ID -> steps that depend on it
 	inDegree map[string]int      // step ID -> number of dependencies
 	executed map[string]bool     // step ID -> has been executed
+	failed   map[string]bool     // step ID -> has failed (for CONTINUE mode)
 }
 
 // DependencyError represents an error in the dependency graph
@@ -41,6 +42,7 @@ func NewDependencyGraph(workflow *Workflow) *DependencyGraph {
 		reverse:  make(map[string][]string),
 		inDegree: make(map[string]int),
 		executed: make(map[string]bool),
+		failed:   make(map[string]bool),
 	}
 
 	// Add all steps including parallel sub-steps
@@ -298,6 +300,41 @@ func (g *DependencyGraph) MarkExecuted(id string) error {
 // IsExecuted returns whether a step has been executed
 func (g *DependencyGraph) IsExecuted(id string) bool {
 	return g.executed[id]
+}
+
+// MarkFailed marks a step as failed (for CONTINUE mode dependency tracking)
+func (g *DependencyGraph) MarkFailed(id string) error {
+	if _, exists := g.steps[id]; !exists {
+		return fmt.Errorf("step %q not found", id)
+	}
+	g.failed[id] = true
+	return nil
+}
+
+// IsFailed returns whether a step has failed
+func (g *DependencyGraph) IsFailed(id string) bool {
+	return g.failed[id]
+}
+
+// HasFailedDependency returns true if any of the step's dependencies failed
+func (g *DependencyGraph) HasFailedDependency(id string) bool {
+	for _, dep := range g.edges[id] {
+		if g.failed[dep] {
+			return true
+		}
+	}
+	return false
+}
+
+// GetFailedDependencies returns the list of failed dependencies for a step
+func (g *DependencyGraph) GetFailedDependencies(id string) []string {
+	var failed []string
+	for _, dep := range g.edges[id] {
+		if g.failed[dep] {
+			failed = append(failed, dep)
+		}
+	}
+	return failed
 }
 
 // GetStep returns a step by ID
