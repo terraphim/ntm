@@ -2,6 +2,7 @@ package cli
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bufio"
 	"compress/gzip"
 	"encoding/json"
@@ -139,19 +140,23 @@ func runUpgrade(checkOnly, force, yes bool) error {
 	}
 
 	// Find the appropriate asset for this platform
-	assetName := getAssetName()
+	// Try the versioned archive name first (e.g., ntm_1.4.1_darwin_all.tar.gz)
+	archiveAssetName := getArchiveAssetName(latestVersion)
+	binaryAssetName := getAssetName() // e.g., ntm_darwin_all
+
 	var asset *GitHubAsset
 	for i := range release.Assets {
-		if release.Assets[i].Name == assetName || release.Assets[i].Name == assetName+".tar.gz" {
+		// Exact match for versioned archive (preferred)
+		if release.Assets[i].Name == archiveAssetName {
 			asset = &release.Assets[i]
 			break
 		}
 	}
 
 	if asset == nil {
-		// Try without extension (raw binary)
+		// Try raw binary name (without version)
 		for i := range release.Assets {
-			if strings.HasPrefix(release.Assets[i].Name, assetName) {
+			if release.Assets[i].Name == binaryAssetName {
 				asset = &release.Assets[i]
 				break
 			}
@@ -159,8 +164,20 @@ func runUpgrade(checkOnly, force, yes bool) error {
 	}
 
 	if asset == nil {
-		return fmt.Errorf("no suitable release asset found for %s/%s\nAvailable assets: %v",
-			runtime.GOOS, runtime.GOARCH, getAssetNames(release.Assets))
+		// Try prefix matching as fallback (e.g., for arm variants like armv7)
+		for i := range release.Assets {
+			name := release.Assets[i].Name
+			if strings.HasPrefix(name, binaryAssetName) ||
+				strings.HasPrefix(name, fmt.Sprintf("ntm_%s_%s", latestVersion, runtime.GOOS)) {
+				asset = &release.Assets[i]
+				break
+			}
+		}
+	}
+
+	if asset == nil {
+		return fmt.Errorf("no suitable release asset found for %s/%s\nExpected: %s or %s\nAvailable assets: %v",
+			runtime.GOOS, runtime.GOARCH, archiveAssetName, binaryAssetName, getAssetNames(release.Assets))
 	}
 
 	fmt.Printf("  Download: %s (%s)\n", asset.Name, formatSize(asset.Size))
@@ -198,11 +215,19 @@ func runUpgrade(checkOnly, force, yes bool) error {
 	}
 	fmt.Println(successStyle.Render("✓"))
 
-	// Extract if it's a tar.gz
+	// Extract if it's an archive
 	var binaryPath string
 	if strings.HasSuffix(asset.Name, ".tar.gz") {
 		fmt.Print("  Extracting... ")
 		binaryPath, err = extractTarGz(downloadPath, tempDir)
+		if err != nil {
+			fmt.Println(errorStyle.Render("✗"))
+			return fmt.Errorf("failed to extract: %w", err)
+		}
+		fmt.Println(successStyle.Render("✓"))
+	} else if strings.HasSuffix(asset.Name, ".zip") {
+		fmt.Print("  Extracting... ")
+		binaryPath, err = extractZip(downloadPath, tempDir)
 		if err != nil {
 			fmt.Println(errorStyle.Render("✗"))
 			return fmt.Errorf("failed to extract: %w", err)
@@ -272,9 +297,30 @@ func fetchLatestRelease() (*GitHubRelease, error) {
 	return &release, nil
 }
 
-// getAssetName returns the expected asset name for the current platform
+// getAssetName returns the expected asset name prefix for the current platform
+// GoReleaser uses underscore separators and creates universal binaries for macOS
 func getAssetName() string {
-	return fmt.Sprintf("ntm-%s-%s", runtime.GOOS, runtime.GOARCH)
+	arch := runtime.GOARCH
+	// macOS uses universal binary ("all") that works on both amd64 and arm64
+	if runtime.GOOS == "darwin" {
+		arch = "all"
+	}
+	return fmt.Sprintf("ntm_%s_%s", runtime.GOOS, arch)
+}
+
+// getArchiveAssetName returns the expected archive asset name for a given version
+// Archive format: ntm_VERSION_OS_ARCH.tar.gz (or .zip for Windows)
+func getArchiveAssetName(version string) string {
+	arch := runtime.GOARCH
+	// macOS uses universal binary ("all") that works on both amd64 and arm64
+	if runtime.GOOS == "darwin" {
+		arch = "all"
+	}
+	ext := "tar.gz"
+	if runtime.GOOS == "windows" {
+		ext = "zip"
+	}
+	return fmt.Sprintf("ntm_%s_%s_%s.%s", version, runtime.GOOS, arch, ext)
 }
 
 // getAssetNames returns a list of asset names for debugging
@@ -361,6 +407,69 @@ func extractTarGz(archivePath, destDir string) (string, error) {
 				return "", err
 			}
 			outFile.Close()
+		}
+	}
+
+	if binaryPath == "" {
+		return "", fmt.Errorf("ntm binary not found in archive")
+	}
+
+	return binaryPath, nil
+}
+
+// extractZip extracts a zip file and returns the path to the ntm binary
+func extractZip(archivePath, destDir string) (string, error) {
+	r, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return "", err
+	}
+	defer r.Close()
+
+	var binaryPath string
+	binaryName := "ntm"
+	if runtime.GOOS == "windows" {
+		binaryName = "ntm.exe"
+	}
+
+	for _, f := range r.File {
+		target := filepath.Join(destDir, f.Name)
+		// Check for Zip Slip vulnerability
+		if !strings.HasPrefix(target, filepath.Clean(destDir)+string(os.PathSeparator)) {
+			return "", fmt.Errorf("illegal file path in archive: %s", f.Name)
+		}
+
+		if f.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return "", err
+			}
+			continue
+		}
+
+		// Check if this is the ntm binary
+		if f.Name == binaryName || filepath.Base(f.Name) == binaryName {
+			binaryPath = target
+		}
+
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return "", err
+		}
+
+		outFile, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR|os.O_TRUNC, f.Mode())
+		if err != nil {
+			return "", err
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			outFile.Close()
+			return "", err
+		}
+
+		_, err = io.Copy(outFile, rc)
+		rc.Close()
+		outFile.Close()
+		if err != nil {
+			return "", err
 		}
 	}
 
