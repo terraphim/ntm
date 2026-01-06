@@ -273,8 +273,8 @@ func legacyDashNames(targetOS, targetArch, version string) []string {
 }
 
 func findUpgradeAsset(assets []GitHubAsset, targetOS, targetArch, version string, strict bool) (*assetMatch, []string) {
-	archiveAssetName := getArchiveAssetName(version)
-	binaryAssetName := getAssetName()
+	archiveAssetName := archiveAssetNameFor(version, targetOS, targetArch)
+	binaryAssetName := assetNameFor(targetOS, targetArch)
 
 	tried := []string{archiveAssetName, binaryAssetName}
 
@@ -290,8 +290,9 @@ func findUpgradeAsset(assets []GitHubAsset, targetOS, targetArch, version string
 		return nil, tried
 	}
 
-	tried = append(tried, binaryAssetName+"*", fmt.Sprintf("ntm_%s_%s*", version, targetOS))
-	if match := matchPrefix(assets, binaryAssetName, version, targetOS); match != nil {
+	arch := normalizedArch(targetOS, targetArch)
+	tried = append(tried, binaryAssetName+"*", fmt.Sprintf("ntm_%s_%s_%s*", version, targetOS, arch))
+	if match := matchPrefix(assets, binaryAssetName, version, targetOS, targetArch); match != nil {
 		return match, tried
 	}
 
@@ -337,8 +338,9 @@ func matchExactBinary(assets []GitHubAsset, binaryName string) *assetMatch {
 	return nil
 }
 
-func matchPrefix(assets []GitHubAsset, binaryName, version, targetOS string) *assetMatch {
-	versionPrefix := fmt.Sprintf("ntm_%s_%s", version, targetOS)
+func matchPrefix(assets []GitHubAsset, binaryName, version, targetOS, targetArch string) *assetMatch {
+	arch := normalizedArch(targetOS, targetArch)
+	versionPrefix := fmt.Sprintf("ntm_%s_%s_%s", version, targetOS, arch)
 	for i := range assets {
 		baseName := trimAssetExt(assets[i].Name)
 		if strings.HasPrefix(baseName, binaryName) || strings.HasPrefix(baseName, versionPrefix) {
@@ -357,6 +359,10 @@ func matchSameOS(assets []GitHubAsset, targetOS, targetArch string) *assetMatch 
 	candidates := archCandidates(targetOS, targetArch)
 	for _, arch := range candidates {
 		for i := range assets {
+			baseName := trimAssetExt(assets[i].Name)
+			if strings.HasPrefix(baseName, "ntm-") {
+				continue
+			}
 			info := parseAssetInfo(assets[i].Name, targetOS, targetArch, "")
 			if info.OS == targetOS && info.Arch == arch {
 				reason := fmt.Sprintf("same OS, compatible arch (%s)", arch)
@@ -531,7 +537,6 @@ func runUpgrade(checkOnly, force, yes, strict, verbose bool) error {
 	// Find the appropriate asset for this platform
 	// Try the versioned archive name first (e.g., ntm_1.4.1_darwin_all.tar.gz)
 	archiveAssetName := getArchiveAssetName(latestVersion)
-	binaryAssetName := getAssetName() // e.g., ntm_darwin_all
 
 	match, triedNames := findUpgradeAsset(release.Assets, runtime.GOOS, runtime.GOARCH, latestVersion, strict)
 	if match == nil {
@@ -767,16 +772,7 @@ func fetchLatestRelease() (*GitHubRelease, error) {
 //
 // See CONTRIBUTING.md "Release Infrastructure" section for full documentation.
 func getAssetName() string {
-	arch := runtime.GOARCH
-	// macOS uses universal binary ("all") that works on both amd64 and arm64
-	if runtime.GOOS == "darwin" {
-		arch = "all"
-	}
-	// 32-bit ARM uses "armv7" suffix (GoReleaser builds with goarm=7)
-	if runtime.GOARCH == "arm" {
-		arch = "armv7"
-	}
-	return fmt.Sprintf("ntm_%s_%s", runtime.GOOS, arch)
+	return assetNameFor(runtime.GOOS, runtime.GOARCH)
 }
 
 // getArchiveAssetName returns the expected archive asset name for a given version.
@@ -789,20 +785,34 @@ func getAssetName() string {
 //
 // See CONTRIBUTING.md "Release Infrastructure" section for full documentation.
 func getArchiveAssetName(version string) string {
-	arch := runtime.GOARCH
+	return archiveAssetNameFor(version, runtime.GOOS, runtime.GOARCH)
+}
+
+func assetNameFor(targetOS, targetArch string) string {
+	arch := normalizedArch(targetOS, targetArch)
+	return fmt.Sprintf("ntm_%s_%s", targetOS, arch)
+}
+
+func archiveAssetNameFor(version, targetOS, targetArch string) string {
+	arch := normalizedArch(targetOS, targetArch)
+	ext := "tar.gz"
+	if targetOS == "windows" {
+		ext = "zip"
+	}
+	return fmt.Sprintf("ntm_%s_%s_%s.%s", version, targetOS, arch, ext)
+}
+
+func normalizedArch(targetOS, targetArch string) string {
+	arch := targetArch
 	// macOS uses universal binary ("all") that works on both amd64 and arm64
-	if runtime.GOOS == "darwin" {
+	if targetOS == "darwin" {
 		arch = "all"
 	}
 	// 32-bit ARM uses "armv7" suffix (GoReleaser builds with goarm=7)
-	if runtime.GOARCH == "arm" {
+	if targetArch == "arm" {
 		arch = "armv7"
 	}
-	ext := "tar.gz"
-	if runtime.GOOS == "windows" {
-		ext = "zip"
-	}
-	return fmt.Sprintf("ntm_%s_%s_%s.%s", version, runtime.GOOS, arch, ext)
+	return arch
 }
 
 // progressWriter wraps an io.Writer and reports download progress

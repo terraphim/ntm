@@ -921,6 +921,17 @@ func TestParseAssetInfo(t *testing.T) {
 			wantVersion:   "1.4.2",
 			wantMatch:     "exact",
 		},
+		{
+			name:          "legacy_dash_match",
+			assetName:     "ntm-1.4.1-darwin-arm64.tar.gz",
+			targetOS:      "darwin",
+			targetArch:    "arm64",
+			targetVersion: "1.4.1",
+			wantOS:        "darwin",
+			wantArch:      "arm64",
+			wantVersion:   "1.4.1",
+			wantMatch:     "exact",
+		},
 	}
 
 	for _, tt := range tests {
@@ -940,6 +951,55 @@ func TestParseAssetInfo(t *testing.T) {
 				t.Errorf("Match = %q, want %q", info.Match, tt.wantMatch)
 			}
 		})
+	}
+}
+
+func TestFindUpgradeAsset_StrictBlocksFallback(t *testing.T) {
+	assets := []GitHubAsset{
+		{Name: "ntm_1.4.1_darwin_amd64.tar.gz"},
+		{Name: "ntm_1.4.1_linux_amd64.tar.gz"},
+	}
+
+	match, tried := findUpgradeAsset(assets, "darwin", "arm64", "1.4.1", true)
+	if match != nil {
+		t.Fatalf("expected no match in strict mode, got %s", match.Strategy)
+	}
+	if len(tried) == 0 {
+		t.Fatalf("expected tried names to be populated")
+	}
+}
+
+func TestFindUpgradeAsset_FuzzySameOSPrefersArm64(t *testing.T) {
+	assets := []GitHubAsset{
+		{Name: "ntm_1.4.1_darwin_amd64.tar.gz"},
+		{Name: "ntm_1.4.1_darwin_arm64.tar.gz"},
+		{Name: "ntm_1.4.1_linux_amd64.tar.gz"},
+	}
+
+	match, _ := findUpgradeAsset(assets, "darwin", "arm64", "1.4.1", false)
+	if match == nil {
+		t.Fatal("expected a match")
+	}
+	if match.Asset.Name != "ntm_1.4.1_darwin_arm64.tar.gz" {
+		t.Fatalf("expected arm64 asset, got %s", match.Asset.Name)
+	}
+	if match.Strategy != "fuzzy_same_os" && match.Strategy != "exact_archive" {
+		t.Fatalf("unexpected strategy: %s", match.Strategy)
+	}
+}
+
+func TestFindUpgradeAsset_LegacyDashFallback(t *testing.T) {
+	assets := []GitHubAsset{
+		{Name: "ntm-1.4.1-darwin-arm64.tar.gz"},
+		{Name: "checksums.txt"},
+	}
+
+	match, _ := findUpgradeAsset(assets, "darwin", "arm64", "1.4.1", false)
+	if match == nil {
+		t.Fatal("expected a match for legacy dash asset")
+	}
+	if match.Strategy != "legacy_dash" {
+		t.Fatalf("expected legacy_dash strategy, got %s", match.Strategy)
 	}
 }
 
@@ -1499,20 +1559,20 @@ func TestVerifyChecksum(t *testing.T) {
 func TestFetchChecksumsParser(t *testing.T) {
 	// Note: fetchChecksums requires network access, so we test the parsing logic
 	// by examining the expected format and behavior.
-	
+
 	// The function parses lines in the format:
 	// "<sha256hash>  <filename>" (BSD-style with two spaces)
 	// "<sha256hash> <filename>"  (GNU-style with one space)
-	
+
 	t.Run("format documentation", func(t *testing.T) {
 		// This test documents the expected checksums.txt format
 		// GoReleaser generates checksums.txt with BSD-style format:
 		// sha256hash  filename
-		
+
 		// Example content:
 		// abc123...  ntm_1.4.1_darwin_all.tar.gz
 		// def456...  ntm_1.4.1_linux_amd64.tar.gz
-		
+
 		// The parser should handle both formats
 		t.Log("fetchChecksums parses GoReleaser checksums.txt format")
 	})
@@ -1527,7 +1587,7 @@ func TestProgressWriter(t *testing.T) {
 			total:      100,
 			startTime:  time.Now(),
 			lastUpdate: time.Now().Add(-time.Second), // Force immediate update
-			isTTY:      false, // Disable TTY output for test
+			isTTY:      false,                        // Disable TTY output for test
 		}
 
 		data := []byte("hello")

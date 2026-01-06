@@ -627,3 +627,35 @@ func TestDependencyGraph_TransitiveFailure(t *testing.T) {
 		t.Errorf("expected c's failed deps to be [b], got %v", failedDeps)
 	}
 }
+
+func TestDependencyGraph_ExecutedCount(t *testing.T) {
+	t.Parallel()
+
+	w := &Workflow{
+		Steps: []Step{
+			{ID: "a", Prompt: "step a"},
+			{ID: "b", Prompt: "step b"},
+			{ID: "c", Prompt: "step c"},
+		},
+	}
+
+	g := NewDependencyGraph(w)
+
+	// Initially 0 executed
+	if count := g.ExecutedCount(); count != 0 {
+		t.Errorf("ExecutedCount() = %d, want 0", count)
+	}
+
+	// Mark a as executed
+	g.MarkExecuted("a")
+	if count := g.ExecutedCount(); count != 1 {
+		t.Errorf("ExecutedCount() = %d, want 1", count)
+	}
+
+	// Mark b and c as executed
+	g.MarkExecuted("b")
+	g.MarkExecuted("c")
+	if count := g.ExecutedCount(); count != 3 {
+		t.Errorf("ExecutedCount() = %d, want 3", count)
+	}
+}
