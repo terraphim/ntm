@@ -53,6 +53,7 @@ type Executor struct {
 	detector status.Detector
 	router   *robot.Router
 	scorer   *robot.AgentScorer
+	notifier *Notifier
 
 	// Runtime state (reset per execution)
 	state    *ExecutionState
@@ -71,6 +72,11 @@ func NewExecutor(config ExecutorConfig) *Executor {
 		router:   robot.NewRouter(),
 		scorer:   robot.NewAgentScorer(robot.DefaultRoutingConfig()),
 	}
+}
+
+// SetNotifier sets the notifier for sending notifications on workflow events.
+func (e *Executor) SetNotifier(n *Notifier) {
+	e.notifier = n
 }
 
 // Run executes a workflow with the given initial variables.
@@ -150,6 +156,7 @@ func (e *Executor) Run(ctx context.Context, workflow *Workflow, vars map[string]
 	if err != nil {
 		if ctx.Err() == context.Canceled {
 			e.state.Status = StatusCancelled
+			e.sendNotification(ctx, workflow, NotifyCancelled)
 		} else if ctx.Err() == context.DeadlineExceeded {
 			e.state.Status = StatusFailed
 			e.state.Errors = append(e.state.Errors, ExecutionError{
@@ -158,12 +165,15 @@ func (e *Executor) Run(ctx context.Context, workflow *Workflow, vars map[string]
 				Timestamp: time.Now(),
 				Fatal:     true,
 			})
+			e.sendNotification(ctx, workflow, NotifyFailed)
 		} else {
 			e.state.Status = StatusFailed
+			e.sendNotification(ctx, workflow, NotifyFailed)
 		}
 		e.emitProgress("workflow_error", "", err.Error(), e.calculateProgress())
 	} else {
 		e.state.Status = StatusCompleted
+		e.sendNotification(ctx, workflow, NotifyCompleted)
 		e.emitProgress("workflow_complete", "", "Workflow completed successfully", 1.0)
 	}
 
@@ -256,6 +266,7 @@ func (e *Executor) Resume(ctx context.Context, workflow *Workflow, prior *Execut
 	if err != nil {
 		if ctx.Err() == context.Canceled {
 			e.state.Status = StatusCancelled
+			e.sendNotification(ctx, workflow, NotifyCancelled)
 		} else if ctx.Err() == context.DeadlineExceeded {
 			e.state.Status = StatusFailed
 			e.state.Errors = append(e.state.Errors, ExecutionError{
@@ -264,12 +275,15 @@ func (e *Executor) Resume(ctx context.Context, workflow *Workflow, prior *Execut
 				Timestamp: time.Now(),
 				Fatal:     true,
 			})
+			e.sendNotification(ctx, workflow, NotifyFailed)
 		} else {
 			e.state.Status = StatusFailed
+			e.sendNotification(ctx, workflow, NotifyFailed)
 		}
 		e.emitProgress("workflow_error", "", err.Error(), e.calculateProgress())
 	} else {
 		e.state.Status = StatusCompleted
+		e.sendNotification(ctx, workflow, NotifyCompleted)
 		e.emitProgress("workflow_complete", "", "Workflow completed successfully", 1.0)
 	}
 
@@ -683,6 +697,9 @@ func (e *Executor) executeParallel(ctx context.Context, step *Step, workflow *Wo
 	usedPanes := make(map[string]bool)
 	var panesMu sync.Mutex
 
+	// Semaphore to limit concurrency (max 8 parallel steps)
+	sem := make(chan struct{}, 8)
+
 	for i, pStep := range step.Parallel {
 		wg.Add(1)
 		go func(idx int, ps Step) {
@@ -706,8 +723,10 @@ func (e *Executor) executeParallel(ctx context.Context, step *Step, workflow *Wo
 				e.persistState()
 				mu.Unlock()
 				return
-			default:
+			case sem <- struct{}{}: // Acquire token
+				// Continue execution
 			}
+			defer func() { <-sem }() // Release token
 
 			// Execute the step with pane coordination
 			pResult := e.executeParallelStep(parallelCtx, &ps, workflow, usedPanes, &panesMu)
@@ -1301,6 +1320,23 @@ func (e *Executor) emitProgress(eventType, stepID, message string, progress floa
 	default:
 		// Don't block if channel is full
 	}
+}
+
+// sendNotification sends a notification if configured and appropriate for the event.
+func (e *Executor) sendNotification(ctx context.Context, workflow *Workflow, event NotificationEvent) {
+	if e.notifier == nil {
+		return
+	}
+	if !ShouldNotify(workflow.Settings, event) {
+		return
+	}
+
+	payload := BuildPayloadFromState(e.state, workflow, event)
+	// Use a short timeout context to avoid blocking workflow completion
+	notifyCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// Ignore errors - notifications are best-effort
+	_ = e.notifier.Notify(notifyCtx, payload)
 }
 
 // truncatePrompt truncates a prompt for display, respecting UTF-8 boundaries.
