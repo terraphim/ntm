@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Dicklesworthstone/ntm/internal/status"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 )
 
@@ -99,35 +100,6 @@ type HealthSummary struct {
 	Warning int `json:"warning"` // Agents with warning status
 	Error   int `json:"error"`   // Agents with error status
 	Unknown int `json:"unknown"` // Agents with unknown status
-}
-
-// Error patterns for detection
-var errorPatterns = []struct {
-	Pattern *regexp.Regexp
-	Type    string
-	Message string
-}{
-	{regexp.MustCompile(`(?i)rate.?limit`), "rate_limit", "Rate limit detected"},
-	{regexp.MustCompile(`(?i)429`), "rate_limit", "HTTP 429 rate limit"},
-	{regexp.MustCompile(`(?i)too.?many.?requests`), "rate_limit", "Too many requests"},
-	{regexp.MustCompile(`(?i)quota.?exceeded`), "rate_limit", "Quota exceeded"},
-	{regexp.MustCompile(`(?i)authentication.?(failed|error)`), "auth_error", "Authentication error"},
-	{regexp.MustCompile(`(?i)(^|\s)401(\s|$)`), "auth_error", "HTTP 401 unauthorized"},
-	{regexp.MustCompile(`(?i)unauthorized`), "auth_error", "Unauthorized access"},
-	{regexp.MustCompile(`(?i)panic:`), "crash", "Panic detected"},
-	{regexp.MustCompile(`(?i)fatal.?error`), "crash", "Fatal error detected"},
-	{regexp.MustCompile(`(?i)segmentation.?fault`), "crash", "Segmentation fault"},
-	{regexp.MustCompile(`(?i)stack.?trace`), "crash", "Stack trace detected"},
-	{regexp.MustCompile(`(?i)connection.?(refused|reset|timeout)`), "network_error", "Connection error"},
-	{regexp.MustCompile(`(?i)network.?(error|unreachable)`), "network_error", "Network error"},
-}
-
-// Prompt patterns for idle detection
-var idlePromptPatterns = []string{
-	"claude>", "claude >", "Claude>", "Claude >",
-	"codex>", "codex >", "Codex>", "Codex >",
-	"gemini>", "gemini >", "Gemini>", "Gemini >",
-	"> ", "$ ", "% ", "# ", ">>> ",
 }
 
 // CheckSession performs health checks on all agents in a session
@@ -223,7 +195,7 @@ func checkAgent(pa tmux.PaneActivity) AgentHealth {
 	}
 
 	// Determine activity level
-	agent.Activity = detectActivity(output, pa.LastActivity, pa.Pane.Title)
+	agent.Activity = detectActivity(output, pa.LastActivity, string(pa.Pane.Type))
 
 	// Determine process status
 	agent.ProcessStatus = detectProcessStatus(output, pa.Pane.Command)
@@ -240,18 +212,36 @@ func checkAgent(pa tmux.PaneActivity) AgentHealth {
 // detectErrors scans output for error patterns
 func detectErrors(output string) []Issue {
 	var issues []Issue
-	seen := make(map[string]bool)
+	errorTypes := status.DetectAllErrorsInOutput(output)
 
-	for _, ep := range errorPatterns {
-		if ep.Pattern.MatchString(output) {
-			if !seen[ep.Type] {
-				issues = append(issues, Issue{
-					Type:    ep.Type,
-					Message: ep.Message,
-				})
-				seen[ep.Type] = true
-			}
+	for _, et := range errorTypes {
+		var typeStr string
+		var message string
+
+		switch et {
+		case status.ErrorRateLimit:
+			typeStr = "rate_limit"
+			message = "Rate limit detected"
+		case status.ErrorCrash:
+			typeStr = "crash"
+			message = "Agent crashed"
+		case status.ErrorAuth:
+			typeStr = "auth_error"
+			message = "Authentication error"
+		case status.ErrorConnection:
+			typeStr = "network_error"
+			message = "Network error"
+		case status.ErrorGeneric:
+			typeStr = "error"
+			message = "Error detected"
+		default:
+			continue
 		}
+
+		issues = append(issues, Issue{
+			Type:    typeStr,
+			Message: message,
+		})
 	}
 
 	return issues
@@ -431,7 +421,7 @@ func dedupeIndicators(indicators []string) []string {
 }
 
 // detectActivity determines the activity level of an agent
-func detectActivity(output string, lastActivity time.Time, title string) ActivityLevel {
+func detectActivity(output string, lastActivity time.Time, agentType string) ActivityLevel {
 	// Check last activity timestamp
 	// If lastActivity is zero (not set), we can't determine idle time reliably
 	var idleTime time.Duration
@@ -442,24 +432,8 @@ func detectActivity(output string, lastActivity time.Time, title string) Activit
 		idleTime = time.Since(lastActivity)
 	}
 
-	// Check for idle prompt
-	lines := strings.Split(output, "\n")
-	hasIdlePrompt := false
-	for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		for _, prompt := range idlePromptPatterns {
-			if strings.HasSuffix(line, prompt) || line == strings.TrimSpace(prompt) {
-				hasIdlePrompt = true
-				break
-			}
-		}
-		if hasIdlePrompt {
-			break
-		}
-	}
+	// Check for idle prompt using status package
+	hasIdlePrompt := status.DetectIdleFromOutput(output, agentType)
 
 	// Determine activity level
 	// If we don't have reliable timing (idleTime == 0 from zero lastActivity),

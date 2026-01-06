@@ -206,6 +206,8 @@ type StepError struct {
 type ExecutionState struct {
 	RunID       string                 `json:"run_id"`
 	WorkflowID  string                 `json:"workflow_id"`
+	WorkflowFile string                `json:"workflow_file,omitempty"`
+	Session     string                 `json:"session,omitempty"`
 	Status      ExecutionStatus        `json:"status"`
 	StartedAt   time.Time              `json:"started_at"`
 	UpdatedAt   time.Time              `json:"updated_at"`

@@ -302,6 +302,17 @@ func (g *DependencyGraph) IsExecuted(id string) bool {
 	return g.executed[id]
 }
 
+// ExecutedCount returns the number of executed steps.
+func (g *DependencyGraph) ExecutedCount() int {
+	count := 0
+	for _, done := range g.executed {
+		if done {
+			count++
+		}
+	}
+	return count
+}
+
 // MarkFailed marks a step as failed (for CONTINUE mode dependency tracking)
 func (g *DependencyGraph) MarkFailed(id string) error {
 	if _, exists := g.steps[id]; !exists {

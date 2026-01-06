@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"regexp"
@@ -23,6 +24,8 @@ import (
 // ExecutorConfig configures the executor behavior
 type ExecutorConfig struct {
 	Session          string        // Required: tmux session name
+	ProjectDir       string        // Optional: project root for .ntm state
+	WorkflowFile     string        // Optional: workflow file path for state persistence
 	DefaultTimeout   time.Duration // Default step timeout (default: 5m)
 	GlobalTimeout    time.Duration // Maximum workflow runtime (default: 30m)
 	ProgressInterval time.Duration // Interval for progress updates (default: 1s)
@@ -92,14 +95,16 @@ func (e *Executor) Run(ctx context.Context, workflow *Workflow, vars map[string]
 		runID = generateRunID()
 	}
 	e.state = &ExecutionState{
-		RunID:      runID,
-		WorkflowID: workflow.Name,
-		Status:     StatusRunning,
-		StartedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-		Steps:      make(map[string]StepResult),
-		Variables:  make(map[string]interface{}),
-		Errors:     []ExecutionError{},
+		RunID:        runID,
+		WorkflowID:   workflow.Name,
+		WorkflowFile: e.config.WorkflowFile,
+		Session:      e.config.Session,
+		Status:       StatusRunning,
+		StartedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+		Steps:        make(map[string]StepResult),
+		Variables:    make(map[string]interface{}),
+		Errors:       []ExecutionError{},
 	}
 	e.progress = progress
 
@@ -113,6 +118,8 @@ func (e *Executor) Run(ctx context.Context, workflow *Workflow, vars map[string]
 		e.state.Variables[name] = val
 	}
 
+	e.persistState()
+
 	// Build dependency graph
 	e.graph = NewDependencyGraph(workflow)
 	if errors := e.graph.Validate(); len(errors) > 0 {
@@ -125,6 +132,7 @@ func (e *Executor) Run(ctx context.Context, workflow *Workflow, vars map[string]
 				Fatal:     true,
 			})
 		}
+		e.persistState()
 		return e.state, fmt.Errorf("workflow has dependency errors: %v", errors[0])
 	}
 
@@ -158,6 +166,8 @@ func (e *Executor) Run(ctx context.Context, workflow *Workflow, vars map[string]
 		e.emitProgress("workflow_complete", "", "Workflow completed successfully", 1.0)
 	}
 
+	e.persistState()
+
 	return e.state, err
 }
 
@@ -184,11 +194,7 @@ func (e *Executor) executeWorkflow(ctx context.Context, workflow *Workflow) erro
 		ready := e.graph.GetReadySteps()
 		if len(ready) == 0 {
 			// Check if all steps are executed
-			executed := 0
-			for range e.state.Steps {
-				executed++
-			}
-			if executed >= totalSteps {
+			if e.graph.ExecutedCount() >= totalSteps {
 				break // All done
 			}
 			// No ready steps but not all executed - something is wrong
@@ -229,6 +235,9 @@ func (e *Executor) executeWorkflow(ctx context.Context, workflow *Workflow) erro
 			if err := e.graph.MarkExecuted(stepID); err != nil {
 				return fmt.Errorf("failed to mark step %s as executed: %w", stepID, err)
 			}
+
+			e.state.UpdatedAt = time.Now()
+			e.persistState()
 
 			// Mark skipped steps as failed ONLY if skipped due to failed dependencies.
 			// This ensures transitive dependents are also skipped (A fails -> B skipped -> C skipped).
@@ -586,6 +595,8 @@ func (e *Executor) executeParallel(ctx context.Context, step *Step, workflow *Wo
 				e.stateMu.Lock()
 				e.state.Steps[ps.ID] = results[idx]
 				e.stateMu.Unlock()
+				e.state.UpdatedAt = time.Now()
+				e.persistState()
 				mu.Unlock()
 				return
 			default:
@@ -599,6 +610,8 @@ func (e *Executor) executeParallel(ctx context.Context, step *Step, workflow *Wo
 			e.stateMu.Lock()
 			e.state.Steps[ps.ID] = pResult
 			e.stateMu.Unlock()
+			e.state.UpdatedAt = time.Now()
+			e.persistState()
 
 			// Handle fail_fast: cancel remaining steps on first error
 			if pResult.Status == StatusFailed && onError == ErrorActionFailFast {

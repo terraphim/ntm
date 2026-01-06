@@ -55,6 +55,8 @@ Examples:
 		newPipelineStatusCmd(),
 		newPipelineListCmd(),
 		newPipelineCancelCmd(),
+		newPipelineResumeCmd(),
+		newPipelineCleanupCmd(),
 		newPipelineExecCmd(), // Backward-compatible stage-based execution
 	)
 

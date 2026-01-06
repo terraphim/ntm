@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Dicklesworthstone/ntm/internal/persona"
@@ -252,18 +253,5 @@ func TestGenerateTransitionPrompt(t *testing.T) {
 }
 
 func containsString(haystack, needle string) bool {
-	return len(haystack) > 0 && len(needle) > 0 &&
-		(haystack == needle || len(haystack) > len(needle) &&
-		(haystack[:len(needle)] == needle ||
-		 haystack[len(haystack)-len(needle):] == needle ||
-		 containsSubstring(haystack, needle)))
-}
-
-func containsSubstring(s, substr string) bool {
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(haystack, needle)
 }

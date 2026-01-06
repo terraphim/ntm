@@ -83,24 +83,26 @@ func TestDetectProgress(t *testing.T) {
 func TestDetectActivity(t *testing.T) {
 	// With timestamp
 	now := time.Now()
-	active := detectActivity("output", now.Add(-10*time.Second), "title")
+	active := detectActivity("output", now.Add(-10*time.Second), "user")
 	if active != ActivityActive {
 		t.Errorf("Expected Active for recent output, got %v", active)
 	}
 
-	stale := detectActivity("output", now.Add(-10*time.Minute), "title")
+	stale := detectActivity("output", now.Add(-10*time.Minute), "user")
 	if stale != ActivityStale {
 		t.Errorf("Expected Stale for old output, got %v", stale)
 	}
 
 	// Without timestamp (rely on prompt)
-	idle := detectActivity("claude>", time.Time{}, "title")
+	// Use ">" which is a generic prompt pattern
+	idle := detectActivity("> ", time.Time{}, "user")
 	if idle != ActivityIdle {
 		t.Errorf("Expected Idle for prompt without timestamp, got %v", idle)
 	}
 
 	// Recent timestamp but prompt visible -> Idle (new behavior)
-	idleWithTime := detectActivity("claude>", now.Add(-5*time.Second), "title")
+	// Use "cc" agent type for claude prompt
+	idleWithTime := detectActivity("claude>", now.Add(-5*time.Second), "cc")
 	if idleWithTime != ActivityIdle {
 		t.Errorf("Expected Idle for prompt with recent timestamp, got %v", idleWithTime)
 	}

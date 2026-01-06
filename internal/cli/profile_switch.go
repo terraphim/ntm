@@ -106,7 +106,6 @@ func runProfileSwitch(agentID, newProfileName, sessionName, customPrompt string,
 		if len(sessions) == 0 {
 			return outputProfileSwitchError(agentID, "", newProfileName, fmt.Errorf("no tmux sessions found"))
 		}
-		// Use the first session (could improve to detect most relevant)
 		sessionName = sessions[0].Name
 	}
 
