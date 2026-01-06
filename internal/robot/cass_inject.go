@@ -822,13 +822,19 @@ func formatMinimal(hits []ScoredHit) string {
 
 	b.WriteString("// Related context:\n")
 
+	itemsWritten := 0
 	for _, hit := range hits {
 		if hit.Content != "" {
 			// Extract just code snippets if present
 			content := extractCodeSnippets(hit.Content)
 			if content != "" {
+				// Add a separator marker between items (used by countInjectedItems)
+				if itemsWritten > 0 {
+					b.WriteString("\n// ---\n")
+				}
 				b.WriteString(content)
 				b.WriteString("\n")
+				itemsWritten++
 			}
 		}
 	}
@@ -864,8 +870,9 @@ func formatStructured(hits []ScoredHit) string {
 
 		if hit.Content != "" {
 			b.WriteString("   Content:\n")
-			// Indent content lines
-			lines := strings.Split(hit.Content, "\n")
+			// Clean and indent content lines (limit to 10 lines, 120 chars per line)
+			content := cleanContentForMarkdown(hit.Content)
+			lines := strings.Split(content, "\n")
 			for _, line := range lines {
 				if strings.TrimSpace(line) != "" {
 					b.WriteString("   | ")
@@ -882,13 +889,18 @@ func formatStructured(hits []ScoredHit) string {
 
 // extractSessionName extracts a readable session name from the file path.
 func extractSessionName(path string) string {
-	// Get the filename without extension
-	parts := strings.Split(path, "/")
-	if len(parts) == 0 {
-		return "unknown"
+	if path == "" {
+		return ""
 	}
 
+	// Get the filename without extension
+	parts := strings.Split(path, "/")
 	filename := parts[len(parts)-1]
+
+	// Handle empty filename (e.g., path ending with /)
+	if filename == "" {
+		return ""
+	}
 
 	// Remove common extensions
 	filename = strings.TrimSuffix(filename, ".jsonl")
@@ -1015,12 +1027,13 @@ func countInjectedItems(context string, format InjectionFormat) int {
 		}
 		return count
 	default:
-		// FormatMinimal doesn't have clear item boundaries
-		// Estimate based on content presence
+		// FormatMinimal uses "// ---" separators between items
+		// Count separators + 1 (if there's content) to get item count
 		if strings.TrimSpace(context) == "" || context == "// Related context:\n" {
 			return 0
 		}
-		return 1 // At least one item if there's content
+		separators := strings.Count(context, "// ---")
+		return separators + 1
 	}
 }
 
