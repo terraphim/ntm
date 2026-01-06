@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -128,7 +129,7 @@ func runCoordinatorStatus(cmd *cobra.Command, args []string) error {
 	return renderCoordinatorStatus(session, agents, idleAgents, coordConfig)
 }
 
-func outputCoordinatorStatusJSON(session string, agents map[string]*coordinator.AgentState, idleAgents []*coordinator.AgentState, cfg coordinator.CoordinatorConfig) error {
+func outputCoordinatorStatusJSON(session string, agents map[string]*coordinator.AgentState, idleAgents []*coordinator.AgentState, coordCfg coordinator.CoordinatorConfig) error {
 	result := map[string]interface{}{
 		"session":     session,
 		"timestamp":   time.Now().Format(time.RFC3339),
@@ -136,19 +137,19 @@ func outputCoordinatorStatusJSON(session string, agents map[string]*coordinator.
 		"idle_count":  len(idleAgents),
 		"agents":      agents,
 		"config": map[string]interface{}{
-			"auto_assign":        cfg.AutoAssign,
-			"send_digests":       cfg.SendDigests,
-			"conflict_notify":    cfg.ConflictNotify,
-			"conflict_negotiate": cfg.ConflictNegotiate,
-			"poll_interval":      cfg.PollInterval.String(),
-			"digest_interval":    cfg.DigestInterval.String(),
-			"idle_threshold":     cfg.IdleThreshold,
+			"auto_assign":        coordCfg.AutoAssign,
+			"send_digests":       coordCfg.SendDigests,
+			"conflict_notify":    coordCfg.ConflictNotify,
+			"conflict_negotiate": coordCfg.ConflictNegotiate,
+			"poll_interval":      coordCfg.PollInterval.String(),
+			"digest_interval":    coordCfg.DigestInterval.String(),
+			"idle_threshold":     coordCfg.IdleThreshold,
 		},
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
 }
 
-func renderCoordinatorStatus(session string, agents map[string]*coordinator.AgentState, idleAgents []*coordinator.AgentState, cfg coordinator.CoordinatorConfig) error {
+func renderCoordinatorStatus(session string, agents map[string]*coordinator.AgentState, idleAgents []*coordinator.AgentState, coordCfg coordinator.CoordinatorConfig) error {
 	t := theme.Current()
 
 	fmt.Printf("\n%s Coordinator Status: %s%s\n\n",
@@ -161,13 +162,22 @@ func renderCoordinatorStatus(session string, agents map[string]*coordinator.Agen
 
 	// Agent table
 	if len(agents) > 0 {
+		// Sort agents by PaneIndex for deterministic output
+		sortedAgents := make([]*coordinator.AgentState, 0, len(agents))
+		for _, agent := range agents {
+			sortedAgents = append(sortedAgents, agent)
+		}
+		slices.SortFunc(sortedAgents, func(a, b *coordinator.AgentState) int {
+			return a.PaneIndex - b.PaneIndex
+		})
+
 		fmt.Printf("  %sAgent Status%s\n", "\033[1m", "\033[0m")
 		fmt.Printf("  %s%s%s\n", "\033[2m", strings.Repeat("─", 60), "\033[0m")
 		fmt.Printf("  %-12s %-8s %-12s %-8s %s\n",
 			"Pane", "Type", "Status", "Context", "Idle For")
 		fmt.Printf("  %s%s%s\n", "\033[2m", strings.Repeat("─", 60), "\033[0m")
 
-		for _, agent := range agents {
+		for _, agent := range sortedAgents {
 			statusColor := "\033[32m" // green
 			switch agent.Status {
 			case robot.StateError:
@@ -193,13 +203,13 @@ func renderCoordinatorStatus(session string, agents map[string]*coordinator.Agen
 	fmt.Printf("  %sConfiguration%s\n", "\033[1m", "\033[0m")
 	fmt.Printf("  %s%s%s\n", "\033[2m", strings.Repeat("─", 60), "\033[0m")
 
-	printConfigBool("  Auto-assign:         ", cfg.AutoAssign)
-	printConfigBool("  Send digests:        ", cfg.SendDigests)
-	printConfigBool("  Conflict notify:     ", cfg.ConflictNotify)
-	printConfigBool("  Conflict negotiate:  ", cfg.ConflictNegotiate)
-	fmt.Printf("  Poll interval:       %s\n", cfg.PollInterval)
-	fmt.Printf("  Digest interval:     %s\n", cfg.DigestInterval)
-	fmt.Printf("  Idle threshold:      %.0fs\n", cfg.IdleThreshold)
+	printConfigBool("  Auto-assign:         ", coordCfg.AutoAssign)
+	printConfigBool("  Send digests:        ", coordCfg.SendDigests)
+	printConfigBool("  Conflict notify:     ", coordCfg.ConflictNotify)
+	printConfigBool("  Conflict negotiate:  ", coordCfg.ConflictNegotiate)
+	fmt.Printf("  Poll interval:       %s\n", coordCfg.PollInterval)
+	fmt.Printf("  Digest interval:     %s\n", coordCfg.DigestInterval)
+	fmt.Printf("  Idle threshold:      %.0fs\n", coordCfg.IdleThreshold)
 	fmt.Println()
 
 	return nil
@@ -563,14 +573,14 @@ func runCoordinatorAssign(cmd *cobra.Command, args []string, dryRun bool) error 
 	}
 
 	for _, r := range results {
-		if r.Success {
+		if r.Success && r.Assignment != nil {
 			fmt.Printf("  %s✓%s Assigned %s to pane %s\n",
 				"\033[32m", "\033[0m",
 				r.Assignment.BeadID, r.Assignment.AgentPaneID)
 			if r.MessageSent {
 				fmt.Println("    (Message sent via Agent Mail)")
 			}
-		} else {
+		} else if !r.Success {
 			fmt.Printf("  %s✗%s Failed: %s\n",
 				"\033[31m", "\033[0m", r.Error)
 		}
