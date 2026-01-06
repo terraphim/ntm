@@ -1607,10 +1607,13 @@ func generateTailHints(panes map[string]PaneOutput) *TailAgentHints {
 // determineState analyzes output to determine if agent is active, idle, or in error state.
 // It delegates to the status package for consistent detection logic.
 func determineState(output, agentType string) string {
+	// Normalize agent type for status package (expects "cc", "cod", etc.)
+	shortType := translateAgentTypeForStatus(agentType)
+
 	if status.DetectErrorInOutput(output) != status.ErrorNone {
 		return "error"
 	}
-	if status.DetectIdleFromOutput(output, agentType) {
+	if status.DetectIdleFromOutput(output, shortType) {
 		return "idle"
 	}
 	// If output is empty and it's a user pane, treat as idle (prompt)

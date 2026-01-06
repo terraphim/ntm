@@ -341,8 +341,7 @@ func (m *Monitor) triggerRotationAssistance(session string, paneIndex int, agent
 
 	// Auto-initiate rotation if configured (aggressive mode)
 	if rotateConfig.AutoInitiate {
-		log.Printf("[resilience] Auto-initiating rotation for agent %s (pane %d)",
-			agentType, paneIndex)
+		log.Printf("[resilience] Auto-rotation configured but currently requires user interaction. Use command: %s", rotateCmd)
 		// Note: Auto-initiate is disabled in this implementation because
 		// rotation requires user interaction (browser account switch).
 		// Instead, we just provide the notification with command.

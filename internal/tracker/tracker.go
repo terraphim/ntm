@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -508,8 +509,12 @@ func SnapshotGit(root string, opts SnapshotOptions) (map[string]FileState, error
 
 		// Handle quoted paths from git (e.g. "file with spaces.txt")
 		if len(relPath) >= 2 && strings.HasPrefix(relPath, "\"") && strings.HasSuffix(relPath, "\"") {
-			relPath = relPath[1 : len(relPath)-1]
-			// TODO: Handle escaped characters inside quotes if necessary
+			if unquoted, err := strconv.Unquote(relPath); err == nil {
+				relPath = unquoted
+			} else {
+				// Fallback: just strip quotes if unquote fails
+				relPath = relPath[1 : len(relPath)-1]
+			}
 		}
 
 		fullPath := filepath.Join(root, relPath)
