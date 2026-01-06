@@ -2,7 +2,10 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -202,4 +205,79 @@ func (m Model) fetchRoutingCmd() tea.Cmd {
 
 		return RoutingUpdateMsg{Scores: scores}
 	}
+}
+
+// fetchSpawnStateCmd reads spawn state from the project directory
+func (m Model) fetchSpawnStateCmd() tea.Cmd {
+	projectDir := m.projectDir
+
+	return func() tea.Msg {
+		state, err := loadSpawnState(projectDir)
+		if err != nil || state == nil {
+			// No spawn state or error reading - return inactive
+			return SpawnUpdateMsg{Data: panels.SpawnData{Active: false}}
+		}
+
+		// Convert to SpawnData for the panel
+		data := panels.SpawnData{
+			Active:         true,
+			BatchID:        state.BatchID,
+			StartedAt:      state.StartedAt,
+			StaggerSeconds: state.StaggerSeconds,
+			TotalAgents:    state.TotalAgents,
+			CompletedAt:    state.CompletedAt,
+		}
+
+		for _, p := range state.Prompts {
+			data.Prompts = append(data.Prompts, panels.SpawnPromptStatus{
+				Pane:        p.Pane,
+				Order:       p.Order,
+				ScheduledAt: p.ScheduledAt,
+				Sent:        p.Sent,
+				SentAt:      p.SentAt,
+			})
+		}
+
+		return SpawnUpdateMsg{Data: data}
+	}
+}
+
+// spawnState mirrors cli.SpawnState for dashboard reading
+// This avoids importing cli package which has many dependencies
+type spawnState struct {
+	BatchID        string              `json:"batch_id"`
+	StartedAt      time.Time           `json:"started_at"`
+	StaggerSeconds int                 `json:"stagger_seconds"`
+	TotalAgents    int                 `json:"total_agents"`
+	Prompts        []spawnPromptStatus `json:"prompts"`
+	CompletedAt    time.Time           `json:"completed_at,omitempty"`
+}
+
+type spawnPromptStatus struct {
+	Pane        string    `json:"pane"`
+	PaneID      string    `json:"pane_id"`
+	Order       int       `json:"order"`
+	ScheduledAt time.Time `json:"scheduled"`
+	Sent        bool      `json:"sent"`
+	SentAt      time.Time `json:"sent_at,omitempty"`
+}
+
+// loadSpawnState reads spawn state from disk
+func loadSpawnState(projectDir string) (*spawnState, error) {
+	path := filepath.Join(projectDir, ".ntm", "spawn-state.json")
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // No state file
+		}
+		return nil, err
+	}
+
+	var state spawnState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+
+	return &state, nil
 }

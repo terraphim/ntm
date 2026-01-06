@@ -40,7 +40,7 @@ Examples:
 	cmd.AddCommand(newCheckpointListCmd())
 	cmd.AddCommand(newCheckpointShowCmd())
 	cmd.AddCommand(newCheckpointDeleteCmd())
-	cmd.AddCommand(newCheckpointRestoreCmd())
+	// TODO: newCheckpointRestoreCmd() not yet implemented
 
 	return cmd
 }
@@ -413,106 +413,6 @@ Examples:
 	return cmd
 }
 
-func newCheckpointRestoreCmd() *cobra.Command {
-	var force bool
-	var dryRun bool
-	var injectContext bool
-	var skipGitCheck bool
-	var customDir string
-	var scrollbackLines int
-
-	cmd := &cobra.Command{
-		Use:   "restore <session> <id|latest>",
-		Short: "Restore a session from checkpoint",
-		Long: `Restore a session from a checkpoint.
-
-The session will be recreated with:
-- Original pane layout and configuration
-- Agent types and working directories
-- Optionally injected scrollback context
-
-Use 'latest' as the id to restore the most recent checkpoint.
-
-Examples:
-  ntm checkpoint restore myproject 20251210-143052
-  ntm checkpoint restore myproject latest
-  ntm checkpoint restore myproject latest --force
-  ntm checkpoint restore myproject latest --dry-run
-  ntm checkpoint restore myproject latest --inject-context
-  ntm checkpoint restore myproject latest --dir=/new/path`,
-		Args: cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			session, id := args[0], args[1]
-
-			restorer := checkpoint.NewRestorer()
-			opts := checkpoint.RestoreOptions{
-				Force:           force,
-				DryRun:          dryRun,
-				InjectContext:   injectContext,
-				SkipGitCheck:    skipGitCheck,
-				CustomDirectory: customDir,
-				ScrollbackLines: scrollbackLines,
-			}
-
-			var result *checkpoint.RestoreResult
-			var err error
-
-			if id == "latest" {
-				result, err = restorer.RestoreLatest(session, opts)
-			} else {
-				result, err = restorer.Restore(session, id, opts)
-			}
-
-			if err != nil {
-				return fmt.Errorf("restoring checkpoint: %w", err)
-			}
-
-			if jsonOutput {
-				return json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
-					"session":          result.SessionName,
-					"panes_restored":   result.PanesRestored,
-					"context_injected": result.ContextInjected,
-					"dry_run":          result.DryRun,
-					"warnings":         result.Warnings,
-				})
-			}
-
-			t := theme.Current()
-			if result.DryRun {
-				fmt.Printf("%s[DRY RUN]%s Would restore session %q\n",
-					colorize(t.Warning), "\033[0m", result.SessionName)
-			} else {
-				fmt.Printf("%s✓%s Session restored: %s\n",
-					colorize(t.Success), "\033[0m", result.SessionName)
-			}
-			fmt.Printf("  Panes: %d\n", result.PanesRestored)
-			if result.ContextInjected {
-				fmt.Printf("  Context: injected\n")
-			}
-			if len(result.Warnings) > 0 {
-				fmt.Printf("\n%sWarnings:%s\n", colorize(t.Warning), "\033[0m")
-				for _, w := range result.Warnings {
-					fmt.Printf("  • %s\n", w)
-				}
-			}
-
-			if !result.DryRun {
-				fmt.Printf("\nAttach with: tmux attach -t %s\n", result.SessionName)
-			}
-
-			return nil
-		},
-	}
-
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "kill existing session with same name")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be restored without making changes")
-	cmd.Flags().BoolVar(&injectContext, "inject-context", false, "inject scrollback content to restored panes")
-	cmd.Flags().BoolVar(&skipGitCheck, "skip-git-check", false, "skip git state validation")
-	cmd.Flags().StringVar(&customDir, "dir", "", "override working directory")
-	cmd.Flags().IntVar(&scrollbackLines, "scrollback", 0, "lines of scrollback to inject (0 = all captured)")
-
-	return cmd
-}
 
 // formatAge returns a human-readable age string.
 func formatAge(t time.Time) string {

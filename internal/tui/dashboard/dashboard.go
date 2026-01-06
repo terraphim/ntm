@@ -1269,6 +1269,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Poll spawn state on every tick for real-time countdown display
+		cmds = append(cmds, m.fetchSpawnStateCmd())
+
 		cmds = append(cmds, m.tick())
 		return m, tea.Batch(cmds...)
 
@@ -2944,6 +2947,17 @@ func (m Model) renderSidebar(width, height int) string {
 	lines = append(lines, headerStyle.Render("Activity & Locks"))
 	lines = append(lines, "")
 
+	// Spawn progress (only show if active)
+	if m.spawnPanel != nil && m.spawnPanel.IsActive() {
+		used := lipgloss.Height(strings.Join(lines, "\n"))
+		panelHeight := 8 // Fixed height for spawn panel
+		if height-used > panelHeight {
+			m.spawnPanel.SetSize(width, panelHeight)
+			lines = append(lines, m.spawnPanel.View())
+			lines = append(lines, "")
+		}
+	}
+
 	if len(m.agentMailLockInfo) > 0 {
 		lines = append(lines, lipgloss.NewStyle().Foreground(t.Lavender).Bold(true).Render("Active Locks"))
 		for _, lock := range m.agentMailLockInfo {
@@ -3141,6 +3155,11 @@ func (m Model) renderAlertsPanel(width, height int) string {
 		m.alertsPanel.Blur()
 	}
 	return m.alertsPanel.View()
+}
+
+func (m Model) renderSpawnPanel(width, height int) string {
+	m.spawnPanel.SetSize(width, height)
+	return m.spawnPanel.View()
 }
 
 func (m Model) renderMetricsPanel(width, height int) string {
