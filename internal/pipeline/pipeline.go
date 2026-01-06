@@ -9,6 +9,7 @@ import (
 
 	"github.com/Dicklesworthstone/ntm/internal/status"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
+	"github.com/Dicklesworthstone/ntm/internal/util"
 )
 
 // Stage represents a step in the pipeline
@@ -32,7 +33,7 @@ func Execute(ctx context.Context, p Pipeline) error {
 	detector := status.NewDetector()
 
 	for i, stage := range p.Stages {
-		log.Printf("Stage %d/%d [%s]: %s", i+1, len(p.Stages), stage.AgentType, truncate(stage.Prompt, 50))
+		log.Printf("Stage %d/%d [%s]: %s", i+1, len(p.Stages), stage.AgentType, util.Truncate(stage.Prompt, 50))
 
 		// 1. Find a suitable pane
 		paneID, err := findPaneForStage(p.Session, stage.AgentType, stage.Model)
@@ -84,94 +85,12 @@ func Execute(ctx context.Context, p Pipeline) error {
 		}
 
 		// Extract only the new content
-		output := extractNewOutput(beforeOutput, afterOutput)
+		output := util.ExtractNewOutput(beforeOutput, afterOutput)
 		previousOutput = output
 		lastPaneID = paneID
 	}
 
 	return nil
-}
-
-// extractNewOutput isolates the text added to the pane after the before state.
-func extractNewOutput(before, after string) string {
-	if before == "" {
-		return after
-	}
-	if after == "" {
-		return ""
-	}
-
-	// Fast path: if 'after' starts with 'before', it's a simple append
-	if len(after) >= len(before) && after[:len(before)] == before {
-		return after[len(before):]
-	}
-
-	// Handle scrolled output (before is not a prefix of after)
-	// We look for the longest suffix of 'before' that matches a prefix of 'after'.
-
-	// Try to match using a chunk from the start of 'after'
-	const chunkSize = 40
-	var searchChunk string
-	if len(after) >= chunkSize {
-		searchChunk = after[:chunkSize]
-	} else {
-		// After is short, use all of it
-		searchChunk = after
-	}
-
-	// We only need to search the end of 'before' that could possibly contain 'after'
-	// The overlap cannot be longer than 'after'.
-	scanStart := len(before) - len(after)
-	if scanStart < 0 {
-		scanStart = 0
-	}
-
-	searchRegion := before[scanStart:]
-
-	// Find all occurrences of chunk in searchRegion
-	// We want the *first* valid match in searchRegion because that gives the *longest* suffix of before.
-	// (Earliest start index = longest suffix)
-
-	remaining := searchRegion
-	offset := 0
-
-	for {
-		idx := strings.Index(remaining, searchChunk)
-		if idx == -1 {
-			break
-		}
-
-		// Absolute index in 'before'
-		absIdx := scanStart + offset + idx
-
-		// Check if this starts a valid suffix match
-		// Suffix of before: before[absIdx:]
-		// Prefix of after: after[:len(suffix)]
-		// We know before[absIdx:] starts with searchChunk.
-		// We need to check if the rest matches.
-
-		suffixLen := len(before) - absIdx
-		if len(after) >= suffixLen && after[:suffixLen] == before[absIdx:] {
-			return after[suffixLen:]
-		}
-
-		// Move past this match
-		step := idx + 1
-		remaining = remaining[step:]
-		offset += step
-	}
-
-	// Fallback for overlaps smaller than chunkSize (only needed if we capped chunk size)
-	if len(after) > chunkSize {
-		for k := chunkSize - 1; k > 0; k-- {
-			if before[len(before)-k:] == after[:k] {
-				return after[k:]
-			}
-		}
-	}
-
-	// No overlap found - return everything
-	return after
 }
 
 func findPaneForStage(session, agentType, model string) (string, error) {
@@ -241,39 +160,4 @@ func waitForIdle(ctx context.Context, detector status.Detector, paneID string) e
 			// Optional: print progress indicator
 		}
 	}
-}
-
-func truncate(s string, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	if len(s) <= n {
-		return s
-	}
-	// When n too small for content + ellipsis, just return first n chars
-	if n <= 3 {
-		// Find last rune boundary at or before n bytes
-		lastValid := 0
-		for i := range s {
-			if i > n {
-				break
-			}
-			lastValid = i
-		}
-		if lastValid == 0 && len(s) > 0 {
-			return ""
-		}
-		return s[:lastValid]
-	}
-	// Find the last rune boundary that allows for "..." suffix within n bytes.
-	targetLen := n - 3
-	prevI := 0
-	for i := range s {
-		if i > targetLen {
-			return s[:prevI] + "..."
-		}
-		prevI = i
-	}
-	// All rune starts are <= targetLen, but string is > n bytes.
-	return s[:prevI] + "..."
 }
