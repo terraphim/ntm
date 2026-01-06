@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BurntSushi/toml"
 )
 
 func TestConfigGenerateAgentCommand(t *testing.T) {
@@ -220,6 +222,177 @@ func TestInitProjectConfigForce(t *testing.T) {
 	}
 	if strings.TrimSpace(string(paletteContent)) != "custom palette" {
 		t.Fatalf("expected palette.md to be preserved when force=true")
+	}
+}
+
+func TestInitProjectConfigScaffolding(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd failed: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir failed: %v", err)
+	}
+
+	if err := InitProjectConfig(false); err != nil {
+		t.Fatalf("InitProjectConfig failed: %v", err)
+	}
+
+	t.Run("creates .ntm directory", func(t *testing.T) {
+		ntmDir := filepath.Join(tmpDir, ".ntm")
+		info, err := os.Stat(ntmDir)
+		if err != nil {
+			t.Fatalf("expected .ntm directory: %v", err)
+		}
+		if !info.IsDir() {
+			t.Fatal("expected .ntm to be a directory")
+		}
+	})
+
+	t.Run("creates templates subdirectory", func(t *testing.T) {
+		templatesDir := filepath.Join(tmpDir, ".ntm", "templates")
+		info, err := os.Stat(templatesDir)
+		if err != nil {
+			t.Fatalf("expected templates directory: %v", err)
+		}
+		if !info.IsDir() {
+			t.Fatal("expected templates to be a directory")
+		}
+	})
+
+	t.Run("creates valid TOML config", func(t *testing.T) {
+		configPath := filepath.Join(tmpDir, ".ntm", "config.toml")
+		content, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatalf("reading config: %v", err)
+		}
+
+		// Verify it's parseable as TOML
+		var parsed map[string]interface{}
+		if _, err := toml.Decode(string(content), &parsed); err != nil {
+			t.Fatalf("config.toml is not valid TOML: %v", err)
+		}
+	})
+
+	t.Run("creates palette.md with expected content", func(t *testing.T) {
+		palettePath := filepath.Join(tmpDir, ".ntm", "palette.md")
+		content, err := os.ReadFile(palettePath)
+		if err != nil {
+			t.Fatalf("reading palette: %v", err)
+		}
+
+		// Verify key sections exist
+		contentStr := string(content)
+		if !strings.Contains(contentStr, "# Project Commands") {
+			t.Error("palette.md missing header")
+		}
+		if !strings.Contains(contentStr, "### build |") {
+			t.Error("palette.md missing build command")
+		}
+		if !strings.Contains(contentStr, "### test |") {
+			t.Error("palette.md missing test command")
+		}
+	})
+
+	t.Run("config contains expected sections", func(t *testing.T) {
+		configPath := filepath.Join(tmpDir, ".ntm", "config.toml")
+		content, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatalf("reading config: %v", err)
+		}
+
+		contentStr := string(content)
+		expectedSections := []string{"[defaults]", "[palette]", "[palette_state]", "[templates]", "[agents]"}
+		for _, section := range expectedSections {
+			if !strings.Contains(contentStr, section) {
+				t.Errorf("config missing section: %s", section)
+			}
+		}
+	})
+}
+
+func TestInitProjectConfigPreservesExistingPalette(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd failed: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+
+	// Create .ntm directory and custom palette before init
+	ntmDir := filepath.Join(tmpDir, ".ntm")
+	if err := os.MkdirAll(ntmDir, 0755); err != nil {
+		t.Fatalf("creating .ntm: %v", err)
+	}
+
+	customPalette := "# My Custom Commands\n\n### deploy | Deploy App\nkubectl apply -f .\n"
+	palettePath := filepath.Join(ntmDir, "palette.md")
+	if err := os.WriteFile(palettePath, []byte(customPalette), 0644); err != nil {
+		t.Fatalf("writing custom palette: %v", err)
+	}
+
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir failed: %v", err)
+	}
+
+	// Init should NOT overwrite existing palette
+	if err := InitProjectConfig(false); err != nil {
+		t.Fatalf("InitProjectConfig failed: %v", err)
+	}
+
+	content, err := os.ReadFile(palettePath)
+	if err != nil {
+		t.Fatalf("reading palette: %v", err)
+	}
+
+	if string(content) != customPalette {
+		t.Errorf("expected custom palette to be preserved\ngot: %s\nwant: %s", string(content), customPalette)
+	}
+}
+
+func TestInitProjectConfigDirectoryPermissions(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd failed: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir failed: %v", err)
+	}
+
+	if err := InitProjectConfig(false); err != nil {
+		t.Fatalf("InitProjectConfig failed: %v", err)
+	}
+
+	// Check directory permissions (should be 0755)
+	ntmDir := filepath.Join(tmpDir, ".ntm")
+	info, err := os.Stat(ntmDir)
+	if err != nil {
+		t.Fatalf("stat .ntm: %v", err)
+	}
+	// On Unix, check mode; on Windows, this check may behave differently
+	mode := info.Mode().Perm()
+	// Directory should be at least readable and executable by owner
+	if mode&0500 != 0500 {
+		t.Errorf("expected .ntm directory to be readable+executable, got %o", mode)
+	}
+
+	templatesDir := filepath.Join(ntmDir, "templates")
+	info, err = os.Stat(templatesDir)
+	if err != nil {
+		t.Fatalf("stat templates: %v", err)
+	}
+	mode = info.Mode().Perm()
+	if mode&0500 != 0500 {
+		t.Errorf("expected templates directory to be readable+executable, got %o", mode)
 	}
 }
 

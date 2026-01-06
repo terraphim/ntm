@@ -814,3 +814,212 @@ func TestNewStorage(t *testing.T) {
 		t.Error("NewStorage().BaseDir should be an absolute path")
 	}
 }
+
+func TestStorage_SaveScrollback_LargeContent(t *testing.T) {
+	tmpDir := t.TempDir()
+	storage := NewStorageWithDir(tmpDir)
+
+	// Create checkpoint first
+	cp := &Checkpoint{
+		ID:          "20251210-120000-large",
+		SessionName: "testproject",
+		CreatedAt:   time.Now(),
+		Session:     SessionState{Panes: []PaneState{}},
+	}
+	if err := storage.Save(cp); err != nil {
+		t.Fatalf("Save() failed: %v", err)
+	}
+
+	// Create ~1MB of scrollback content
+	var content string
+	for i := 0; i < 10000; i++ {
+		content += "Line " + string(rune('0'+i%10)) + " with some text content here\n"
+	}
+
+	_, err := storage.SaveScrollback(cp.SessionName, cp.ID, "%0", content)
+	if err != nil {
+		t.Fatalf("SaveScrollback() failed for large content: %v", err)
+	}
+
+	loaded, err := storage.LoadScrollback(cp.SessionName, cp.ID, "%0")
+	if err != nil {
+		t.Fatalf("LoadScrollback() failed: %v", err)
+	}
+
+	if loaded != content {
+		t.Errorf("loaded content length = %d, want %d", len(loaded), len(content))
+	}
+}
+
+func TestStorage_SaveScrollback_SpecialCharacters(t *testing.T) {
+	tmpDir := t.TempDir()
+	storage := NewStorageWithDir(tmpDir)
+
+	// Create checkpoint first
+	cp := &Checkpoint{
+		ID:          "20251210-120000-special",
+		SessionName: "testproject",
+		CreatedAt:   time.Now(),
+		Session:     SessionState{Panes: []PaneState{}},
+	}
+	if err := storage.Save(cp); err != nil {
+		t.Fatalf("Save() failed: %v", err)
+	}
+
+	// Content with various special characters including ANSI escape codes
+	content := "Normal text\n\x1b[31mRed text\x1b[0m\nUnicode: 你好世界 🎉\nTabs:\t\there\nNullbyte:\x00end\n"
+
+	_, err := storage.SaveScrollback(cp.SessionName, cp.ID, "%1", content)
+	if err != nil {
+		t.Fatalf("SaveScrollback() failed: %v", err)
+	}
+
+	loaded, err := storage.LoadScrollback(cp.SessionName, cp.ID, "%1")
+	if err != nil {
+		t.Fatalf("LoadScrollback() failed: %v", err)
+	}
+
+	if loaded != content {
+		t.Errorf("content mismatch with special characters\ngot: %q\nwant: %q", loaded, content)
+	}
+}
+
+func TestStorage_FilePermissions(t *testing.T) {
+	tmpDir := t.TempDir()
+	storage := NewStorageWithDir(tmpDir)
+
+	cp := &Checkpoint{
+		ID:          "20251210-120000-perms",
+		SessionName: "testproject",
+		CreatedAt:   time.Now(),
+		Session:     SessionState{Panes: []PaneState{}},
+	}
+	if err := storage.Save(cp); err != nil {
+		t.Fatalf("Save() failed: %v", err)
+	}
+
+	// Save scrollback and git patch
+	_, err := storage.SaveScrollback(cp.SessionName, cp.ID, "%0", "test content")
+	if err != nil {
+		t.Fatalf("SaveScrollback() failed: %v", err)
+	}
+
+	if err := storage.SaveGitPatch(cp.SessionName, cp.ID, "diff content"); err != nil {
+		t.Fatalf("SaveGitPatch() failed: %v", err)
+	}
+
+	// Verify directory is created with reasonable permissions
+	cpDir := storage.CheckpointDir(cp.SessionName, cp.ID)
+	info, err := os.Stat(cpDir)
+	if err != nil {
+		t.Fatalf("stat checkpoint dir: %v", err)
+	}
+	if !info.IsDir() {
+		t.Error("checkpoint path should be a directory")
+	}
+
+	// Files should exist
+	metaPath := filepath.Join(cpDir, MetadataFile)
+	if _, err := os.Stat(metaPath); err != nil {
+		t.Errorf("metadata file should exist: %v", err)
+	}
+
+	patchPath := filepath.Join(cpDir, GitPatchFile)
+	if _, err := os.Stat(patchPath); err != nil {
+		t.Errorf("git patch file should exist: %v", err)
+	}
+}
+
+func TestStorage_LoadCorruptedJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	storage := NewStorageWithDir(tmpDir)
+	sessionName := "testproject"
+	checkpointID := "20251210-120000-corrupt"
+
+	// Create checkpoint directory manually
+	cpDir := storage.CheckpointDir(sessionName, checkpointID)
+	if err := os.MkdirAll(cpDir, 0755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+
+	// Write corrupted metadata
+	metaPath := filepath.Join(cpDir, MetadataFile)
+	if err := os.WriteFile(metaPath, []byte("not valid json {"), 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	_, err := storage.Load(sessionName, checkpointID)
+	if err == nil {
+		t.Error("Load() should fail for corrupted JSON")
+	}
+}
+
+func TestStorage_MultiplePanes(t *testing.T) {
+	tmpDir := t.TempDir()
+	storage := NewStorageWithDir(tmpDir)
+
+	cp := &Checkpoint{
+		ID:          "20251210-120000-multipane",
+		SessionName: "multitest",
+		CreatedAt:   time.Now(),
+		Session:     SessionState{Panes: []PaneState{}},
+	}
+	if err := storage.Save(cp); err != nil {
+		t.Fatalf("Save() failed: %v", err)
+	}
+
+	// Save scrollback for multiple panes
+	paneData := map[string]string{
+		"%0": "Content for pane 0\nline 2\n",
+		"%1": "Content for pane 1\n",
+		"%2": "Content for pane 2\nmore lines\neven more\n",
+	}
+
+	for paneID, content := range paneData {
+		_, err := storage.SaveScrollback(cp.SessionName, cp.ID, paneID, content)
+		if err != nil {
+			t.Fatalf("SaveScrollback(%s) failed: %v", paneID, err)
+		}
+	}
+
+	// Load and verify each pane
+	for paneID, expectedContent := range paneData {
+		loaded, err := storage.LoadScrollback(cp.SessionName, cp.ID, paneID)
+		if err != nil {
+			t.Fatalf("LoadScrollback(%s) failed: %v", paneID, err)
+		}
+		if loaded != expectedContent {
+			t.Errorf("pane %s content mismatch\ngot: %q\nwant: %q", paneID, loaded, expectedContent)
+		}
+	}
+}
+
+func TestStorage_EmptyScrollback(t *testing.T) {
+	tmpDir := t.TempDir()
+	storage := NewStorageWithDir(tmpDir)
+
+	cp := &Checkpoint{
+		ID:          "20251210-120000-empty",
+		SessionName: "emptytest",
+		CreatedAt:   time.Now(),
+		Session:     SessionState{Panes: []PaneState{}},
+	}
+	if err := storage.Save(cp); err != nil {
+		t.Fatalf("Save() failed: %v", err)
+	}
+
+	// Save empty scrollback
+	_, err := storage.SaveScrollback(cp.SessionName, cp.ID, "%0", "")
+	if err != nil {
+		t.Fatalf("SaveScrollback() failed for empty content: %v", err)
+	}
+
+	loaded, err := storage.LoadScrollback(cp.SessionName, cp.ID, "%0")
+	if err != nil {
+		t.Fatalf("LoadScrollback() failed: %v", err)
+	}
+
+	if loaded != "" {
+		t.Errorf("expected empty content, got %q", loaded)
+	}
+}
