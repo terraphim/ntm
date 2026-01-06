@@ -1266,6 +1266,9 @@ func init() {
 		// Internal commands
 		newMonitorCmd(),
 
+		// Memory integration
+		newMemoryCmd(),
+
 		// Shell integration
 		newInitCmd(),
 		newCompletionCmd(),

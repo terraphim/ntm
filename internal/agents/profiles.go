@@ -137,11 +137,16 @@ func (pm *ProfileMatcher) loadDefaults() {
 	}
 }
 
-// GetProfile returns the profile for an agent type.
+// GetProfile returns a copy of the profile for an agent type.
+// Returns a copy to prevent callers from modifying internal state.
 func (pm *ProfileMatcher) GetProfile(agentType AgentType) *AgentProfile {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
-	return pm.profiles[agentType]
+	p := pm.profiles[agentType]
+	if p == nil {
+		return nil
+	}
+	return p.copy()
 }
 
 // GetProfileByName returns the profile for an agent type string.
@@ -150,16 +155,45 @@ func (pm *ProfileMatcher) GetProfileByName(name string) *AgentProfile {
 	return pm.GetProfile(AgentType(normalized))
 }
 
-// AllProfiles returns all registered profiles.
+// AllProfiles returns copies of all registered profiles.
+// Returns copies to prevent callers from modifying internal state.
 func (pm *ProfileMatcher) AllProfiles() []*AgentProfile {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 
 	profiles := make([]*AgentProfile, 0, len(pm.profiles))
 	for _, p := range pm.profiles {
-		profiles = append(profiles, p)
+		profiles = append(profiles, p.copy())
 	}
 	return profiles
+}
+
+// copy creates a deep copy of an AgentProfile.
+func (p *AgentProfile) copy() *AgentProfile {
+	if p == nil {
+		return nil
+	}
+	cp := *p // Shallow copy
+
+	// Deep copy slices
+	if p.Specializations != nil {
+		cp.Specializations = make([]Specialization, len(p.Specializations))
+		copy(cp.Specializations, p.Specializations)
+	}
+	if p.Preferences.PreferredFiles != nil {
+		cp.Preferences.PreferredFiles = make([]string, len(p.Preferences.PreferredFiles))
+		copy(cp.Preferences.PreferredFiles, p.Preferences.PreferredFiles)
+	}
+	if p.Preferences.AvoidFiles != nil {
+		cp.Preferences.AvoidFiles = make([]string, len(p.Preferences.AvoidFiles))
+		copy(cp.Preferences.AvoidFiles, p.Preferences.AvoidFiles)
+	}
+	if p.Preferences.PreferredLabels != nil {
+		cp.Preferences.PreferredLabels = make([]string, len(p.Preferences.PreferredLabels))
+		copy(cp.Preferences.PreferredLabels, p.Preferences.PreferredLabels)
+	}
+
+	return &cp
 }
 
 // TaskInfo represents information about a task for scoring purposes.
@@ -404,10 +438,18 @@ func matchGlobPattern(path, pattern string) bool {
 
 // RecommendAgent returns the best agent type for a task.
 func (pm *ProfileMatcher) RecommendAgent(task TaskInfo) (AgentType, ScoreResult) {
+	// Collect agent types under lock to avoid race condition during iteration
+	pm.mu.RLock()
+	agentTypes := make([]AgentType, 0, len(pm.profiles))
+	for agentType := range pm.profiles {
+		agentTypes = append(agentTypes, agentType)
+	}
+	pm.mu.RUnlock()
+
 	var bestAgent AgentType
 	var bestResult ScoreResult
 
-	for agentType := range pm.profiles {
+	for _, agentType := range agentTypes {
 		result := pm.ScoreAssignment(agentType, task)
 		if result.CanHandle && result.Score > bestResult.Score {
 			bestAgent = agentType

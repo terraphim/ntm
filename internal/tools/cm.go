@@ -8,11 +8,14 @@ import (
 	"net/http"
 	"os/exec"
 	"time"
+
+	"github.com/Dicklesworthstone/ntm/internal/cm"
 )
 
 // CMAdapter provides integration with the CASS Memory (cm) tool
 type CMAdapter struct {
 	*BaseAdapter
+	client     *cm.Client
 	serverPort int
 }
 
@@ -20,8 +23,18 @@ type CMAdapter struct {
 func NewCMAdapter() *CMAdapter {
 	return &CMAdapter{
 		BaseAdapter: NewBaseAdapter(ToolCM, "cm"),
-		serverPort:  8766,
+		serverPort:  8200,
 	}
+}
+
+// Connect initializes the HTTP client by discovering the daemon port
+func (a *CMAdapter) Connect(projectDir, sessionID string) error {
+	client, err := cm.NewClient(projectDir, sessionID)
+	if err != nil {
+		return err
+	}
+	a.client = client
+	return nil
 }
 
 // SetServerPort updates the CM server port
@@ -113,6 +126,8 @@ func (a *CMAdapter) Health(ctx context.Context) (*HealthStatus, error) {
 
 // isDaemonRunning checks if the cm daemon is responding
 func (a *CMAdapter) isDaemonRunning(ctx context.Context) bool {
+	// If we have a client, assume it's running (or use it to check)
+	// For now, keep the port check as a fallback or auxiliary check
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
@@ -155,6 +170,13 @@ func (a *CMAdapter) Info(ctx context.Context) (*ToolInfo, error) {
 
 // GetContext retrieves contextual information for a task
 func (a *CMAdapter) GetContext(ctx context.Context, taskDescription string) (json.RawMessage, error) {
+	if a.client != nil {
+		res, err := a.client.GetContext(ctx, taskDescription)
+		if err == nil {
+			return json.Marshal(res)
+		}
+		// Fallback to CLI if HTTP fails
+	}
 	return a.runCommand(ctx, "context", taskDescription, "--json")
 }
 

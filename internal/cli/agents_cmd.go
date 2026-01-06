@@ -306,12 +306,12 @@ func runAgentsRecommend(task agents.TaskInfo) error {
 	recommended, recommendedResult := pm.RecommendAgent(task)
 
 	if IsJSONOutput() {
-		output := map[string]interface{}{
+		jsonData := map[string]interface{}{
 			"task":        task,
 			"recommended": recommended,
 			"scores":      scores,
 		}
-		data, err := json.MarshalIndent(output, "", "  ")
+		data, err := json.MarshalIndent(jsonData, "", "  ")
 		if err != nil {
 			return err
 		}

@@ -1204,3 +1204,189 @@ func TestContextRotationPrintOutput(t *testing.T) {
 		t.Error("Expected output to contain rotate_threshold")
 	}
 }
+
+func TestValidateHealthConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     HealthConfig
+		wantErr bool
+	}{
+		{
+			name: "valid config",
+			cfg: HealthConfig{
+				Enabled:            true,
+				CheckInterval:      10,
+				StallThreshold:     300,
+				AutoRestart:        false,
+				MaxRestarts:        3,
+				RestartBackoffBase: 30,
+				RestartBackoffMax:  300,
+			},
+			wantErr: false,
+		},
+		{
+			name: "check_interval zero",
+			cfg: HealthConfig{
+				CheckInterval:      0,
+				StallThreshold:     300,
+				RestartBackoffBase: 30,
+				RestartBackoffMax:  300,
+			},
+			wantErr: true,
+		},
+		{
+			name: "check_interval negative",
+			cfg: HealthConfig{
+				CheckInterval:      -1,
+				StallThreshold:     300,
+				RestartBackoffBase: 30,
+				RestartBackoffMax:  300,
+			},
+			wantErr: true,
+		},
+		{
+			name: "stall_threshold less than check_interval",
+			cfg: HealthConfig{
+				CheckInterval:      10,
+				StallThreshold:     5,
+				RestartBackoffBase: 30,
+				RestartBackoffMax:  300,
+			},
+			wantErr: true,
+		},
+		{
+			name: "stall_threshold equals check_interval",
+			cfg: HealthConfig{
+				CheckInterval:      10,
+				StallThreshold:     10,
+				RestartBackoffBase: 30,
+				RestartBackoffMax:  300,
+			},
+			wantErr: false,
+		},
+		{
+			name: "max_restarts negative",
+			cfg: HealthConfig{
+				CheckInterval:      10,
+				StallThreshold:     300,
+				MaxRestarts:        -1,
+				RestartBackoffBase: 30,
+				RestartBackoffMax:  300,
+			},
+			wantErr: true,
+		},
+		{
+			name: "max_restarts zero is valid",
+			cfg: HealthConfig{
+				CheckInterval:      10,
+				StallThreshold:     300,
+				MaxRestarts:        0,
+				RestartBackoffBase: 30,
+				RestartBackoffMax:  300,
+			},
+			wantErr: false,
+		},
+		{
+			name: "restart_backoff_base zero",
+			cfg: HealthConfig{
+				CheckInterval:      10,
+				StallThreshold:     300,
+				RestartBackoffBase: 0,
+				RestartBackoffMax:  300,
+			},
+			wantErr: true,
+		},
+		{
+			name: "restart_backoff_max less than base",
+			cfg: HealthConfig{
+				CheckInterval:      10,
+				StallThreshold:     300,
+				RestartBackoffBase: 60,
+				RestartBackoffMax:  30,
+			},
+			wantErr: true,
+		},
+		{
+			name: "restart_backoff_max equals base",
+			cfg: HealthConfig{
+				CheckInterval:      10,
+				StallThreshold:     300,
+				RestartBackoffBase: 30,
+				RestartBackoffMax:  30,
+			},
+			wantErr: false,
+		},
+		{
+			name: "minimal valid config",
+			cfg: HealthConfig{
+				CheckInterval:      1,
+				StallThreshold:     1,
+				RestartBackoffBase: 1,
+				RestartBackoffMax:  1,
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateHealthConfig(&tt.cfg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateHealthConfig() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestHealthConfigPrintOutput(t *testing.T) {
+	cfg := Default()
+	var buf bytes.Buffer
+	err := Print(cfg, &buf)
+	if err != nil {
+		t.Fatalf("Print failed: %v", err)
+	}
+	output := buf.String()
+
+	// Check for health section
+	if !strings.Contains(output, "[health]") {
+		t.Error("Expected output to contain [health]")
+	}
+	if !strings.Contains(output, "check_interval") {
+		t.Error("Expected output to contain check_interval")
+	}
+	if !strings.Contains(output, "stall_threshold") {
+		t.Error("Expected output to contain stall_threshold")
+	}
+	if !strings.Contains(output, "restart_backoff_base") {
+		t.Error("Expected output to contain restart_backoff_base")
+	}
+}
+
+func TestHealthConfigGetValue(t *testing.T) {
+	cfg := Default()
+
+	tests := []struct {
+		path string
+		want interface{}
+	}{
+		{"health.enabled", true},
+		{"health.check_interval", 10},
+		{"health.stall_threshold", 300},
+		{"health.auto_restart", false},
+		{"health.max_restarts", 3},
+		{"health.restart_backoff_base", 30},
+		{"health.restart_backoff_max", 300},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got, err := GetValue(cfg, tt.path)
+			if err != nil {
+				t.Fatalf("GetValue(%q) error = %v", tt.path, err)
+			}
+			if got != tt.want {
+				t.Errorf("GetValue(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}

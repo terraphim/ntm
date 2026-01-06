@@ -349,8 +349,13 @@ func TestMatchGlobPattern(t *testing.T) {
 		{"README.md", "*.md", true},
 		{"docs/setup.md", "docs/**", true},
 		{"internal/cli/cmd.go", "internal/**/*.go", true},
+		{"internal/agents/profiles.go", "internal/**/*.go", true},  // Deeper nesting
+		{"internal/a/b/c/d/e/file.go", "internal/**/*.go", true},   // Very deep nesting
+		{"cmd/ntm/main.go", "cmd/**/*.go", true},                   // cmd prefix
+		{"pkg/util/helper.go", "pkg/**/*.go", true},                // pkg prefix
 		{"config.yaml", "*.go", false},
 		{"main.go", "internal/**", false},
+		{"external/lib/lib.go", "internal/**/*.go", false},         // Wrong prefix
 	}
 
 	for _, tt := range tests {
