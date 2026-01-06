@@ -320,30 +320,71 @@ func (cd *ConflictDetector) findReservationHolders(filePath string, reservations
 }
 
 // matchesPattern checks if a file path matches a glob pattern.
+// Supports:
+// - Exact match: "src/main.go"
+// - Prefix match: "src/" matches "src/main.go"
+// - Single * wildcard: "src/*.go" matches "src/main.go"
+// - Double ** wildcard: "src/**" matches any path under src/
+// - Combined: "src/**/test.go" matches "src/foo/bar/test.go"
 func matchesPattern(filePath, pattern string) bool {
-	// Handle glob patterns
-	if strings.Contains(pattern, "*") {
-		matched, _ := filepath.Match(pattern, filePath)
-		if matched {
-			return true
-		}
-		// Try matching against just the filename
-		matched, _ = filepath.Match(pattern, filepath.Base(filePath))
-		if matched {
-			return true
-		}
-		// Try matching with directory patterns
-		if strings.HasSuffix(pattern, "/**") {
-			prefix := strings.TrimSuffix(pattern, "/**")
-			if strings.HasPrefix(filePath, prefix+"/") || filePath == prefix {
-				return true
-			}
-		}
-		return false
+	// Exact match
+	if filePath == pattern {
+		return true
 	}
 
-	// Exact match or prefix match for directories
-	return filePath == pattern || strings.HasPrefix(filePath, pattern+"/")
+	// Handle ** patterns (match any number of path segments)
+	if strings.Contains(pattern, "**") {
+		parts := strings.SplitN(pattern, "**", 2)
+		prefix := parts[0]
+		suffix := ""
+		if len(parts) > 1 {
+			suffix = strings.TrimPrefix(parts[1], "/")
+		}
+
+		// Path must start with prefix
+		if !strings.HasPrefix(filePath, prefix) {
+			return false
+		}
+
+		// If no suffix, just prefix match is enough
+		if suffix == "" {
+			return true
+		}
+
+		// Path must end with suffix (after stripping prefix)
+		remaining := strings.TrimPrefix(filePath, prefix)
+		return strings.HasSuffix(remaining, suffix)
+	}
+
+	// Handle single * patterns (match single path segment)
+	if strings.Contains(pattern, "*") {
+		parts := strings.Split(pattern, "*")
+
+		// Must start with first part and end with last part
+		if !strings.HasPrefix(filePath, parts[0]) {
+			return false
+		}
+		if !strings.HasSuffix(filePath, parts[len(parts)-1]) {
+			return false
+		}
+
+		// For multiple wildcards, check that all parts appear in order
+		remaining := filePath
+		for _, part := range parts {
+			if part == "" {
+				continue
+			}
+			idx := strings.Index(remaining, part)
+			if idx == -1 {
+				return false
+			}
+			remaining = remaining[idx+len(part):]
+		}
+		return true
+	}
+
+	// Prefix match (pattern is a directory)
+	return strings.HasPrefix(filePath, pattern+"/")
 }
 
 // findLikelyModifiers returns pane IDs with activity around the file modification time.
