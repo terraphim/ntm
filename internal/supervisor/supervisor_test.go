@@ -380,6 +380,9 @@ func TestDefaultSpecs(t *testing.T) {
 	if !names["am"] {
 		t.Error("DefaultSpecs() missing 'am' daemon")
 	}
+	if !names["bd"] {
+		t.Error("DefaultSpecs() missing 'bd' daemon")
+	}
 }
 
 // TestHealthCheck tests the HTTP health check functionality
@@ -412,14 +415,38 @@ func TestHealthCheck(t *testing.T) {
 	go server.Serve(ln)
 	defer server.Shutdown(context.Background())
 
-	// Test checkHealth
+	// Test checkHealthHTTP
 	healthURL := fmt.Sprintf("http://127.0.0.1:%d/health", port)
-	if !s.checkHealth(healthURL) {
-		t.Error("checkHealth() returned false for healthy endpoint")
+	if !s.checkHealthHTTP(healthURL) {
+		t.Error("checkHealthHTTP() returned false for healthy endpoint")
 	}
 
 	// Test with invalid URL
-	if s.checkHealth("http://127.0.0.1:99999/health") {
-		t.Error("checkHealth() returned true for invalid endpoint")
+	if s.checkHealthHTTP("http://127.0.0.1:99999/health") {
+		t.Error("checkHealthHTTP() returned true for invalid endpoint")
+	}
+}
+
+// TestHealthCheckCmd tests the command-based health check functionality
+func TestHealthCheckCmd(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	s, err := New(Config{
+		SessionID:  "test-session",
+		ProjectDir: tmpDir,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer s.Shutdown()
+
+	// Test with successful command
+	if !s.checkHealthCmd([]string{"echo", "ok"}) {
+		t.Error("checkHealthCmd() returned false for successful command")
+	}
+
+	// Test with failed command
+	if s.checkHealthCmd([]string{"false"}) {
+		t.Error("checkHealthCmd() returned true for failed command")
 	}
 }

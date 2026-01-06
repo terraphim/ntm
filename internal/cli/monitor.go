@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Dicklesworthstone/ntm/internal/resilience"
+	"github.com/Dicklesworthstone/ntm/internal/supervisor"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 )
 
@@ -40,7 +41,26 @@ func runMonitor(session string) error {
 		return nil
 	}
 
-	// Initialize monitor
+	// Initialize Supervisor
+	sup, err := supervisor.New(supervisor.Config{
+		SessionID:  session,
+		ProjectDir: manifest.ProjectDir,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize supervisor: %v\n", err)
+	} else {
+		// Start default daemons (bd, cm, am)
+		for _, spec := range supervisor.DefaultSpecs() {
+			if err := sup.Start(spec); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to start daemon %s: %v\n", spec.Name, err)
+			} else {
+				fmt.Printf("Started daemon: %s\n", spec.Name)
+			}
+		}
+		defer sup.Shutdown()
+	}
+
+	// Initialize resilience monitor
 	monitor := resilience.NewMonitor(session, manifest.ProjectDir, cfg)
 
 	// Register agents

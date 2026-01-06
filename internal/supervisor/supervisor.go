@@ -35,6 +35,7 @@ type DaemonSpec struct {
 	Command     string   `json:"command"`      // Command to run: "cm", "bd"
 	Args        []string `json:"args"`         // Arguments: ["serve", "--port", "8765"]
 	HealthURL   string   `json:"health_url"`   // Health check URL: "http://127.0.0.1:8765/health"
+	HealthCmd   []string `json:"health_cmd"`   // Health check command: ["bd", "daemon", "--health"]
 	PortFlag    string   `json:"port_flag"`    // Flag to specify port: "--port"
 	DefaultPort int      `json:"default_port"` // Default port if none specified
 	WorkDir     string   `json:"work_dir"`     // Working directory for the daemon
@@ -371,16 +372,15 @@ func (s *Supervisor) monitorDaemon(d *ManagedDaemon) {
 			d.mu.RLock()
 			state := d.State
 			healthURL := d.Spec.HealthURL
+			healthCmd := d.Spec.HealthCmd
 			d.mu.RUnlock()
 
 			if state != StateRunning && state != StateStarting {
 				return
 			}
 
-			if healthURL == "" {
-				// No health URL, just check if process is running
-				// Note: ProcessState access is inherently racy after Wait() but this is
-				// a best-effort check; the waitForExit goroutine handles actual exits.
+			if healthURL == "" && len(healthCmd) == 0 {
+				// No health check configured, just check if process is running
 				d.mu.RLock()
 				cmd := d.cmd
 				d.mu.RUnlock()
@@ -390,8 +390,14 @@ func (s *Supervisor) monitorDaemon(d *ManagedDaemon) {
 				continue
 			}
 
-			// Check health endpoint
-			healthy := s.checkHealth(healthURL)
+			// Perform health check
+			var healthy bool
+			if healthURL != "" {
+				healthy = s.checkHealthHTTP(healthURL)
+			} else if len(healthCmd) > 0 {
+				healthy = s.checkHealthCmd(healthCmd)
+			}
+
 			d.mu.Lock()
 			if healthy {
 				d.LastHealth = time.Now()
@@ -479,8 +485,8 @@ func (s *Supervisor) handleDaemonFailure(d *ManagedDaemon) {
 	}
 }
 
-// checkHealth performs an HTTP health check.
-func (s *Supervisor) checkHealth(url string) bool {
+// checkHealthHTTP performs an HTTP health check.
+func (s *Supervisor) checkHealthHTTP(url string) bool {
 	ctx, cancel := context.WithTimeout(s.ctx, 3*time.Second)
 	defer cancel()
 
@@ -497,6 +503,24 @@ func (s *Supervisor) checkHealth(url string) bool {
 	io.Copy(io.Discard, resp.Body) // Drain body
 
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
+}
+
+// checkHealthCmd performs a command-based health check.
+func (s *Supervisor) checkHealthCmd(cmdArgs []string) bool {
+	if len(cmdArgs) == 0 {
+		return false
+	}
+
+	ctx, cancel := context.WithTimeout(s.ctx, 3*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
+	cmd.Dir = s.projectDir // Execute in project dir context
+	
+	if err := cmd.Run(); err != nil {
+		return false
+	}
+	return true
 }
 
 // writePIDFile writes the PID file for a daemon.
@@ -574,6 +598,12 @@ func DefaultSpecs() []DaemonSpec {
 			HealthURL:   "http://127.0.0.1:8765/health",
 			PortFlag:    "--port",
 			DefaultPort: 8765,
+		},
+		{
+			Name:      "bd",
+			Command:   "bd",
+			Args:      []string{"daemon", "--start", "--foreground", "--auto-commit", "--interval", "5s"},
+			HealthCmd: []string{"bd", "daemon", "--health"},
 		},
 	}
 }

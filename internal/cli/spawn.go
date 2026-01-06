@@ -971,12 +971,14 @@ func spawnSessionLogic(opts SpawnOptions) error {
 		}
 	}
 
-	// Start resilience monitor if auto-restart is enabled
-	if opts.AutoRestart || cfg.Resilience.AutoRestart {
+	// Start session monitor (handles resilience and daemons)
+	// Always started regardless of auto-restart config
+	{
 		// Save manifest for the monitor process
 		manifest := &resilience.SpawnManifest{
-			Session:    opts.Session,
-			ProjectDir: dir,
+			Session:     opts.Session,
+			ProjectDir:  dir,
+			AutoRestart: opts.AutoRestart || cfg.Resilience.AutoRestart,
 		}
 		for _, agent := range launchedAgents {
 			manifest.Agents = append(manifest.Agents, resilience.AgentConfig{
@@ -1000,11 +1002,15 @@ func spawnSessionLogic(opts SpawnOptions) error {
 				setDetachedProcess(cmd)
 				if err := cmd.Start(); err != nil {
 					if !IsJSONOutput() {
-						output.PrintWarningf("Failed to start resilience monitor: %v", err)
+						output.PrintWarningf("Failed to start session monitor: %v", err)
 					}
 				} else {
 					if !IsJSONOutput() {
-						output.PrintInfof("Auto-restart enabled (monitor pid: %d)", cmd.Process.Pid)
+						if manifest.AutoRestart {
+							output.PrintInfof("Session monitor started (auto-restart enabled, pid: %d)", cmd.Process.Pid)
+						} else {
+							output.PrintInfof("Session monitor started (pid: %d)", cmd.Process.Pid)
+						}
 					}
 				}
 			}

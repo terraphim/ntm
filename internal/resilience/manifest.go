@@ -9,9 +9,10 @@ import (
 
 // SpawnManifest represents the configuration of a spawned session for monitoring
 type SpawnManifest struct {
-	Session    string        `json:"session"`
-	ProjectDir string        `json:"project_dir"`
-	Agents     []AgentConfig `json:"agents"`
+	Session     string        `json:"session"`
+	ProjectDir  string        `json:"project_dir"`
+	Agents      []AgentConfig `json:"agents"`
+	AutoRestart bool          `json:"auto_restart"`
 }
 
 // AgentConfig represents the configuration for a single agent
