@@ -337,6 +337,78 @@ func TestTruncatePrompt(t *testing.T) {
 	}
 }
 
+// TestSendFlagNoOptDefVal verifies that --cc/--cod/--gmi flags work without consuming
+// the next positional argument as the flag value. This tests the NoOptDefVal fix.
+// Before the fix: "ntm send session --cod hello" would fail because "hello" was consumed by --cod
+// After the fix: "ntm send session --cod hello" correctly parses "hello" as the prompt
+func TestSendFlagNoOptDefVal(t *testing.T) {
+	cmd := newSendCmd()
+
+	tests := []struct {
+		name     string
+		args     []string
+		wantErr  bool
+		checkMsg string
+	}{
+		{
+			name:     "cod flag before prompt",
+			args:     []string{"testsession", "--cod", "hello world"},
+			wantErr:  false, // Should NOT error - prompt should be parsed correctly
+			checkMsg: "flag before prompt should work with NoOptDefVal",
+		},
+		{
+			name:     "cc flag before prompt",
+			args:     []string{"testsession", "--cc", "test prompt"},
+			wantErr:  false,
+			checkMsg: "cc flag before prompt should work",
+		},
+		{
+			name:     "gmi flag before prompt",
+			args:     []string{"testsession", "--gmi", "another prompt"},
+			wantErr:  false,
+			checkMsg: "gmi flag before prompt should work",
+		},
+		{
+			name:     "multiple flags before prompt",
+			args:     []string{"testsession", "--cc", "--cod", "multi agent prompt"},
+			wantErr:  false,
+			checkMsg: "multiple flags before prompt should work",
+		},
+		{
+			name:     "flag with variant value",
+			args:     []string{"testsession", "--cc=opus", "prompt with variant"},
+			wantErr:  false,
+			checkMsg: "flag with explicit variant should work",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create fresh command for each test
+			testCmd := newSendCmd()
+			testCmd.SetArgs(tt.args)
+
+			// Just parse flags - don't execute (would need tmux)
+			err := testCmd.ParseFlags(tt.args)
+			if tt.wantErr && err == nil {
+				t.Errorf("%s: expected error but got nil", tt.checkMsg)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("%s: unexpected error: %v", tt.checkMsg, err)
+			}
+
+			// Verify the prompt wasn't consumed by the flag
+			// After parsing flags, remaining args should contain the prompt
+			remainingArgs := testCmd.Flags().Args()
+			if !tt.wantErr && len(remainingArgs) < 2 {
+				t.Errorf("%s: expected prompt in remaining args, got: %v", tt.checkMsg, remainingArgs)
+			}
+		})
+	}
+
+	_ = cmd // silence unused warning
+}
+
 // TestBuildTargetDescription tests the target description builder
 func TestBuildTargetDescription(t *testing.T) {
 	tests := []struct {
