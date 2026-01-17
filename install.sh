@@ -10,6 +10,7 @@
 #   --version=TAG   Install specific version (default: latest)
 #   --dir=PATH      Install to custom directory (default: /usr/local/bin or ~/.local/bin)
 #   --no-shell      Skip shell integration prompt
+#   --easy-mode     Non-interactive: auto-configure shell integration and PATH
 #
 # The script will:
 #   1. Detect your platform (OS and architecture)
@@ -49,6 +50,7 @@ trap cleanup_tmp_dirs EXIT
 VERSION=""
 INSTALL_DIR=""
 NO_SHELL=false
+EASY_MODE=false
 
 # Parse arguments
 for arg in "$@"; do
@@ -62,6 +64,9 @@ for arg in "$@"; do
         --no-shell)
             NO_SHELL=true
             ;;
+        --easy-mode)
+            EASY_MODE=true
+            ;;
         --help|-h)
             cat << 'EOF'
 NTM Install Script
@@ -72,6 +77,7 @@ Options:
   --version=TAG   Install specific version (default: latest)
   --dir=PATH      Install to custom directory
   --no-shell      Skip shell integration prompt
+  --easy-mode     Non-interactive: auto-configure shell integration and PATH
   --help          Show this help
 
 Examples:
@@ -330,11 +336,29 @@ install_ntm() {
 
     # Check PATH
     if ! echo "$PATH" | grep -q "$install_dir"; then
-        print_warn "${install_dir} is not in your PATH"
-        echo ""
-        echo "Add to your shell rc file:"
-        echo "  export PATH=\"\$PATH:${install_dir}\""
-        echo ""
+        if [ "$EASY_MODE" = true ]; then
+            # Auto-add to PATH in easy-mode
+            local path_updated=0
+            for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+                if [ -e "$rc" ] && [ -w "$rc" ]; then
+                    if ! grep -F "$install_dir" "$rc" >/dev/null 2>&1; then
+                        echo "" >> "$rc"
+                        echo "# Added by ntm installer" >> "$rc"
+                        echo "export PATH=\"\$PATH:${install_dir}\"" >> "$rc"
+                        path_updated=1
+                    fi
+                fi
+            done
+            if [ "$path_updated" -eq 1 ]; then
+                print_info "PATH updated in shell rc files; restart shell to use ntm"
+            fi
+        else
+            print_warn "${install_dir} is not in your PATH"
+            echo ""
+            echo "Add to your shell rc file:"
+            echo "  export PATH=\"\$PATH:${install_dir}\""
+            echo ""
+        fi
     fi
 
     # Shell integration
@@ -391,6 +415,16 @@ setup_shell_integration() {
     echo "Add this to ${rc_file}:"
     echo "  ${init_cmd}"
     echo ""
+
+    # In easy-mode, auto-add without prompting
+    if [ "$EASY_MODE" = true ]; then
+        echo "" >> "$rc_file"
+        echo "# NTM - Named Tmux Manager" >> "$rc_file"
+        echo "$init_cmd" >> "$rc_file"
+        print_success "Added shell integration to ${rc_file}"
+        print_info "Restart your shell or run 'source ${rc_file}' to activate."
+        return
+    fi
 
     # Only prompt if interactive
     if [ -t 0 ] && [ -t 1 ]; then

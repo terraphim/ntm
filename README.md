@@ -14,7 +14,7 @@ Spawn, manage, and coordinate Claude Code, OpenAI Codex, and Google Gemini CLI a
 
 ```bash
 # One-line install
-curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.sh | bash
+curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.sh?$(date +%s)" | bash -s -- --easy-mode
 ```
 
 </div>
@@ -25,7 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.
 
 ```bash
 # Install NTM
-curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.sh | bash
+curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.sh?$(date +%s)" | bash -s -- --easy-mode
 
 # Add shell integration
 echo 'eval "$(ntm init zsh)"' >> ~/.zshrc && source ~/.zshrc
@@ -251,7 +251,7 @@ ntm deps -v        # Verbose output with versions
 ### One-Line Install (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.sh | bash
+curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.sh?$(date +%s)" | bash -s -- --easy-mode
 ```
 
 ### Homebrew (macOS/Linux)
@@ -1738,7 +1738,7 @@ export NTM_THEME=plain   # Explicit no-color theme (escape hatch)
 
 ```bash
 # 1) Install + shell integration (zsh example)
-curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.sh | bash
+curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.sh?$(date +%s)" | bash -s -- --easy-mode
 echo 'eval "$(ntm init zsh)"' >> ~/.zshrc && source ~/.zshrc
 
 # 2) Sanity check + quick orientation
