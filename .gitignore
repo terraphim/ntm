@@ -20,6 +20,7 @@ vscode/package-lock.json
 # OS
 .DS_Store
 Thumbs.db
+._*
 
 # Go
 vendor/
@@ -36,3 +37,14 @@ internal/cli/outputs/
 .bv/
 *.out
 .ntm/
+
+# beads local state
+.beads/.br_history/
+.beads/.bv.lock
+
+# Temporary/backup files
+*.bak
+*.incomplete
+
+# Screenshots
+Snipping_*.png
