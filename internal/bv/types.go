@@ -159,7 +159,7 @@ type TriageData struct {
 	QuickRef        TriageQuickRef         `json:"quick_ref"`
 	Recommendations []TriageRecommendation `json:"recommendations"`
 	QuickWins       []TriageRecommendation `json:"quick_wins,omitempty"`
-	BlockersToClear []TriageRecommendation `json:"blockers_to_clear,omitempty"`
+	BlockersToClear []BlockerToClear       `json:"blockers_to_clear,omitempty"`
 	ProjectHealth   *ProjectHealth         `json:"project_health,omitempty"`
 	Commands        map[string]string      `json:"commands,omitempty"`
 }
@@ -204,6 +204,17 @@ type TriageRecommendation struct {
 	Action      string          `json:"action"`
 	Reasons     []string        `json:"reasons"`
 	UnblocksIDs []string        `json:"unblocks_ids,omitempty"`
+	BlockedBy   []string        `json:"blocked_by,omitempty"` // IDs that block this item
+}
+
+// BlockerToClear represents a blocker item from blockers_to_clear response
+type BlockerToClear struct {
+	ID           string   `json:"id"`
+	Title        string   `json:"title"`
+	UnblocksCount int     `json:"unblocks_count"`
+	UnblocksIDs  []string `json:"unblocks_ids,omitempty"`
+	Actionable   bool     `json:"actionable"`
+	BlockedBy    []string `json:"blocked_by,omitempty"`
 }
 
 // ScoreBreakdown contains the components of a recommendation score

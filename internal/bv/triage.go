@@ -136,7 +136,7 @@ func GetQuickWins(dir string, n int) ([]TriageRecommendation, error) {
 }
 
 // GetBlockersToClear returns blockers that should be cleared first
-func GetBlockersToClear(dir string, n int) ([]TriageRecommendation, error) {
+func GetBlockersToClear(dir string, n int) ([]BlockerToClear, error) {
 	triage, err := GetTriage(dir)
 	if err != nil {
 		return nil, err

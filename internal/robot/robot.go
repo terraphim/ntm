@@ -3985,7 +3985,7 @@ type TriageOutput struct {
 	QuickRef        *bv.TriageQuickRef          `json:"quick_ref,omitempty"`
 	Recommendations []bv.TriageRecommendation   `json:"recommendations,omitempty"`
 	QuickWins       []bv.TriageRecommendation   `json:"quick_wins,omitempty"`
-	BlockersToClear []bv.TriageRecommendation   `json:"blockers_to_clear,omitempty"`
+	BlockersToClear []bv.BlockerToClear         `json:"blockers_to_clear,omitempty"`
 	ProjectHealth   *bv.ProjectHealth           `json:"project_health,omitempty"`
 	Commands        map[string]string           `json:"commands,omitempty"`
 	CacheInfo       *TriageCacheInfo            `json:"cache_info,omitempty"`

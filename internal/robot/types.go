@@ -1,5 +1,71 @@
 // Package robot provides machine-readable output for AI agents.
 // types.go defines the standardized response structures for robot commands.
+//
+// # Robot Output Envelope Specification
+//
+// All robot command responses MUST follow the envelope specification to ensure
+// consistent, parseable output for AI agents. This spec is authoritative.
+//
+// ## Required Fields (All Responses)
+//
+// Every robot response MUST include:
+//   - success (bool): Whether the operation completed successfully. Check this FIRST.
+//   - timestamp (string): RFC3339 UTC timestamp when response was generated.
+//
+// ## Error Response Fields
+//
+// When success=false, responses SHOULD include:
+//   - error (string): Human-readable error message.
+//   - error_code (string): Machine-readable code for programmatic handling.
+//     See ErrCode* constants for defined values.
+//   - hint (string, optional): Actionable guidance for resolving the error.
+//
+// ## Array Fields
+//
+// Critical arrays MUST always be present, even when empty:
+//   - Use `[]` not `null` for empty arrays that agents will iterate.
+//   - This allows safe iteration without null checks.
+//   - Use `omitempty` only for truly optional arrays (like _agent_hints).
+//
+// ## Creating New Output Types
+//
+// New robot commands MUST:
+//  1. Embed RobotResponse as the first field (anonymous embed).
+//  2. Use NewRobotResponse(true) for success responses.
+//  3. Use NewErrorResponse() or RobotError() for errors.
+//  4. Initialize all critical arrays to empty slices, not nil.
+//  5. Use FormatTimestamp() for any additional timestamp fields.
+//
+// Example:
+//
+//	type MyOutput struct {
+//	    RobotResponse           // Embed for success/timestamp/error fields
+//	    Items []ItemInfo `json:"items"` // Always present, even if empty
+//	}
+//
+//	func PrintMyCommand() error {
+//	    output := MyOutput{
+//	        RobotResponse: NewRobotResponse(true),
+//	        Items:         []ItemInfo{}, // Empty, not nil
+//	    }
+//	    return outputJSON(output)
+//	}
+//
+// ## Compliance Status
+//
+// Compliant types (embed RobotResponse): TailOutput, SendOutput, ContextOutput,
+// ActivityOutput, DiffOutput, AssignOutput, FilesOutput, InspectPaneOutput,
+// MetricsOutput, ReplayOutput, PaletteOutput, TUIAlertsOutput, DismissAlertOutput,
+// BeadsListOutput, BeadClaimOutput, BeadCreateOutput, BeadShowOutput, BeadCloseOutput,
+// TokensOutput, SchemaOutput, RouteOutput, HistoryOutput.
+//
+// Non-compliant types (need migration): CASSStatusOutput, CASSSearchOutput,
+// CASSInsightsOutput, CASSContextOutput, StatusOutput, PlanOutput, SnapshotOutput,
+// SnapshotDeltaOutput, GraphOutput, AlertsOutput, RecipesOutput, TriageOutput,
+// AckOutput, SpawnOutput, HealthOutput, SessionHealthOutput, InterruptOutput,
+// DashboardOutput.
+//
+// See envelope_test.go for test coverage ensuring compliance.
 package robot
 
 import (
