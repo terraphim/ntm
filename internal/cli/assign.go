@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
+	"github.com/Dicklesworthstone/ntm/internal/agentmail"
 	"github.com/Dicklesworthstone/ntm/internal/assign"
 	"github.com/Dicklesworthstone/ntm/internal/assignment"
 	"github.com/Dicklesworthstone/ntm/internal/bv"
@@ -36,6 +38,12 @@ var (
 	assignTimeout        time.Duration
 	assignDryRun         bool // Alias for no --auto
 	assignReserveFiles   bool // Enable Agent Mail file reservations
+
+	// Direct pane assignment flags
+	assignPane       int    // Direct pane assignment (0 = disabled, since pane 0 is valid we use -1 as default)
+	assignForce      bool   // Force assignment even if pane busy
+	assignIgnoreDeps bool   // Ignore dependency checks
+	assignPrompt     string // Custom prompt for direct assignment
 )
 
 // assignAgentInfo holds information about an agent pane for assignment matching
@@ -66,6 +74,15 @@ Prompt Templates:
   impl   - "Work on bead {BEAD_ID}: {TITLE}. Check dependencies first."
   review - "Review and verify bead {BEAD_ID}: {TITLE}. Run tests if applicable."
   custom - User provides template file (--template-file)
+
+Direct Pane Assignment:
+  Use --pane to assign a specific bead to a specific pane. This bypasses the
+  normal strategy-based matching and directly assigns the bead to the pane.
+
+  ntm assign myproject --pane=3 --beads=bd-123   # Assign bd-123 to pane 3
+  ntm assign myproject --pane=3 --beads=bd-123 --prompt="Focus on API changes"
+  ntm assign myproject --pane=0 --beads=bd-123 --force  # Force even if busy
+  ntm assign myproject --pane=2 --beads=bd-123 --ignore-deps  # Skip dep checks
 
 Examples:
   ntm assign myproject                         # Show assignment recommendations
@@ -105,6 +122,12 @@ Examples:
 	cmd.Flags().DurationVar(&assignTimeout, "timeout", 30*time.Second, "Timeout for external calls (bv, br, Agent Mail)")
 	cmd.Flags().BoolVar(&assignDryRun, "dry-run", false, "Preview mode (alias for no --auto)")
 	cmd.Flags().BoolVar(&assignReserveFiles, "reserve-files", true, "Reserve file paths via Agent Mail before assignment")
+
+	// Direct pane assignment flags
+	cmd.Flags().IntVar(&assignPane, "pane", -1, "Assign bead directly to a specific pane (requires --beads)")
+	cmd.Flags().BoolVar(&assignForce, "force", false, "Force assignment even if pane is busy")
+	cmd.Flags().BoolVar(&assignIgnoreDeps, "ignore-deps", false, "Ignore dependency checks for assignment")
+	cmd.Flags().StringVar(&assignPrompt, "prompt", "", "Custom prompt for direct assignment")
 
 	return cmd
 }
@@ -165,6 +188,15 @@ func runAssign(cmd *cobra.Command, args []string) error {
 		Quiet:           assignQuiet,
 		Timeout:         assignTimeout,
 		ReserveFiles:    assignReserveFiles,
+		Pane:            assignPane,
+		Force:           assignForce,
+		IgnoreDeps:      assignIgnoreDeps,
+		Prompt:          assignPrompt,
+	}
+
+	// Handle direct pane assignment if --pane is specified
+	if assignPane >= 0 {
+		return runDirectPaneAssignment(cmd, assignOpts)
 	}
 
 	// For JSON output, use enhanced JSON output
@@ -244,6 +276,12 @@ type AssignCommandOptions struct {
 	Quiet           bool
 	Timeout         time.Duration
 	ReserveFiles    bool // Reserve file paths via Agent Mail before assignment
+
+	// Direct pane assignment options
+	Pane       int    // Direct pane assignment (-1 = disabled)
+	Force      bool   // Force assignment even if pane busy
+	IgnoreDeps bool   // Ignore dependency checks
+	Prompt     string // Custom prompt for direct assignment
 }
 
 // AssignOutputEnhanced is the enhanced output structure matching the spec
@@ -734,6 +772,12 @@ func executeAssignments(session string, recommendations []robot.AssignRecommend)
 // marshalAssignOutput converts output to JSON bytes (for testing)
 func marshalAssignOutput(output *robot.AssignOutput) ([]byte, error) {
 	return json.MarshalIndent(output, "", "  ")
+}
+
+// runDirectPaneAssignment handles direct assignment to a specific pane (bd-3nde)
+// This is a stub for future implementation
+func runDirectPaneAssignment(cmd *cobra.Command, opts *AssignCommandOptions) error {
+	return fmt.Errorf("direct pane assignment (--pane) not yet implemented")
 }
 
 // runAssignJSON handles JSON output for the assign command
@@ -1236,9 +1280,70 @@ func executeAssignmentsEnhanced(session string, out *AssignOutputEnhanced, opts 
 		store = nil
 	}
 
-	var successCount, failCount int
+	// Set up file reservation manager if enabled
+	var reservationMgr *assign.FileReservationManager
+	if opts.ReserveFiles {
+		wd, _ := os.Getwd()
+		amClient := agentmail.NewClient(agentmail.WithProjectKey(wd))
+		if amClient.IsAvailable() {
+			reservationMgr = assign.NewFileReservationManager(amClient, wd)
+			// Set TTL to 2x timeout, minimum 1 hour
+			ttlSeconds := int(opts.Timeout.Seconds()) * 2
+			if ttlSeconds < 3600 {
+				ttlSeconds = 3600
+			}
+			reservationMgr.SetTTL(ttlSeconds)
+			if !opts.Quiet && opts.Verbose {
+				fmt.Println("  File reservation enabled via Agent Mail")
+			}
+		} else if !opts.Quiet && opts.Verbose {
+			fmt.Println("  Warning: Agent Mail not available, skipping file reservations")
+		}
+	}
+
+	var successCount, failCount, reservedCount int
 
 	for _, item := range out.Assigned {
+		// Try to reserve file paths if manager is available
+		if reservationMgr != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), opts.Timeout)
+			result, reserveErr := reservationMgr.ReserveForBead(
+				ctx,
+				item.BeadID,
+				item.BeadTitle,
+				"", // No description available from bv
+				item.AgentName,
+			)
+			cancel()
+
+			if reserveErr != nil && result == nil {
+				// Hard error - skip this assignment
+				if !opts.Quiet {
+					fmt.Printf("  ✗ Failed to reserve files for %s: %v\n", item.BeadID, reserveErr)
+				}
+				failCount++
+				continue
+			}
+			if result != nil && len(result.Conflicts) > 0 {
+				// Conflicts detected - skip this assignment
+				if !opts.Quiet {
+					conflictPaths := make([]string, len(result.Conflicts))
+					for i, c := range result.Conflicts {
+						conflictPaths[i] = c.Path
+					}
+					fmt.Printf("  ⚠ Skipping %s due to file conflicts: %v\n", item.BeadID, conflictPaths)
+				}
+				failCount++
+				continue
+			}
+			if result != nil && len(result.GrantedPaths) > 0 {
+				reservedCount++
+				if !opts.Quiet && opts.Verbose {
+					fmt.Printf("    Reserved files: %v\n", result.GrantedPaths)
+				}
+			}
+		}
+
 		// Build the prompt using template
 		prompt := expandPromptTemplate(item.BeadID, item.BeadTitle, opts.Template, opts.TemplateFile)
 
@@ -1271,6 +1376,9 @@ func executeAssignmentsEnhanced(session string, out *AssignOutputEnhanced, opts 
 			fmt.Printf("✓ Successfully assigned %d beads\n", successCount)
 		} else {
 			fmt.Printf("Assigned %d beads (%d failed)\n", successCount, failCount)
+		}
+		if reservedCount > 0 {
+			fmt.Printf("  File reservations: %d beads with reserved paths\n", reservedCount)
 		}
 		fmt.Println("Use 'ntm status --assignments' to monitor progress.")
 	}
@@ -1504,4 +1612,267 @@ func FilterCyclicBeads(beads []bv.BeadPreview, verbose bool) ([]bv.BeadPreview, 
 	}
 
 	return filtered, excluded
+}
+
+// ============================================================================
+// Direct Pane Assignment - ntm assign --pane
+// ============================================================================
+
+// DirectAssignResult is the result of a direct pane assignment
+type DirectAssignResult struct {
+	BeadID         string                        `json:"bead_id"`
+	BeadTitle      string                        `json:"bead_title,omitempty"`
+	Pane           int                           `json:"pane"`
+	AgentType      string                        `json:"agent_type"`
+	AgentName      string                        `json:"agent_name,omitempty"`
+	PromptSent     string                        `json:"prompt_sent"`
+	Success        bool                          `json:"success"`
+	Error          string                        `json:"error,omitempty"`
+	Reservations   *assign.FileReservationResult `json:"reservations,omitempty"`
+	PaneWasBusy    bool                          `json:"pane_was_busy,omitempty"`
+	DepsIgnored    bool                          `json:"deps_ignored,omitempty"`
+	BlockedByBeads []string                      `json:"blocked_by_beads,omitempty"`
+}
+
+// runDirectPaneAssignment handles the --pane flag for direct bead-to-pane assignment
+func runDirectPaneAssignment(cmd *cobra.Command, opts *AssignCommandOptions) error {
+	// Validate: exactly one bead must be specified
+	if len(opts.BeadIDs) != 1 {
+		err := fmt.Errorf("--pane requires exactly one bead (use --beads=bd-xxx)")
+		if IsJSONOutput() {
+			return json.NewEncoder(os.Stdout).Encode(output.NewError(err.Error()))
+		}
+		return err
+	}
+
+	beadID := opts.BeadIDs[0]
+
+	// Get panes from tmux
+	panes, err := tmux.GetPanes(opts.Session)
+	if err != nil {
+		err = fmt.Errorf("failed to get panes: %w", err)
+		if IsJSONOutput() {
+			return json.NewEncoder(os.Stdout).Encode(output.NewError(err.Error()))
+		}
+		return err
+	}
+
+	// Find the target pane
+	var targetPane *tmux.Pane
+	for i := range panes {
+		if panes[i].Index == opts.Pane {
+			targetPane = &panes[i]
+			break
+		}
+	}
+
+	if targetPane == nil {
+		err = fmt.Errorf("pane %d not found in session %s", opts.Pane, opts.Session)
+		if IsJSONOutput() {
+			return json.NewEncoder(os.Stdout).Encode(output.NewError(err.Error()))
+		}
+		return err
+	}
+
+	// Detect agent type and state
+	agentType := detectAgentTypeFromTitle(targetPane.Title)
+	if agentType == "user" || agentType == "unknown" {
+		err = fmt.Errorf("pane %d is not an agent pane (type: %s)", opts.Pane, agentType)
+		if IsJSONOutput() {
+			return json.NewEncoder(os.Stdout).Encode(output.NewError(err.Error()))
+		}
+		return err
+	}
+
+	scrollback, _ := tmux.CapturePaneOutput(targetPane.ID, 10)
+	state := determineAgentState(scrollback, agentType)
+
+	result := &DirectAssignResult{
+		BeadID:    beadID,
+		Pane:      opts.Pane,
+		AgentType: agentType,
+	}
+
+	// Check if pane is busy (unless --force)
+	if state != "idle" && !opts.Force {
+		result.Success = false
+		result.Error = fmt.Sprintf("pane %d is busy (state: %s), use --force to override", opts.Pane, state)
+		result.PaneWasBusy = true
+
+		if IsJSONOutput() {
+			return json.NewEncoder(os.Stdout).Encode(struct {
+				output.TimestampedResponse
+				*DirectAssignResult
+			}{
+				TimestampedResponse: output.NewTimestamped(),
+				DirectAssignResult:  result,
+			})
+		}
+		return fmt.Errorf("%s", result.Error)
+	}
+	result.PaneWasBusy = state != "idle"
+
+	// Check dependencies (unless --ignore-deps)
+	if !opts.IgnoreDeps {
+		blockers, err := getBeadBlockers(beadID)
+		if err != nil && opts.Verbose {
+			fmt.Fprintf(os.Stderr, "[DEP] Warning: could not check dependencies: %v\n", err)
+		}
+		if len(blockers) > 0 {
+			result.Success = false
+			result.Error = fmt.Sprintf("bead %s is blocked by: %v, use --ignore-deps to override", beadID, blockers)
+			result.BlockedByBeads = blockers
+
+			if IsJSONOutput() {
+				return json.NewEncoder(os.Stdout).Encode(struct {
+					output.TimestampedResponse
+					*DirectAssignResult
+				}{
+					TimestampedResponse: output.NewTimestamped(),
+					DirectAssignResult:  result,
+				})
+			}
+			return fmt.Errorf("%s", result.Error)
+		}
+	} else {
+		result.DepsIgnored = true
+	}
+
+	// Get bead title
+	beadTitle := getBeadTitle(beadID)
+	result.BeadTitle = beadTitle
+
+	// Reserve files via Agent Mail (if enabled)
+	if opts.ReserveFiles {
+		reservationResult := reserveFilesForBead(opts.Session, beadID, beadTitle, agentType, opts.Verbose)
+		result.Reservations = reservationResult
+	}
+
+	// Build prompt
+	var prompt string
+	if opts.Prompt != "" {
+		prompt = opts.Prompt
+	} else {
+		prompt = expandPromptTemplate(beadID, beadTitle, opts.Template, opts.TemplateFile)
+	}
+	result.PromptSent = prompt
+
+	// Execute the assignment
+	paneID := fmt.Sprintf("%s:%d", opts.Session, opts.Pane)
+	if err := tmux.SendKeys(paneID, prompt, true); err != nil {
+		result.Success = false
+		result.Error = fmt.Sprintf("failed to send prompt: %v", err)
+
+		if IsJSONOutput() {
+			return json.NewEncoder(os.Stdout).Encode(struct {
+				output.TimestampedResponse
+				*DirectAssignResult
+			}{
+				TimestampedResponse: output.NewTimestamped(),
+				DirectAssignResult:  result,
+			})
+		}
+		return err
+	}
+
+	result.Success = true
+
+	// Track in assignment store
+	store, err := assignment.LoadStore(opts.Session)
+	if err == nil && store != nil {
+		_, _ = store.Assign(beadID, beadTitle, opts.Pane, agentType, "", prompt)
+	}
+
+	// Output result
+	if IsJSONOutput() {
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			output.TimestampedResponse
+			*DirectAssignResult
+		}{
+			TimestampedResponse: output.NewTimestamped(),
+			DirectAssignResult:  result,
+		})
+	}
+
+	// Text output
+	if !opts.Quiet {
+		fmt.Printf("✓ Assigned %s to pane %d (%s)\n", beadID, opts.Pane, agentType)
+		if beadTitle != "" {
+			fmt.Printf("  Title: %s\n", beadTitle)
+		}
+		if result.PaneWasBusy {
+			fmt.Printf("  Note: Pane was busy (--force used)\n")
+		}
+		if result.DepsIgnored {
+			fmt.Printf("  Note: Dependencies ignored (--ignore-deps used)\n")
+		}
+		if result.Reservations != nil && len(result.Reservations.GrantedPaths) > 0 {
+			fmt.Printf("  Reserved: %v\n", result.Reservations.GrantedPaths)
+		}
+		fmt.Printf("  Prompt: %s\n", prompt)
+	}
+
+	return nil
+}
+
+// getBeadBlockers returns the list of beads blocking the given bead
+func getBeadBlockers(beadID string) ([]string, error) {
+	wd, _ := os.Getwd()
+	recommendations, err := bv.GetTriageRecommendations(wd, 100)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, rec := range recommendations {
+		if rec.ID == beadID {
+			return rec.BlockedBy, nil
+		}
+	}
+
+	return nil, nil
+}
+
+// getBeadTitle retrieves the title for a bead
+func getBeadTitle(beadID string) string {
+	wd, _ := os.Getwd()
+	recommendations, err := bv.GetTriageRecommendations(wd, 100)
+	if err != nil {
+		return ""
+	}
+
+	for _, rec := range recommendations {
+		if rec.ID == beadID {
+			return rec.Title
+		}
+	}
+
+	// Fallback to ready preview
+	readyBeads := bv.GetReadyPreview(wd, 50)
+	for _, b := range readyBeads {
+		if b.ID == beadID {
+			return b.Title
+		}
+	}
+
+	return ""
+}
+
+// reserveFilesForBead reserves files mentioned in a bead for an agent
+func reserveFilesForBead(session, beadID, beadTitle, agentType string, verbose bool) *assign.FileReservationResult {
+	// Get project key (use working directory)
+	projectKey, _ := os.Getwd()
+
+	// Create agent name from session and agent type
+	agentName := fmt.Sprintf("%s_%s", session, agentType)
+
+	// Create reservation manager
+	manager := assign.NewFileReservationManager(nil, projectKey)
+
+	// Attempt reservation (will return result even without client)
+	result, err := manager.ReserveForBead(nil, beadID, beadTitle, "", agentName)
+	if err != nil && verbose {
+		fmt.Fprintf(os.Stderr, "[RESERVE] Warning: %v\n", err)
+	}
+
+	return result
 }
