@@ -352,25 +352,23 @@ func (e *Engine) ListPending(ctx context.Context) ([]state.Approval, error) {
 
 // ExpireStale marks all expired pending approvals as expired.
 func (e *Engine) ExpireStale(ctx context.Context) (int, error) {
-	approvals, err := e.store.ListPendingApprovals()
+	// Use ListExpiredPendingApprovals which returns pending approvals where expires_at <= now
+	approvals, err := e.store.ListExpiredPendingApprovals()
 	if err != nil {
-		return 0, fmt.Errorf("list pending approvals: %w", err)
+		return 0, fmt.Errorf("list expired pending approvals: %w", err)
 	}
 
 	count := 0
-	now := time.Now()
 	for _, a := range approvals {
-		if a.Status == state.ApprovalPending && now.After(a.ExpiresAt) {
-			a.Status = state.ApprovalExpired
-			if err := e.store.UpdateApproval(&a); err == nil {
-				count++
+		a.Status = state.ApprovalExpired
+		if err := e.store.UpdateApproval(&a); err == nil {
+			count++
 
-				if e.eventBus != nil {
-					e.eventBus.Publish(events.BaseEvent{
-						Type:      "approval.expired",
-						Timestamp: time.Now().UTC(),
-					})
-				}
+			if e.eventBus != nil {
+				e.eventBus.Publish(events.BaseEvent{
+					Type:      "approval.expired",
+					Timestamp: time.Now().UTC(),
+				})
 			}
 		}
 	}

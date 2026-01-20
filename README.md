@@ -23,9 +23,12 @@ curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install
 ## Quick Start
 
 ```bash
-# Install NTM
 curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.sh?$(date +%s)" | bash -s -- --easy-mode
+```
 
+Add shell integration:
+
+```bash
 # Add shell integration
 echo 'eval "$(ntm shell zsh)"' >> ~/.zshrc && source ~/.zshrc
 
@@ -1735,11 +1738,16 @@ export NTM_THEME=plain   # Explicit no-color theme (escape hatch)
 
 #### First run (10 minutes)
 
+1) Install + shell integration (zsh example):
+
 ```bash
-# 1) Install + shell integration (zsh example)
 curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.sh?$(date +%s)" | bash -s -- --easy-mode
 echo 'eval "$(ntm shell zsh)"' >> ~/.zshrc && source ~/.zshrc
+```
 
+2) Sanity check + quick orientation:
+
+```bash
 # 2) Sanity check + quick orientation
 ntm deps -v
 ntm tutorial

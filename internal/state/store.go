@@ -632,7 +632,7 @@ func (s *Store) UpdateApproval(appr *Approval) error {
 	return nil
 }
 
-// ListPendingApprovals returns all pending approval requests.
+// ListPendingApprovals returns all pending approval requests that haven't expired.
 func (s *Store) ListPendingApprovals() ([]Approval, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -640,10 +640,36 @@ func (s *Store) ListPendingApprovals() ([]Approval, error) {
 	rows, err := s.db.Query(`
 		SELECT id, action, resource, COALESCE(reason, ''), requested_by, COALESCE(correlation_id, ''), requires_slb, created_at, expires_at, status, COALESCE(approved_by, ''), approved_at, COALESCE(denied_reason, '')
 		FROM approvals WHERE status = 'pending' AND expires_at > ?
-		ORDER BY created_at`, time.Now())
+		ORDER BY created_at`, time.Now().UTC())
 
 	if err != nil {
 		return nil, fmt.Errorf("list pending approvals: %w", err)
+	}
+	defer rows.Close()
+
+	var approvals []Approval
+	for rows.Next() {
+		var appr Approval
+		if err := rows.Scan(&appr.ID, &appr.Action, &appr.Resource, &appr.Reason, &appr.RequestedBy, &appr.CorrelationID, &appr.RequiresSLB, &appr.CreatedAt, &appr.ExpiresAt, &appr.Status, &appr.ApprovedBy, &appr.ApprovedAt, &appr.DeniedReason); err != nil {
+			return nil, fmt.Errorf("scan approval: %w", err)
+		}
+		approvals = append(approvals, appr)
+	}
+	return approvals, rows.Err()
+}
+
+// ListExpiredPendingApprovals returns pending approvals that have expired.
+func (s *Store) ListExpiredPendingApprovals() ([]Approval, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT id, action, resource, COALESCE(reason, ''), requested_by, COALESCE(correlation_id, ''), requires_slb, created_at, expires_at, status, COALESCE(approved_by, ''), approved_at, COALESCE(denied_reason, '')
+		FROM approvals WHERE status = 'pending' AND expires_at <= ?
+		ORDER BY created_at`, time.Now().UTC())
+
+	if err != nil {
+		return nil, fmt.Errorf("list expired pending approvals: %w", err)
 	}
 	defer rows.Close()
 
