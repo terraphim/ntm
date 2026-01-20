@@ -97,6 +97,7 @@ func NewClient(opts ...Option) *Client {
 		httpClient: &http.Client{
 			Timeout: DefaultTimeout,
 			Transport: &http.Transport{
+				Proxy:               http.ProxyFromEnvironment,
 				MaxIdleConns:        10,
 				MaxIdleConnsPerHost: 10,
 				IdleConnTimeout:     90 * time.Second,
@@ -395,17 +396,14 @@ func (c *Client) ReadResource(ctx context.Context, uri string) (json.RawMessage,
 func (c *Client) httpBaseURL() string {
 	base := c.baseURL
 	// Remove trailing /mcp/ or /mcp if present
-	if len(base) >= 5 && base[len(base)-5:] == "/mcp/" {
-		return base[:len(base)-5]
+	if strings.HasSuffix(base, "/mcp/") {
+		return strings.TrimSuffix(base, "/mcp/")
 	}
-	if len(base) >= 4 && base[len(base)-4:] == "/mcp" {
-		return base[:len(base)-4]
+	if strings.HasSuffix(base, "/mcp") {
+		return strings.TrimSuffix(base, "/mcp")
 	}
 	// Remove trailing slash
-	if base != "" && base[len(base)-1] == '/' {
-		return base[:len(base)-1]
-	}
-	return base
+	return strings.TrimSuffix(base, "/")
 }
 
 // ProjectSlugFromPath derives a project slug from an absolute path.
