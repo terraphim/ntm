@@ -321,14 +321,11 @@ func waitForAgentsReady(output *SpawnOutput, timeout time.Duration) {
 
 			// Build tmux target from session and pane reference
 			// The Pane field is in "window.index" format (e.g., "0.2")
-			// For tmux capture, use "session.pane_index" format
+			// For tmux capture, use "session:window.pane" format
 			paneRef := output.Agents[i].Pane
-			// Extract pane index from "window.index" format
-			paneIndex := paneRef
-			if idx := strings.LastIndex(paneRef, "."); idx >= 0 {
-				paneIndex = paneRef[idx+1:]
-			}
-			target := output.Session + "." + paneIndex
+			
+			// We can use the paneRef directly as it contains window.index
+			target := fmt.Sprintf("%s:%s", output.Session, paneRef)
 
 			// Capture pane output (50 lines to catch Claude's TUI)
 			captured, err := tmux.CapturePaneOutput(target, 50)
