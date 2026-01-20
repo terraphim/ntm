@@ -2060,3 +2060,82 @@ stale_threshold_hours = 24
 		t.Errorf("Negative StaleHours should be rejected, got %d", cfg.SessionRecovery.StaleThresholdHours)
 	}
 }
+
+func TestDefaultAssignConfig(t *testing.T) {
+	cfg := DefaultAssignConfig()
+
+	if cfg.Strategy != "balanced" {
+		t.Errorf("Expected default strategy 'balanced', got %q", cfg.Strategy)
+	}
+}
+
+func TestIsValidStrategy(t *testing.T) {
+	tests := []struct {
+		strategy string
+		valid    bool
+	}{
+		{"balanced", true},
+		{"speed", true},
+		{"quality", true},
+		{"dependency", true},
+		{"round-robin", true},
+		{"invalid", false},
+		{"", false},
+		{"BALANCED", false}, // Case-sensitive
+		{"bv", false},       // Non-existent strategy mentioned in spec
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.strategy, func(t *testing.T) {
+			got := IsValidStrategy(tt.strategy)
+			if got != tt.valid {
+				t.Errorf("IsValidStrategy(%q) = %v, want %v", tt.strategy, got, tt.valid)
+			}
+		})
+	}
+}
+
+func TestValidAssignStrategies(t *testing.T) {
+	// Verify all expected strategies are present
+	expected := []string{"balanced", "speed", "quality", "dependency", "round-robin"}
+	if len(ValidAssignStrategies) != len(expected) {
+		t.Errorf("Expected %d strategies, got %d", len(expected), len(ValidAssignStrategies))
+	}
+
+	for _, s := range expected {
+		found := false
+		for _, v := range ValidAssignStrategies {
+			if v == s {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Expected strategy %q not found in ValidAssignStrategies", s)
+		}
+	}
+}
+
+func TestAssignConfigFromTOML(t *testing.T) {
+	configContent := `
+[assign]
+strategy = "quality"
+`
+	configPath := createTempConfig(t, configContent)
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	if cfg.Assign.Strategy != "quality" {
+		t.Errorf("Expected strategy 'quality', got %q", cfg.Assign.Strategy)
+	}
+}
+
+func TestAssignConfigDefaultInFullConfig(t *testing.T) {
+	cfg := Default()
+
+	if cfg.Assign.Strategy != "balanced" {
+		t.Errorf("Expected default strategy 'balanced' in full config, got %q", cfg.Assign.Strategy)
+	}
+}

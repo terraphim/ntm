@@ -621,8 +621,8 @@ func generateDescription(goal string) string {
 
 	// Take first few words (up to 5)
 	words := strings.Fields(desc)
-	if len(words) > 5 {
-		words = words[:5]
+	if len(words) > 8 {
+		words = words[:8]
 	}
 	desc = strings.Join(words, "-")
 

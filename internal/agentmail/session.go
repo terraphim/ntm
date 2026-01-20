@@ -98,7 +98,8 @@ func LoadSessionAgent(sessionName, projectKey string) (*SessionAgentInfo, error)
 
 	// Strict validation: if we requested a specific project, ensure we got it.
 	// This protects against legacy fallback returning an agent for a different project.
-	if projectKey != "" && info.ProjectKey != projectKey {
+	// Normalize paths to handle trailing slashes and redundant separators.
+	if projectKey != "" && filepath.Clean(info.ProjectKey) != filepath.Clean(projectKey) {
 		return nil, nil
 	}
 

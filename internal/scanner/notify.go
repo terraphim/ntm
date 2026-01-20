@@ -17,6 +17,12 @@ func NotifyScanResults(ctx context.Context, result *ScanResult, projectKey strin
 		return nil
 	}
 
+	// Ensure scanner identity is registered
+	if err := ensureScannerRegistered(ctx, client, projectKey); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to register scanner agent: %v\n", err)
+		// Continue anyway, maybe it exists?
+	}
+
 	// 1. Fetch active file reservations to target notifications
 	reservations, err := client.ListReservations(ctx, projectKey, "", true)
 	if err != nil {
@@ -139,4 +145,15 @@ func buildSummaryMessage(result *ScanResult) string {
 	}
 
 	return sb.String()
+}
+
+func ensureScannerRegistered(ctx context.Context, client *agentmail.Client, projectKey string) error {
+	_, err := client.RegisterAgent(ctx, agentmail.RegisterAgentOptions{
+		ProjectKey:      projectKey,
+		Name:            "ntm_scanner",
+		Program:         "ntm",
+		Model:           "scanner",
+		TaskDescription: "Automated vulnerability scanner",
+	})
+	return err
 }

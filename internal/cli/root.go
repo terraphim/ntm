@@ -980,6 +980,9 @@ var (
 	// Robot-mail flag
 	robotMail bool // Agent Mail state output
 
+	// Robot-tools flag for tool inventory
+	robotTools bool // tool inventory and health output
+
 	// Robot-ack flags for send confirmation tracking
 	robotAck        string // session name for ack
 	robotAckTimeout string // timeout (e.g., "30s", "5000ms")

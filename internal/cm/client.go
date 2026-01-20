@@ -70,7 +70,10 @@ type Snippet struct {
 // GetContext queries CM for task-relevant rules via HTTP.
 func (c *Client) GetContext(ctx context.Context, task string) (*ContextResult, error) {
 	reqBody := map[string]string{"task": task}
-	data, _ := json.Marshal(reqBody)
+	data, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling request: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/context", bytes.NewReader(data))
 	if err != nil {
@@ -298,10 +301,11 @@ func (c *CLIClient) FormatForRecovery(result *CLIContextResponse) string {
 	return buf.String()
 }
 
-// truncate shortens a string to maxLen, adding ellipsis if needed
+// truncate shortens a string to maxLen runes, adding ellipsis if needed
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen-3] + "..."
+	return string(runes[:maxLen-3]) + "..."
 }

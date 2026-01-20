@@ -81,6 +81,18 @@ func (s *Scanner) Scan(ctx context.Context, path string, opts ScanOptions) (*Sca
 		return nil, fmt.Errorf("starting ubs: %w", err)
 	}
 
+	// Ensure process is cleaned up if we return early (e.g. read error)
+	// We need to ensure we don't double-wait or double-kill in the success path.
+	// We will handle cleanup explicitly in error paths or rely on Wait() at the end.
+	// But defer is safer.
+	var waitDone bool
+	defer func() {
+		if !waitDone && cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait() // Reap the zombie
+		}
+	}()
+
 	// Read output with limit
 	output, err := io.ReadAll(io.LimitReader(stdoutPipe, MaxScanOutputBytes+1))
 	if err != nil {
@@ -89,11 +101,11 @@ func (s *Scanner) Scan(ctx context.Context, path string, opts ScanOptions) (*Sca
 
 	// Check if output exceeded limit
 	if len(output) > MaxScanOutputBytes {
-		_ = cmd.Process.Kill()
 		return nil, ErrOutputTooLarge
 	}
 
 	waitErr := cmd.Wait()
+	waitDone = true
 	duration := time.Since(startTime)
 
 	// Check for timeout

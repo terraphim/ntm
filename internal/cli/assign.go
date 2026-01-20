@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Dicklesworthstone/ntm/internal/agentmail"
+	"github.com/Dicklesworthstone/ntm/internal/config"
 	"github.com/Dicklesworthstone/ntm/internal/assign"
 	"github.com/Dicklesworthstone/ntm/internal/assignment"
 	"github.com/Dicklesworthstone/ntm/internal/bv"
@@ -244,6 +245,20 @@ func runAssign(cmd *cobra.Command, args []string) error {
 	}
 	res.ExplainIfInferred(cmd.ErrOrStderr())
 	session = res.Session
+
+	// Apply config default for strategy if not explicitly set via flag
+	if !cmd.Flags().Changed("strategy") {
+		// Load config to get default strategy
+		if cfg != nil && cfg.Assign.Strategy != "" {
+			assignStrategy = cfg.Assign.Strategy
+		}
+	}
+
+	// Validate strategy
+	if !config.IsValidStrategy(assignStrategy) {
+		return fmt.Errorf("unknown strategy %q. Valid strategies: %s",
+			assignStrategy, strings.Join(config.ValidAssignStrategies, ", "))
+	}
 
 	// Handle clear operations first
 	if assignClear != "" || assignClearPane >= 0 || assignClearFailed {

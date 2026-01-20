@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -38,6 +39,14 @@ func TestRotateCmdValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Change to a temp dir to prevent CWD-based session inference
+			tmpDir := t.TempDir()
+			oldWd, _ := os.Getwd()
+			if err := os.Chdir(tmpDir); err != nil {
+				t.Fatalf("chdir failed: %v", err)
+			}
+			defer os.Chdir(oldWd)
+
 			if tt.skipIfAutoSelectPossible && sessionAutoSelectPossible() {
 				t.Skip("Skipping: exactly one tmux session running (auto-selection applies)")
 			}

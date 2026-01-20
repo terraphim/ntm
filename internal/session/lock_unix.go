@@ -18,7 +18,7 @@ func acquireLock() (func(), error) {
 
 	// Ensure directory exists for lock file
 	dir := StorageDir()
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		localMu.Unlock()
 		return nil, err
 	}

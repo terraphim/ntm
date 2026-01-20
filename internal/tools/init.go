@@ -40,4 +40,10 @@ func init() {
 
 	// Register XF adapter (X Find - X/Twitter archive search)
 	Register(NewXFAdapter())
+
+	// Register GIIL adapter (Get Image from Internet Link - cloud photo downloader)
+	Register(NewGIILAdapter())
+
+	// Register UBS adapter (Ultimate Bug Scanner - code review and bug detection)
+	Register(NewUBSAdapter())
 }

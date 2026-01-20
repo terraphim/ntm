@@ -52,7 +52,7 @@ Examples:
 				return err
 			}
 			if res.Session == "" {
-				return nil
+				return fmt.Errorf("session required")
 			}
 			res.ExplainIfInferred(os.Stderr)
 			session = res.Session

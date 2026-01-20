@@ -42,6 +42,7 @@ type Config struct {
 	Cleanup         CleanupConfig         `toml:"cleanup"`           // Temp file cleanup configuration
 	FileReservation FileReservationConfig `toml:"file_reservation"` // Auto file reservation via Agent Mail
 	Memory          MemoryConfig          `toml:"memory"`           // CASS Memory (cm) integration
+	Assign          AssignConfig          `toml:"assign"`           // Assignment strategy configuration
 
 	// Runtime-only fields (populated by project config merging)
 	ProjectDefaults map[string]int `toml:"-"`
@@ -620,6 +621,31 @@ type AgentMailConfig struct {
 	ProgramName  string `toml:"program_name"`  // Program identifier for registration
 }
 
+// AssignConfig holds configuration for the ntm assign command
+type AssignConfig struct {
+	Strategy string `toml:"strategy"` // Default strategy: balanced, speed, quality, dependency, round-robin
+}
+
+// ValidAssignStrategies are the recognized assignment strategies
+var ValidAssignStrategies = []string{"balanced", "speed", "quality", "dependency", "round-robin"}
+
+// IsValidStrategy returns true if the strategy is recognized
+func IsValidStrategy(strategy string) bool {
+	for _, s := range ValidAssignStrategies {
+		if s == strategy {
+			return true
+		}
+	}
+	return false
+}
+
+// DefaultAssignConfig returns the default assign configuration
+func DefaultAssignConfig() AssignConfig {
+	return AssignConfig{
+		Strategy: "balanced",
+	}
+}
+
 // ModelsConfig holds model alias configuration for each agent type
 type ModelsConfig struct {
 	DefaultClaude string            `toml:"default_claude"` // Default model for Claude
@@ -903,6 +929,7 @@ func Default() *Config {
 		Cleanup:         DefaultCleanupConfig(),
 		FileReservation: DefaultFileReservationConfig(),
 		Memory:          DefaultMemoryConfig(),
+		Assign:          DefaultAssignConfig(),
 	}
 
 	// Try to load palette from markdown file

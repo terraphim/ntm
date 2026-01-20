@@ -37,11 +37,12 @@ const (
 	ToolMS   ToolName = "ms"   // Meta Skill - skill search and suggestion
 	ToolXF   ToolName = "xf"   // X Find - X/Twitter archive search
 	ToolGIIL ToolName = "giil" // Get Image from Internet Link - cloud photo downloader
+	ToolUBS  ToolName = "ubs"  // Ultimate Bug Scanner - code review and bug detection
 )
 
 // AllTools returns a list of all supported tools
 func AllTools() []ToolName {
-	return []ToolName{ToolBV, ToolBD, ToolAM, ToolCM, ToolCASS, ToolS2P, ToolJFP, ToolDCG, ToolSLB, ToolACFS, ToolRU, ToolMS, ToolXF, ToolGIIL}
+	return []ToolName{ToolBV, ToolBD, ToolAM, ToolCM, ToolCASS, ToolS2P, ToolJFP, ToolDCG, ToolSLB, ToolACFS, ToolRU, ToolMS, ToolXF, ToolGIIL, ToolUBS}
 }
 
 // HealthStatus represents the health state of a tool

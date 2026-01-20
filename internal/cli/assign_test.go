@@ -521,3 +521,72 @@ func TestReassignErrorCodes(t *testing.T) {
 		}
 	}
 }
+
+// ============================================================================
+// Strategy Validation Tests
+// ============================================================================
+
+// TestStrategyFlagDefaultValue tests that the strategy flag has the correct default
+func TestStrategyFlagDefaultValue(t *testing.T) {
+	cmd := newAssignCmd()
+	flag := cmd.Flags().Lookup("strategy")
+	if flag == nil {
+		t.Fatal("Expected 'strategy' flag to exist")
+	}
+	if flag.DefValue != "balanced" {
+		t.Errorf("Expected default strategy 'balanced', got %q", flag.DefValue)
+	}
+}
+
+// TestStrategyFlagHelpText tests that strategy flag has descriptive help
+func TestStrategyFlagHelpText(t *testing.T) {
+	cmd := newAssignCmd()
+	flag := cmd.Flags().Lookup("strategy")
+	if flag == nil {
+		t.Fatal("Expected 'strategy' flag to exist")
+	}
+
+	// Help text should mention all valid strategies
+	help := flag.Usage
+	expectedStrategies := []string{"balanced", "speed", "quality", "dependency", "round-robin"}
+	for _, s := range expectedStrategies {
+		if !contains(help, s) {
+			t.Errorf("Expected strategy flag help to mention %q", s)
+		}
+	}
+}
+
+// TestAssignOutputIncludesStrategy tests that output structures include strategy field
+func TestAssignOutputIncludesStrategy(t *testing.T) {
+	output := AssignOutputEnhanced{
+		Strategy: "quality",
+	}
+	if output.Strategy != "quality" {
+		t.Errorf("Expected Strategy field to be 'quality', got %q", output.Strategy)
+	}
+}
+
+// TestAssignCommandOptionsIncludesStrategy tests that options struct includes strategy
+func TestAssignCommandOptionsIncludesStrategy(t *testing.T) {
+	opts := AssignCommandOptions{
+		Session:  "test",
+		Strategy: "dependency",
+	}
+	if opts.Strategy != "dependency" {
+		t.Errorf("Expected Strategy in options to be 'dependency', got %q", opts.Strategy)
+	}
+}
+
+// contains checks if a string contains a substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
+}
+
+func containsSubstr(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

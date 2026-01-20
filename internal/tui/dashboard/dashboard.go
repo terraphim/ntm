@@ -1966,6 +1966,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.renderedOutputCache = make(map[string]string)
 			}
 
+			// Cleanup caches for stale panes
+			validPaneIDs := make(map[string]bool, len(m.panes))
+			for _, p := range m.panes {
+				validPaneIDs[p.ID] = true
+			}
+			for id := range m.paneOutputCache {
+				if !validPaneIDs[id] {
+					delete(m.paneOutputCache, id)
+				}
+			}
+			for id := range m.paneOutputLastCaptured {
+				if !validPaneIDs[id] {
+					delete(m.paneOutputLastCaptured, id)
+				}
+			}
+			for id := range m.renderedOutputCache {
+				if !validPaneIDs[id] {
+					delete(m.renderedOutputCache, id)
+				}
+			}
+
 			// Process compaction checks, context tracking, AND live status updates
 			for _, data := range msg.Outputs {
 				if data.PaneID != "" {
@@ -2569,7 +2590,6 @@ func (m Model) View() string {
 
 func (m Model) renderHeaderSection() string {
 	t := m.theme
-	ic := m.icons
 
 	var b strings.Builder
 	b.WriteString("\n")
@@ -2582,7 +2602,7 @@ func (m Model) renderHeaderSection() string {
 	b.WriteString(center.Render(bannerText) + "\n")
 
 	// Session title with gradient
-	sessionTitle := ic.Session + "  " + m.session
+	sessionTitle := m.icons.Session + "  " + m.session
 	animatedSession := styles.Shimmer(sessionTitle, m.animTick,
 		string(t.Blue), string(t.Lavender), string(t.Mauve))
 	b.WriteString(center.Render(animatedSession) + "\n")
@@ -3169,7 +3189,7 @@ func (m Model) renderPaneGrid() string {
 		}
 		if showExtendedInfo {
 			if rank, ok := contextRanks[p.Index]; ok && rank > 0 {
-				rankBadge := styles.RankBadge(rank, styles.BadgeOptions{
+				rankBadge := styles.TextBadge(fmt.Sprintf("rank%d", rank), t.Mauve, t.Base, styles.BadgeOptions{
 					Style:    styles.BadgeStyleCompact,
 					Bold:     false,
 					ShowIcon: false,
@@ -4601,8 +4621,8 @@ func activitySummaryLine(rows []PaneTableRow, t theme.Theme) string {
 		return ""
 	}
 
-	label := lipgloss.NewStyle().Foreground(t.Subtext).Render("Activity:")
-	return label + " " + strings.Join(compactBadges, " ")
+	label := lipgloss.NewStyle().Foreground(t.Subtext).Bold(true)
+	return label.Render("Activity:") + " " + strings.Join(compactBadges, " ")
 }
 
 // mergeRoutingIntoMetrics updates metrics data with routing scores.
