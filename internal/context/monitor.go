@@ -4,6 +4,7 @@ package context
 
 import (
 	"encoding/json"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -110,13 +111,16 @@ type ContextEstimate struct {
 
 // ContextState holds the full context tracking state for an agent.
 type ContextState struct {
-	AgentID      string           `json:"agent_id"`
-	PaneID       string           `json:"pane_id"`
-	Model        string           `json:"model"`
-	Estimate     *ContextEstimate `json:"estimate"`
-	MessageCount int              `json:"message_count"`
-	SessionStart time.Time        `json:"session_start"`
-	LastActivity time.Time        `json:"last_activity"`
+	AgentID        string           `json:"agent_id"`
+	PaneID         string           `json:"pane_id"`
+	Model          string           `json:"model"`
+	AgentType      string           `json:"agent_type,omitempty"` // cc, cod, gmi
+	SessionName    string           `json:"session_name,omitempty"`
+	TranscriptPath string           `json:"transcript_path,omitempty"` // Path to agent's transcript file
+	Estimate       *ContextEstimate `json:"estimate"`
+	MessageCount   int              `json:"message_count"`
+	SessionStart   time.Time        `json:"session_start"`
+	LastActivity   time.Time        `json:"last_activity"`
 
 	// Internal tracking
 	cumulativeInputTokens  int64
@@ -643,4 +647,139 @@ func ParseTokenCount(text string) (int64, bool) {
 	}
 
 	return 0, false
+}
+
+// RegisterAgentWithTranscript registers an agent with extended info including transcript path.
+// This is used for pre-compact handoff generation that needs to read the transcript.
+func (m *ContextMonitor) RegisterAgentWithTranscript(agentID, paneID, model, agentType, sessionName, transcriptPath string) *ContextState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	state, exists := m.states[agentID]
+	if !exists {
+		state = &ContextState{
+			AgentID:        agentID,
+			PaneID:         paneID,
+			Model:          model,
+			AgentType:      agentType,
+			SessionName:    sessionName,
+			TranscriptPath: transcriptPath,
+			SessionStart:   time.Now(),
+		}
+		m.states[agentID] = state
+	} else {
+		// Update fields
+		state.PaneID = paneID
+		state.Model = model
+		state.AgentType = agentType
+		state.SessionName = sessionName
+		state.TranscriptPath = transcriptPath
+	}
+
+	return state
+}
+
+// UpdateFromTranscript reads the agent's transcript file and estimates tokens from file size.
+// Uses ~4 bytes per token as approximation (conservative for safety).
+// Returns the estimated tokens, or 0 if the file doesn't exist or can't be read.
+func (m *ContextMonitor) UpdateFromTranscript(agentID string) (int64, error) {
+	m.mu.RLock()
+	state, exists := m.states[agentID]
+	m.mu.RUnlock()
+
+	if !exists {
+		return 0, nil
+	}
+
+	if state.TranscriptPath == "" {
+		return 0, nil // No transcript path configured
+	}
+
+	info, err := os.Stat(state.TranscriptPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil // File doesn't exist yet, not an error
+		}
+		return 0, err
+	}
+
+	// Estimate tokens from file size (~4 bytes per token, conservative)
+	estimatedTokens := info.Size() / 4
+
+	// Update the state with this estimate
+	m.mu.Lock()
+	if state, exists := m.states[agentID]; exists {
+		state.cumulativeInputTokens = estimatedTokens / 2
+		state.cumulativeOutputTokens = estimatedTokens / 2
+		state.LastActivity = time.Now()
+	}
+	m.mu.Unlock()
+
+	return estimatedTokens, nil
+}
+
+// HandoffRecommendation contains the result of ShouldTriggerHandoff.
+type HandoffRecommendation struct {
+	ShouldTrigger bool    // True if handoff should be triggered
+	ShouldWarn    bool    // True if warning threshold exceeded
+	Reason        string  // Human-readable reason for the recommendation
+	UsagePercent  float64 // Current usage percentage
+	TokenVelocity float64 // Tokens per minute (if available)
+}
+
+// ShouldTriggerHandoff checks if an agent should generate a handoff.
+// Returns a recommendation with reason explaining why.
+// Warning threshold is 70%, trigger threshold is 75%.
+func (m *ContextMonitor) ShouldTriggerHandoff(agentID string, predictor *ContextPredictor) *HandoffRecommendation {
+	estimate := m.GetEstimate(agentID)
+	if estimate == nil {
+		return &HandoffRecommendation{
+			ShouldTrigger: false,
+			ShouldWarn:    false,
+			Reason:        "no context estimate available",
+		}
+	}
+
+	rec := &HandoffRecommendation{
+		UsagePercent: estimate.UsagePercent,
+	}
+
+	// Hard threshold check (75%)
+	if estimate.UsagePercent >= 75 {
+		rec.ShouldTrigger = true
+		rec.ShouldWarn = true
+		rec.Reason = "usage " + strconv.FormatFloat(estimate.UsagePercent, 'f', 1, 64) + "% exceeds 75% threshold"
+		return rec
+	}
+
+	// Warning threshold check (70%)
+	if estimate.UsagePercent >= 70 {
+		rec.ShouldWarn = true
+		rec.Reason = "usage " + strconv.FormatFloat(estimate.UsagePercent, 'f', 1, 64) + "% exceeds 70% warning threshold"
+	}
+
+	// Velocity-based prediction (if predictor available)
+	if predictor != nil {
+		state := m.GetState(agentID)
+		if state != nil {
+			prediction := predictor.PredictExhaustion(GetContextLimit(state.Model))
+			if prediction != nil {
+				rec.TokenVelocity = prediction.TokenVelocity
+
+				// If velocity predicts hitting 85% in next 2 minutes, trigger
+				if prediction.TokenVelocity > 0 && prediction.MinutesToExhaustion > 0 && prediction.MinutesToExhaustion < 8 {
+					rec.ShouldTrigger = true
+					rec.ShouldWarn = true
+					rec.Reason = "velocity " + strconv.FormatFloat(prediction.TokenVelocity, 'f', 0, 64) +
+						" tpm predicts exhaustion in " + strconv.FormatFloat(prediction.MinutesToExhaustion, 'f', 1, 64) + " min"
+				}
+			}
+		}
+	}
+
+	if rec.Reason == "" {
+		rec.Reason = "usage " + strconv.FormatFloat(estimate.UsagePercent, 'f', 1, 64) + "% within normal range"
+	}
+
+	return rec
 }

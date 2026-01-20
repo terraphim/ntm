@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Dicklesworthstone/ntm/internal/events"
+	tokenpkg "github.com/Dicklesworthstone/ntm/internal/tokens"
 )
 
 // TokensOptions configures token usage analysis
@@ -275,7 +276,7 @@ func aggregateTokenStats(eventList []events.Event, days int, since, groupBy stri
 				tokens = int(t)
 			} else if length, ok := event.Data["prompt_length"].(float64); ok {
 				// Fallback: ~3.5 chars/token
-				tokens = int(length) * 10 / 35
+				tokens = tokenpkg.EstimateTokensFromLength(int(length))
 			}
 
 			var chars int

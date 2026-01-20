@@ -650,3 +650,56 @@ func TestRendererInterfaceCompliance(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// OutputFormat Global Variable Tests
+// =============================================================================
+
+func TestOutputFormatDefault(t *testing.T) {
+	// Save original and restore after test
+	original := OutputFormat
+	defer func() { OutputFormat = original }()
+
+	// Default should be FormatAuto
+	if OutputFormat != FormatAuto {
+		t.Errorf("OutputFormat default = %q, want %q", OutputFormat, FormatAuto)
+	}
+}
+
+func TestOutputFormatAffectsEncodeJSON(t *testing.T) {
+	// Save original and restore after test
+	original := OutputFormat
+	defer func() { OutputFormat = original }()
+
+	payload := map[string]string{"key": "value"}
+
+	// Test with JSON format
+	OutputFormat = FormatJSON
+	jsonOutput, err := Render(payload, OutputFormat)
+	if err != nil {
+		t.Fatalf("Render with FormatJSON error: %v", err)
+	}
+
+	// Verify it's valid JSON
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonOutput), &parsed); err != nil {
+		t.Fatalf("JSON output is not valid JSON: %v", err)
+	}
+
+	// Test with TOON format
+	OutputFormat = FormatTOON
+	toonOutput, err := Render(payload, OutputFormat)
+	if err != nil {
+		t.Fatalf("Render with FormatTOON error: %v", err)
+	}
+
+	// TOON output should be different from JSON
+	if toonOutput == jsonOutput {
+		t.Error("TOON output should differ from JSON output")
+	}
+
+	// TOON output should contain key-value format
+	if !strings.Contains(toonOutput, "key") || !strings.Contains(toonOutput, "value") {
+		t.Errorf("TOON output missing expected content: %q", toonOutput)
+	}
+}
