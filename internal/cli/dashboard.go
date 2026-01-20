@@ -1,15 +1,20 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Dicklesworthstone/ntm/internal/agentmail"
 	"github.com/Dicklesworthstone/ntm/internal/config"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 	"github.com/Dicklesworthstone/ntm/internal/tui/dashboard"
+	"github.com/Dicklesworthstone/ntm/internal/watcher"
 )
 
 func newDashboardCmd() *cobra.Command {
@@ -74,6 +79,63 @@ func runDashboard(w io.Writer, errW io.Writer, session string) error {
 		fmt.Fprintf(errW, "Warning: project directory does not exist: %s\n", projectDir)
 		fmt.Fprintf(errW, "Some features (beads, file tracking) may not work correctly.\n")
 		fmt.Fprintf(errW, "Check your projects_base setting in config: ntm config show\n\n")
+	}
+
+	// Start FileReservationWatcher if enabled and Agent Mail is available
+	var reservationWatcher *watcher.FileReservationWatcher
+	if cfg != nil && cfg.FileReservation.Enabled && cfg.AgentMail.Enabled {
+		// Create Agent Mail client with config options
+		amOpts := []agentmail.Option{
+			agentmail.WithBaseURL(cfg.AgentMail.URL),
+			agentmail.WithProjectKey(projectDir),
+		}
+		if cfg.AgentMail.Token != "" {
+			amOpts = append(amOpts, agentmail.WithToken(cfg.AgentMail.Token))
+		}
+		amClient := agentmail.NewClient(amOpts...)
+
+		// Check if Agent Mail is reachable
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if _, err := amClient.HealthCheck(ctx); err == nil {
+			// Convert config to watcher config values
+			cfgValues := watcher.FileReservationConfigValues{
+				Enabled:               cfg.FileReservation.Enabled,
+				AutoReserve:           cfg.FileReservation.AutoReserve,
+				AutoReleaseIdleMin:    cfg.FileReservation.AutoReleaseIdleMin,
+				NotifyOnConflict:      cfg.FileReservation.NotifyOnConflict,
+				ExtendOnActivity:      cfg.FileReservation.ExtendOnActivity,
+				DefaultTTLMin:         cfg.FileReservation.DefaultTTLMin,
+				PollIntervalSec:       cfg.FileReservation.PollIntervalSec,
+				CaptureLinesForDetect: cfg.FileReservation.CaptureLinesForDetect,
+				Debug:                 cfg.FileReservation.Debug,
+			}
+
+			// Create conflict callback for notifications
+			conflictCallback := func(conflict watcher.FileConflict) {
+				if cfg.FileReservation.Debug {
+					log.Printf("[FileReservation] Conflict: %s requested by %s, held by %v",
+						conflict.Path, conflict.RequestorAgent, conflict.Holders)
+				}
+				// TODO: Integrate with dashboard notification system
+			}
+
+			reservationWatcher = watcher.NewFileReservationWatcherFromConfig(
+				cfgValues,
+				amClient,
+				projectDir,
+				session, // Use session name as agent name
+				conflictCallback,
+			)
+
+			if reservationWatcher != nil {
+				reservationWatcher.Start(context.Background())
+				defer reservationWatcher.Stop()
+				if cfg.FileReservation.Debug {
+					log.Printf("[FileReservation] Watcher started for session %s", session)
+				}
+			}
+		}
+		cancel()
 	}
 
 	return dashboard.Run(session, projectDir)
