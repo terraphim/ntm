@@ -556,6 +556,7 @@ const (
 	BeadsRefreshInterval       = 5 * time.Second
 	CassContextRefreshInterval = 15 * time.Minute
 	ScanRefreshInterval        = 1 * time.Minute
+	DCGRefreshInterval         = 5 * time.Minute // DCG status changes infrequently
 	CheckpointRefreshInterval  = 30 * time.Second
 	HandoffRefreshInterval     = 30 * time.Second
 	SpawnActiveRefreshInterval = 500 * time.Millisecond // Poll frequently when spawn is active
@@ -628,6 +629,7 @@ func New(session, projectDir string) Model {
 		beadsRefreshInterval:       BeadsRefreshInterval,
 		cassContextRefreshInterval: CassContextRefreshInterval,
 		scanRefreshInterval:        ScanRefreshInterval,
+		dcgRefreshInterval:         DCGRefreshInterval,
 		checkpointRefreshInterval:  CheckpointRefreshInterval,
 		handoffRefreshInterval:     HandoffRefreshInterval,
 		spawnRefreshInterval:       SpawnIdleRefreshInterval,
@@ -672,6 +674,7 @@ func New(session, projectDir string) Model {
 		fetchingCheckpoint:  true,
 		fetchingHandoff:     true,
 		fetchingMailInbox:   true,
+		fetchingDCG:         true,
 	}
 
 	// Initialize last-fetch timestamps to start cadence after the initial fetches from Init.
@@ -682,6 +685,7 @@ func New(session, projectDir string) Model {
 	m.lastBeadsFetch = now
 	m.lastCassContextFetch = now
 	m.lastScanFetch = now
+	m.lastDCGFetch = now
 	m.lastCheckpointFetch = now
 	m.lastHandoffFetch = now
 	m.lastSpawnFetch = now
@@ -746,6 +750,7 @@ func (m Model) Init() tea.Cmd {
 		m.fetchCASSContextCmd(),
 		m.fetchCheckpointStatus(),
 		m.fetchHandoffCmd(),
+		m.fetchDCGStatus(),
 		m.subscribeToConfig(),
 	)
 }
@@ -946,6 +951,49 @@ func (m *Model) fetchScanStatusWithContext(ctx context.Context) tea.Cmd {
 			Duration: dur,
 			Gen:      gen,
 		}
+	}
+}
+
+// fetchDCGStatus fetches the current DCG status
+func (m *Model) fetchDCGStatus() tea.Cmd {
+	gen := m.nextGen(refreshDCG)
+	cfg := m.cfg
+
+	return func() tea.Msg {
+		// Check if DCG is enabled in config
+		enabled := false
+		if cfg != nil {
+			enabled = cfg.Integrations.DCG.Enabled
+		}
+
+		// Get availability from the DCG adapter
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		adapter := tools.NewDCGAdapter()
+		availability, err := adapter.GetAvailability(ctx)
+
+		msg := DCGStatusUpdateMsg{
+			Enabled: enabled,
+			Gen:     gen,
+		}
+
+		if err != nil {
+			msg.Err = err
+			return msg
+		}
+
+		if availability != nil {
+			msg.Available = availability.Available && availability.Compatible
+			if availability.Version.Major > 0 || availability.Version.Minor > 0 || availability.Version.Patch > 0 {
+				msg.Version = availability.Version.String()
+			}
+		}
+
+		// TODO: Read blocked count from audit log when available
+		// For now, we just report availability status
+
+		return msg
 	}
 }
 
@@ -2342,6 +2390,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.checkpointStatus = msg.Status
 			m.checkpointError = nil
 			m.markUpdated(refreshCheckpoint, time.Now())
+		}
+		return m, nil
+
+	case DCGStatusUpdateMsg:
+		if !m.acceptUpdate(refreshDCG, msg.Gen) {
+			return m, nil
+		}
+		m.fetchingDCG = false
+		m.lastDCGFetch = time.Now()
+		if msg.Err != nil {
+			m.dcgError = msg.Err
+		} else {
+			m.dcgEnabled = msg.Enabled
+			m.dcgAvailable = msg.Available
+			m.dcgVersion = msg.Version
+			m.dcgBlocked = msg.Blocked
+			m.dcgLastBlocked = msg.LastBlocked
+			m.dcgError = nil
+			m.markUpdated(refreshDCG, time.Now())
 		}
 		return m, nil
 
@@ -4252,6 +4319,12 @@ func (m *Model) scheduleRefreshes(now time.Time) []tea.Cmd {
 		m.fetchingHandoff = true
 		m.lastHandoffFetch = now
 		cmds = append(cmds, m.fetchHandoffCmd())
+	}
+
+	if refreshDue(m.lastDCGFetch, m.dcgRefreshInterval) && !m.fetchingDCG {
+		m.fetchingDCG = true
+		m.lastDCGFetch = now
+		cmds = append(cmds, m.fetchDCGStatus())
 	}
 
 	return cmds
