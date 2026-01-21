@@ -46,4 +46,7 @@ func init() {
 
 	// Register UBS adapter (Ultimate Bug Scanner - code review and bug detection)
 	Register(NewUBSAdapter())
+
+	// Register CAAM adapter (Coding Agent Account Manager - rate limit recovery)
+	Register(NewCAAMAdapter())
 }

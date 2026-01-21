@@ -27,7 +27,7 @@ type Config struct {
 	Tmux               TmuxConfig            `toml:"tmux"`
 	Robot              RobotConfig           `toml:"robot"`
 	AgentMail          AgentMailConfig       `toml:"agent_mail"`
-	Integrations       IntegrationsConfig    `toml:"integrations"`
+	Integrations       IntegrationsConfig    `toml:"integrations"` // External tool integrations (dcg, caam, etc.)
 	Models             ModelsConfig          `toml:"models"`
 	Alerts             AlertsConfig          `toml:"alerts"`
 	Checkpoints        CheckpointsConfig     `toml:"checkpoints"`
@@ -45,7 +45,6 @@ type Config struct {
 	FileReservation    FileReservationConfig `toml:"file_reservation"` // Auto file reservation via Agent Mail
 	Memory             MemoryConfig          `toml:"memory"`           // CASS Memory (cm) integration
 	Assign             AssignConfig          `toml:"assign"`           // Assignment strategy configuration
-	Integrations       IntegrationsConfig    `toml:"integrations"`     // External tool integrations (CAAM, etc.)
 
 	// Runtime-only fields (populated by project config merging)
 	ProjectDefaults map[string]int `toml:"-"`
@@ -731,13 +730,8 @@ func DefaultIntegrationsConfig() IntegrationsConfig {
 			AuditLog:        "",
 			AllowOverride:   true,
 		},
+		CAAM: DefaultCAAMConfig(),
 	}
-}
-
-// IntegrationsConfig holds configuration for external tool integrations.
-// These are tools that NTM can optionally integrate with for enhanced functionality.
-type IntegrationsConfig struct {
-	CAAM CAAMConfig `toml:"caam"` // CAAM (Coding Agent Account Manager) integration
 }
 
 // CAAMConfig holds configuration for CAAM (Coding Agent Account Manager) integration.
@@ -755,20 +749,13 @@ type CAAMConfig struct {
 // DefaultCAAMConfig returns sensible defaults for CAAM integration.
 func DefaultCAAMConfig() CAAMConfig {
 	return CAAMConfig{
-		Enabled:           true,                                  // Enabled by default (when caam is available)
-		BinaryPath:        "",                                    // Default to PATH lookup
-		AutoRotate:        true,                                  // Auto-rotate on rate limit by default
+		Enabled:           true,                                   // Enabled by default (when caam is available)
+		BinaryPath:        "",                                     // Default to PATH lookup
+		AutoRotate:        true,                                   // Auto-rotate on rate limit by default
 		Providers:         []string{"claude", "openai", "gemini"}, // Manage all major providers
-		RateLimitPatterns: nil,                                   // Use built-in patterns
-		AccountCooldown:   300,                                   // 5 minute cooldown
-		AlertThreshold:    80,                                    // Alert at 80% of limit
-	}
-}
-
-// DefaultIntegrationsConfig returns sensible defaults for external integrations.
-func DefaultIntegrationsConfig() IntegrationsConfig {
-	return IntegrationsConfig{
-		CAAM: DefaultCAAMConfig(),
+		RateLimitPatterns: nil,                                    // Use built-in patterns
+		AccountCooldown:   300,                                    // 5 minute cooldown
+		AlertThreshold:    80,                                     // Alert at 80% of limit
 	}
 }
 
@@ -1040,7 +1027,7 @@ func Default() *Config {
 			AutoRegister: true,
 			ProgramName:  "ntm",
 		},
-		Integrations:   DefaultIntegrationsConfig(),
+		Integrations:    DefaultIntegrationsConfig(),
 		Models:          DefaultModels(),
 		Alerts:          DefaultAlertsConfig(),
 		Checkpoints:     DefaultCheckpointsConfig(),
@@ -1058,7 +1045,6 @@ func Default() *Config {
 		FileReservation: DefaultFileReservationConfig(),
 		Memory:          DefaultMemoryConfig(),
 		Assign:          DefaultAssignConfig(),
-		Integrations:    DefaultIntegrationsConfig(),
 	}
 
 	// Try to load palette from markdown file
