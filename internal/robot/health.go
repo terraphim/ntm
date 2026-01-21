@@ -301,8 +301,8 @@ func getAgentHealth(session string, pane tmux.Pane) AgentHealthInfo {
 
 	// Capture recent output to detect error states
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 	captured, err := tmux.CapturePaneOutputContext(ctx, pane.ID, 20)
-	cancel()
 	if err == nil {
 		// Get agent type from pane info
 		agentType := agentTypeString(pane.Type)
@@ -452,8 +452,8 @@ func checkProcess(paneID string) *ProcessCheckResult {
 
 	// Capture pane output to check for exit indicators
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 	output, err := tmux.CapturePaneOutputContext(ctx, paneID, 30)
-	cancel()
 	if err != nil {
 		result.Reason = "failed to capture pane output"
 		return result
@@ -575,8 +575,8 @@ func checkErrors(paneID string) *ErrorCheckResult {
 
 	// Capture pane output
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 	output, err := tmux.CapturePaneOutputContext(ctx, paneID, 50)
-	cancel()
 	if err != nil {
 		result.Reason = "failed to capture pane output"
 		return result

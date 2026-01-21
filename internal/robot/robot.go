@@ -3477,20 +3477,20 @@ func getAgentMailSummary() (*AgentMailSummary, error) {
 	}
 
 	if !client.IsAvailable() {
-		return summary
+		return summary, nil
 	}
 	summary.Available = true
 
 	// Ensure project exists
 	if _, err := client.EnsureProject(ctx, projectKey); err != nil {
 		summary.Error = fmt.Sprintf("ensure_project: %v", err)
-		return summary
+		return summary, nil
 	}
 
 	agents, err := client.ListProjectAgents(ctx, projectKey)
 	if err != nil {
 		summary.Error = fmt.Sprintf("list_agents: %v", err)
-		return summary
+		return summary, nil
 	}
 	summary.SessionsRegistered = len(agents)
 
@@ -3505,7 +3505,7 @@ func getAgentMailSummary() (*AgentMailSummary, error) {
 		summary.TotalLocks = len(locks)
 	}
 
-	return summary
+	return summary, nil
 }
 
 // countInbox returns the count of inbox entries for an agent.
