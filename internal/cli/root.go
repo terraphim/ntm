@@ -1953,6 +1953,7 @@ func init() {
 		newSpawnCmd(),
 		newQuickCmd(),
 		newAdoptCmd(),
+		newSwarmCmd(),
 
 		// Agent management
 		newAddCmd(),
