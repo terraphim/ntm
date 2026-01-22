@@ -1,15 +1,18 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Dicklesworthstone/ntm/internal/agentmail"
 	"github.com/Dicklesworthstone/ntm/internal/output"
+	"github.com/Dicklesworthstone/ntm/internal/tools"
 	"github.com/Dicklesworthstone/ntm/internal/tui/theme"
 )
 
@@ -225,6 +228,11 @@ func runDeps(verbose bool) error {
 	checkAgentMail(t, verbose)
 	fmt.Println()
 
+	// Flywheel Tools section
+	fmt.Printf("%sFlywheel Tools:%s\n\n", "\033[1m", "\033[0m")
+	flywheelCount := checkFlywheelTools(t, verbose)
+	fmt.Println()
+
 	// Summary
 	fmt.Printf("%s───────────────────────────────────────────────────%s\n", "\033[2m", "\033[0m")
 
@@ -235,8 +243,8 @@ func runDeps(verbose bool) error {
 		fmt.Printf("%s⚠%s No AI agents installed. Install at least one to use ntm spawn.\n",
 			colorize(t.Warning), "\033[0m")
 	} else {
-		fmt.Printf("%s✓%s All required dependencies installed. %d agent(s) available.\n",
-			colorize(t.Success), "\033[0m", agentsAvailable)
+		fmt.Printf("%s✓%s All required dependencies installed. %d agent(s), %d flywheel tool(s) available.\n",
+			colorize(t.Success), "\033[0m", agentsAvailable, flywheelCount)
 	}
 
 	fmt.Println()
@@ -260,6 +268,91 @@ func checkAgentMail(t theme.Theme, verbose bool) {
 		}
 		fmt.Println()
 	}
+}
+
+// checkFlywheelTools checks and displays flywheel ecosystem tools (bv, bd, caam, etc.)
+func checkFlywheelTools(t theme.Theme, verbose bool) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	allInfo := tools.GetAllInfo(ctx)
+	installedCount := 0
+
+	// Key flywheel tools to display (in priority order)
+	keyTools := []tools.ToolName{
+		tools.ToolBV,    // Required for triage
+		tools.ToolBD,    // Beads issue tracker
+		tools.ToolCAAM,  // Multi-account management
+		tools.ToolCaut,  // Quota monitoring
+		tools.ToolDCG,   // Destructive command guard
+		tools.ToolUBS,   // Bug scanner
+		tools.ToolCASS,  // Cross-agent search
+		tools.ToolCM,    // CASS memory
+	}
+
+	// Build a map for quick lookup
+	infoMap := make(map[tools.ToolName]*tools.ToolInfo)
+	for _, info := range allInfo {
+		if info != nil {
+			infoMap[info.Name] = info
+		}
+	}
+
+	for _, toolName := range keyTools {
+		info, exists := infoMap[toolName]
+		if !exists {
+			// Tool not in registry, show as unavailable
+			fmt.Printf("  %s○%s %-15s", colorize(t.Overlay), "\033[0m", string(toolName))
+			if verbose {
+				fmt.Printf(" %snot in registry%s", "\033[2m", "\033[0m")
+			}
+			fmt.Println()
+			continue
+		}
+
+		var statusIcon, statusColor string
+		if info.Installed {
+			installedCount++
+			if info.Health.Healthy {
+				statusIcon = "✓"
+				statusColor = colorize(t.Success)
+			} else {
+				statusIcon = "⚠"
+				statusColor = colorize(t.Warning)
+			}
+		} else {
+			statusIcon = "○"
+			statusColor = colorize(t.Overlay)
+		}
+
+		// Format tool name with required indicator
+		displayName := string(info.Name)
+		if toolName == tools.ToolBV {
+			displayName += " *" // Mark BV as required
+		}
+
+		fmt.Printf("  %s%s%s %-15s", statusColor, statusIcon, "\033[0m", displayName)
+
+		if verbose && info.Installed {
+			versionStr := info.Version.String()
+			if versionStr == "" {
+				versionStr = "installed"
+			}
+			if len(versionStr) > 30 {
+				versionStr = versionStr[:30] + "..."
+			}
+			fmt.Printf(" %s%s%s", "\033[2m", versionStr, "\033[0m")
+
+			// Show health status for unhealthy tools
+			if !info.Health.Healthy && info.Health.Message != "" {
+				fmt.Printf(" %s(%s)%s", "\033[33m", info.Health.Message, "\033[0m")
+			}
+		}
+
+		fmt.Println()
+	}
+
+	return installedCount
 }
 
 // checkDepWithPath checks if a dependency is installed and returns its status, version, and path

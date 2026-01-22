@@ -2432,6 +2432,7 @@ type SnapshotOutput struct {
 	BeadsSummary   *bv.BeadsSummary   `json:"beads_summary,omitempty"`
 	AgentMail      *SnapshotAgentMail `json:"agent_mail,omitempty"`
 	MailUnread     int                `json:"mail_unread,omitempty"`
+	Tools          []ToolInfoOutput   `json:"tools,omitempty"` // Flywheel tool inventory and health
 	Alerts         []string           `json:"alerts"`                    // Legacy: simple string alerts
 	AlertsDetailed []AlertInfo        `json:"alerts_detailed,omitempty"` // Rich alert objects
 	AlertSummary   *AlertSummaryInfo  `json:"alert_summary,omitempty"`
@@ -2626,6 +2627,11 @@ func PrintSnapshot(cfg *config.Config) error {
 			}
 		}
 	}
+
+	// Include tool inventory and health status
+	toolCtx, toolCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	output.Tools = GetToolsSummary(toolCtx)
+	toolCancel()
 
 	// Generate and add detailed alerts using the alerts package
 	var alertCfg alerts.Config
