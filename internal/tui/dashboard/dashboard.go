@@ -781,6 +781,7 @@ func (m Model) Init() tea.Cmd {
 		m.fetchHandoffCmd(),
 		m.fetchDCGStatus(),
 		m.fetchPendingRotations(),
+		m.fetchPTHealthStatesCmd(),
 		m.subscribeToConfig(),
 	)
 }
@@ -1605,6 +1606,10 @@ func (m *Model) fullRefresh(cancelInFlight bool) []tea.Cmd {
 		m.fetchingSpawn = true
 		m.lastSpawnFetch = now
 		cmds = append(cmds, m.fetchSpawnStateCmd())
+	}
+	if !m.fetchingPTHealth {
+		m.fetchingPTHealth = true
+		cmds = append(cmds, m.fetchPTHealthStatesCmd())
 	}
 	if !m.fetchingMailInbox {
 		m.fetchingMailInbox = true

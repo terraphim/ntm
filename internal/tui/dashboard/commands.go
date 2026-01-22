@@ -15,6 +15,7 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/cass"
 	"github.com/Dicklesworthstone/ntm/internal/handoff"
 	"github.com/Dicklesworthstone/ntm/internal/history"
+	"github.com/Dicklesworthstone/ntm/internal/integrations/pt"
 	"github.com/Dicklesworthstone/ntm/internal/robot"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 	"github.com/Dicklesworthstone/ntm/internal/tokens"
@@ -326,4 +327,20 @@ func loadSpawnState(projectDir string) (*spawnState, error) {
 	}
 
 	return &state, nil
+}
+
+// fetchPTHealthStatesCmd fetches process_triage health states from the global monitor
+func (m *Model) fetchPTHealthStatesCmd() tea.Cmd {
+	gen := m.nextGen(refreshPTHealth)
+	return func() tea.Msg {
+		// Get the global monitor (created lazily if needed)
+		monitor := pt.GetGlobalMonitor()
+		if monitor == nil {
+			return PTHealthStatesMsg{States: nil, Gen: gen}
+		}
+
+		// Get current states (thread-safe copy)
+		states := monitor.GetAllStates()
+		return PTHealthStatesMsg{States: states, Gen: gen}
+	}
 }
