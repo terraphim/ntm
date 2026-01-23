@@ -42,26 +42,26 @@ type ArchiveRecord struct {
 
 // PaneState tracks the state of a single pane for incremental capture.
 type PaneState struct {
-	LastHash     uint64 // Hash of last captured content for deduplication
-	LastCapture  time.Time
-	Sequence     int
-	TotalLines   int
-	LastContent  string // Last captured content for diff
+	LastHash    uint64 // Hash of last captured content for deduplication
+	LastCapture time.Time
+	Sequence    int
+	TotalLines  int
+	LastContent string // Last captured content for diff
 }
 
 // Archiver captures agent output for CASS indexing.
 type Archiver struct {
-	sessionName      string
-	outputDir        string
-	interval         time.Duration
-	linesPerCapture  int
-	paneStates       map[int]*PaneState // Keyed by pane index
-	mu               sync.RWMutex
-	file             *os.File
-	encoder          *json.Encoder
-	started          time.Time
-	totalRecords     int
-	onRecord         func(*ArchiveRecord) // Optional callback for testing
+	sessionName     string
+	outputDir       string
+	interval        time.Duration
+	linesPerCapture int
+	paneStates      map[int]*PaneState // Keyed by pane index
+	mu              sync.RWMutex
+	file            *os.File
+	encoder         *json.Encoder
+	started         time.Time
+	totalRecords    int
+	onRecord        func(*ArchiveRecord) // Optional callback for testing
 }
 
 // ArchiverOptions configures the Archiver.
@@ -140,7 +140,9 @@ func (a *Archiver) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			// Final flush on shutdown
-			a.flush()
+			if err := a.flush(); err != nil {
+				fmt.Fprintf(os.Stderr, "archive: flush on shutdown error (session %s): %v\n", a.sessionName, err)
+			}
 			return ctx.Err()
 		case <-ticker.C:
 			if err := a.archiveNewContent(ctx); err != nil {
@@ -277,7 +279,10 @@ func (a *Archiver) Close() error {
 	defer a.mu.Unlock()
 
 	if a.file != nil {
-		a.flush()
+		if err := a.flush(); err != nil {
+			// Log but continue to close file
+			fmt.Fprintf(os.Stderr, "archive: flush on close error (session %s): %v\n", a.sessionName, err)
+		}
 		err := a.file.Close()
 		a.file = nil
 		return err
