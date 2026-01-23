@@ -30,6 +30,7 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/ratelimit"
 	"github.com/Dicklesworthstone/ntm/internal/recipe"
 	"github.com/Dicklesworthstone/ntm/internal/resilience"
+	"github.com/Dicklesworthstone/ntm/internal/state"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 	"github.com/Dicklesworthstone/ntm/internal/workflow"
 	"github.com/Dicklesworthstone/ntm/internal/worktrees"
@@ -315,12 +316,6 @@ func newSpawnCmd() *cobra.Command {
 	var assignQuiet bool
 	var assignTimeout time.Duration
 	var assignAgentType string
-	var assignCCOnly bool
-	var assignCodOnly bool
-	var assignGmiOnly bool
-	var assignCCOnly bool
-	var assignCodOnly bool
-	var assignGmiOnly bool
 
 	// Git worktree isolation flag
 	var useWorktrees bool
@@ -1614,6 +1609,14 @@ func spawnSessionLogic(opts SpawnOptions) error {
 
 	// Register session as Agent Mail agent (non-blocking)
 	registerSessionAgent(opts.Session, dir)
+
+	// Start timeline tracking and persistence for this session
+	if err := state.StartSessionTimeline(opts.Session); err != nil {
+		// Log but don't fail - timeline tracking is not critical for session operation
+		if !IsJSONOutput() {
+			output.PrintWarningf("Timeline tracking failed to start: %v", err)
+		}
+	}
 
 	// Run assignment phase if enabled (non-JSON mode)
 	if opts.Assign {

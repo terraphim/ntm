@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/signal"
 	"strings"
@@ -30,6 +29,7 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/prompt"
 	"github.com/Dicklesworthstone/ntm/internal/robot"
 	sessionPkg "github.com/Dicklesworthstone/ntm/internal/session"
+	"github.com/Dicklesworthstone/ntm/internal/state"
 	"github.com/Dicklesworthstone/ntm/internal/templates"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 	"github.com/Dicklesworthstone/ntm/internal/tools"
@@ -1265,6 +1265,14 @@ func runKill(session string, force bool, tags []string, noHooks bool) error {
 		if !confirm(fmt.Sprintf("Kill session '%s' with %d pane(s)?", session, len(panes))) {
 			fmt.Println("Aborted.")
 			return nil
+		}
+	}
+
+	// Finalize timeline persistence before killing the session
+	if err := state.EndSessionTimeline(session); err != nil {
+		// Log but don't fail - timeline finalization is not critical
+		if !jsonOutput {
+			fmt.Printf("⚠ Timeline finalization failed: %v\n", err)
 		}
 	}
 

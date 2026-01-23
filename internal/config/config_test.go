@@ -2486,3 +2486,172 @@ func TestValidateProcessTriageConfigNil(t *testing.T) {
 		t.Errorf("Expected nil error for nil config, got %v", err)
 	}
 }
+
+// TestDefaultRobotOutputConfig verifies the default robot output configuration
+func TestDefaultRobotOutputConfig(t *testing.T) {
+	cfg := DefaultRobotOutputConfig()
+
+	if cfg.Format != "json" {
+		t.Errorf("Expected default format 'json', got %q", cfg.Format)
+	}
+	if cfg.Pretty {
+		t.Error("Expected default pretty to be false")
+	}
+	if !cfg.Timestamps {
+		t.Error("Expected default timestamps to be true")
+	}
+	if cfg.Compress {
+		t.Error("Expected default compress to be false")
+	}
+}
+
+// TestValidateRobotOutputConfig tests validation of robot output configuration
+func TestValidateRobotOutputConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     RobotOutputConfig
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid json format",
+			cfg: RobotOutputConfig{
+				Format:     "json",
+				Pretty:     false,
+				Timestamps: true,
+				Compress:   false,
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid toon format",
+			cfg: RobotOutputConfig{
+				Format:     "toon",
+				Pretty:     true,
+				Timestamps: true,
+				Compress:   false,
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid format",
+			cfg: RobotOutputConfig{
+				Format: "xml",
+			},
+			wantErr: true,
+			errMsg:  "invalid robot output format",
+		},
+		{
+			name: "empty format defaults to json (valid)",
+			cfg: RobotOutputConfig{
+				Format: "",
+			},
+			wantErr: false,
+		},
+		{
+			name:    "default config is valid",
+			cfg:     DefaultRobotOutputConfig(),
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateRobotOutputConfig(&tt.cfg)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("Expected error, got nil")
+				} else if tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("Expected error containing %q, got %q", tt.errMsg, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestRobotOutputConfigFromTOML tests parsing robot.output from TOML
+func TestRobotOutputConfigFromTOML(t *testing.T) {
+	content := `
+[robot]
+verbosity = "debug"
+
+[robot.output]
+format = "toon"
+pretty = true
+timestamps = false
+compress = true
+`
+	path := createTempConfig(t, content)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if cfg.Robot.Verbosity != "debug" {
+		t.Errorf("Expected verbosity 'debug', got %q", cfg.Robot.Verbosity)
+	}
+	if cfg.Robot.Output.Format != "toon" {
+		t.Errorf("Expected format 'toon', got %q", cfg.Robot.Output.Format)
+	}
+	if !cfg.Robot.Output.Pretty {
+		t.Error("Expected pretty to be true")
+	}
+	if cfg.Robot.Output.Timestamps {
+		t.Error("Expected timestamps to be false")
+	}
+	if !cfg.Robot.Output.Compress {
+		t.Error("Expected compress to be true")
+	}
+}
+
+// TestRobotOutputConfigDefaults tests that defaults are applied for missing robot.output
+func TestRobotOutputConfigDefaults(t *testing.T) {
+	content := `
+[robot]
+verbosity = "terse"
+`
+	path := createTempConfig(t, content)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Robot verbosity should be overridden
+	if cfg.Robot.Verbosity != "terse" {
+		t.Errorf("Expected verbosity 'terse', got %q", cfg.Robot.Verbosity)
+	}
+
+	// Robot.Output should use defaults since not specified
+	defaults := DefaultRobotOutputConfig()
+	if cfg.Robot.Output.Format != defaults.Format {
+		t.Errorf("Expected default format %q, got %q", defaults.Format, cfg.Robot.Output.Format)
+	}
+	if cfg.Robot.Output.Pretty != defaults.Pretty {
+		t.Errorf("Expected default pretty %v, got %v", defaults.Pretty, cfg.Robot.Output.Pretty)
+	}
+	if cfg.Robot.Output.Timestamps != defaults.Timestamps {
+		t.Errorf("Expected default timestamps %v, got %v", defaults.Timestamps, cfg.Robot.Output.Timestamps)
+	}
+}
+
+// TestValidateRejectsInvalidRobotOutputFormat tests that Validate() catches invalid robot.output.format
+func TestValidateRejectsInvalidRobotOutputFormat(t *testing.T) {
+	cfg := Default()
+	cfg.Robot.Output.Format = "invalid"
+
+	errs := Validate(cfg)
+	found := false
+	for _, err := range errs {
+		if strings.Contains(err.Error(), "robot.output") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected Validate to return error for invalid robot.output.format")
+	}
+}

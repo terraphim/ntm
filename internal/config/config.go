@@ -53,13 +53,46 @@ type Config struct {
 
 // RobotConfig holds defaults for robot output behavior.
 type RobotConfig struct {
-	Verbosity string `toml:"verbosity"` // terse, default, or debug
+	Verbosity string            `toml:"verbosity"` // terse, default, or debug
+	Output    RobotOutputConfig `toml:"output"`    // Output format configuration
+}
+
+// RobotOutputConfig holds configuration for robot mode output format.
+type RobotOutputConfig struct {
+	Format     string `toml:"format"`     // Output format: "json" or "toon"
+	Pretty     bool   `toml:"pretty"`     // Pretty print output (adds whitespace for readability)
+	Timestamps bool   `toml:"timestamps"` // Include timestamps in output
+	Compress   bool   `toml:"compress"`   // Compression for large outputs
+}
+
+// DefaultRobotOutputConfig returns sensible robot output defaults.
+func DefaultRobotOutputConfig() RobotOutputConfig {
+	return RobotOutputConfig{
+		Format:     "json", // JSON for backwards compatibility
+		Pretty:     false,  // Compact by default
+		Timestamps: true,   // Include timestamps
+		Compress:   false,  // No compression by default
+	}
+}
+
+// ValidateRobotOutputConfig validates the robot output configuration.
+func ValidateRobotOutputConfig(cfg *RobotOutputConfig) error {
+	// Empty format is valid - defaults to "json"
+	if cfg.Format == "" {
+		return nil
+	}
+	validFormats := map[string]bool{"json": true, "toon": true}
+	if !validFormats[cfg.Format] {
+		return fmt.Errorf("invalid robot output format %q: must be \"json\" or \"toon\"", cfg.Format)
+	}
+	return nil
 }
 
 // DefaultRobotConfig returns sensible robot defaults.
 func DefaultRobotConfig() RobotConfig {
 	return RobotConfig{
 		Verbosity: "default",
+		Output:    DefaultRobotOutputConfig(),
 	}
 }
 
@@ -813,13 +846,13 @@ type CautConfig struct {
 // DefaultCautConfig returns sensible defaults for caut integration.
 func DefaultCautConfig() CautConfig {
 	return CautConfig{
-		Enabled:          true,   // Enabled by default (when caut is available)
-		BinaryPath:       "",     // Default to PATH lookup
-		PollInterval:     60,     // Poll every 60 seconds
-		AlertThreshold:   80,     // Alert at 80% quota usage
-		Providers:        nil,    // Track all available providers
-		PerAgentTracking: true,   // Enable per-agent tracking if supported
-		Currency:         "USD",  // Default to USD
+		Enabled:          true,  // Enabled by default (when caut is available)
+		BinaryPath:       "",    // Default to PATH lookup
+		PollInterval:     60,    // Poll every 60 seconds
+		AlertThreshold:   80,    // Alert at 80% quota usage
+		Providers:        nil,   // Track all available providers
+		PerAgentTracking: true,  // Enable per-agent tracking if supported
+		Currency:         "USD", // Default to USD
 	}
 }
 
@@ -904,12 +937,12 @@ type RanoConfig struct {
 // DefaultRanoConfig returns sensible defaults for rano integration.
 func DefaultRanoConfig() RanoConfig {
 	return RanoConfig{
-		Enabled:        true,                                    // Enabled by default (when rano is available)
-		BinaryPath:     "",                                      // Default to PATH lookup
-		PollIntervalMs: 1000,                                    // Poll every second
+		Enabled:        true,                                      // Enabled by default (when rano is available)
+		BinaryPath:     "",                                        // Default to PATH lookup
+		PollIntervalMs: 1000,                                      // Poll every second
 		Providers:      []string{"anthropic", "openai", "google"}, // Track major AI providers
-		PersistHistory: true,                                    // Keep historical data
-		HistoryDays:    7,                                       // Retain for a week
+		PersistHistory: true,                                      // Keep historical data
+		HistoryDays:    7,                                         // Retain for a week
 	}
 }
 
@@ -2460,6 +2493,11 @@ func Validate(cfg *Config) []error {
 	// Validate health monitoring
 	if err := ValidateHealthConfig(&cfg.Health); err != nil {
 		errs = append(errs, fmt.Errorf("health: %w", err))
+	}
+
+	// Validate robot output config
+	if err := ValidateRobotOutputConfig(&cfg.Robot.Output); err != nil {
+		errs = append(errs, fmt.Errorf("robot.output: %w", err))
 	}
 
 	// Validate DCG integration config

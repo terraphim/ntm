@@ -143,3 +143,35 @@ func runSummary(args []string, sinceStr, format string) error {
 	fmt.Println(s.Text)
 	return nil
 }
+
+func runSummaryList(format string) error {
+	if err := tmux.EnsureInstalled(); err != nil {
+		return err
+	}
+
+	sessions, err := tmux.ListSessions()
+	if err != nil {
+		return fmt.Errorf("failed to list sessions: %w", err)
+	}
+
+	if len(sessions) == 0 {
+		fmt.Println("No tmux sessions found.")
+		return nil
+	}
+
+	// Output as JSON if requested
+	if IsJSONOutput() || format == "json" {
+		return output.PrintJSON(sessions)
+	}
+
+	// Human-readable output
+	fmt.Println("Available sessions:")
+	for _, s := range sessions {
+		attached := ""
+		if s.Attached {
+			attached = " (attached)"
+		}
+		fmt.Printf("  %s - %d window(s), created %s%s\n", s.Name, s.Windows, s.Created, attached)
+	}
+	return nil
+}

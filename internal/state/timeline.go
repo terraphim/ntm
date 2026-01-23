@@ -723,3 +723,25 @@ func StateFromAgentStatus(status AgentStatus) TimelineState {
 		return TimelineIdle
 	}
 }
+
+// Global singleton TimelineTracker for session-wide event tracking.
+var (
+	globalTimelineTracker     *TimelineTracker
+	globalTimelineTrackerOnce sync.Once
+)
+
+// GetGlobalTimelineTracker returns the singleton TimelineTracker instance.
+// The tracker is initialized on first call with default configuration.
+func GetGlobalTimelineTracker() *TimelineTracker {
+	globalTimelineTrackerOnce.Do(func() {
+		globalTimelineTracker = NewTimelineTracker(&TimelineConfig{
+			MaxEvents:           100000, // Allow many events for multi-agent sessions
+			MaxAgents:           100,
+			EventTTL:            48 * time.Hour,
+			PruneInterval:       15 * time.Minute,
+			MarkerTTL:           48 * time.Hour,
+			MarkerPruneInterval: 30 * time.Minute,
+		})
+	})
+	return globalTimelineTracker
+}
