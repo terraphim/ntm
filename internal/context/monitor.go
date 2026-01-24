@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -503,7 +504,7 @@ func (m *ContextMonitor) GetEstimate(agentID string) *ContextEstimate {
 }
 
 // AgentsAboveThreshold returns agents above the given usage percentage.
-// Results are sorted by confidence (higher confidence first).
+// Results are sorted by confidence (higher first), then by AgentID (lexicographically).
 func (m *ContextMonitor) AgentsAboveThreshold(threshold float64) []AgentContextInfo {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -528,14 +529,13 @@ func (m *ContextMonitor) AgentsAboveThreshold(threshold float64) []AgentContextI
 		}
 	}
 
-	// Sort by confidence descending
-	for i := 0; i < len(results); i++ {
-		for j := i + 1; j < len(results); j++ {
-			if results[j].Estimate.Confidence > results[i].Estimate.Confidence {
-				results[i], results[j] = results[j], results[i]
-			}
+	// Sort by confidence descending, then AgentID ascending for determinism
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Estimate.Confidence != results[j].Estimate.Confidence {
+			return results[i].Estimate.Confidence > results[j].Estimate.Confidence
 		}
-	}
+		return results[i].AgentID < results[j].AgentID
+	})
 
 	return results
 }

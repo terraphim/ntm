@@ -210,11 +210,12 @@ type CASSInsightsOutput struct {
 	Errors []map[string]interface{} `json:"errors"`
 }
 
-// PrintCASSInsights outputs aggregated insights as JSON
-func PrintCASSInsights() error {
+// GetCASSInsights returns aggregated insights.
+// This function returns the data struct directly, enabling CLI/REST parity.
+func GetCASSInsights() (*CASSInsightsOutput, error) {
 	client := cass.NewClient()
 	if !client.IsInstalled() {
-		output := CASSInsightsOutput{
+		return &CASSInsightsOutput{
 			RobotResponse: NewErrorResponse(
 				fmt.Errorf("cass not installed"),
 				ErrCodeDependencyMissing,
@@ -224,8 +225,7 @@ func PrintCASSInsights() error {
 			Agents: map[string]interface{}{},
 			Topics: []map[string]interface{}{},
 			Errors: []map[string]interface{}{},
-		}
-		return encodeJSON(output)
+		}, nil
 	}
 	// Get aggregations for the last 7 days by default
 	resp, err := client.Search(context.Background(), cass.SearchOptions{
@@ -235,7 +235,7 @@ func PrintCASSInsights() error {
 	})
 
 	if err != nil {
-		output := CASSInsightsOutput{
+		return &CASSInsightsOutput{
 			RobotResponse: NewErrorResponse(
 				err,
 				ErrCodeInternalError,
@@ -245,11 +245,10 @@ func PrintCASSInsights() error {
 			Agents: map[string]interface{}{},
 			Topics: []map[string]interface{}{},
 			Errors: []map[string]interface{}{},
-		}
-		return encodeJSON(output)
+		}, nil
 	}
 
-	output := CASSInsightsOutput{
+	output := &CASSInsightsOutput{
 		RobotResponse: NewRobotResponse(true),
 		Period:        "7d",
 		Agents:        map[string]interface{}{},
@@ -277,6 +276,16 @@ func PrintCASSInsights() error {
 		}
 	}
 
+	return output, nil
+}
+
+// PrintCASSInsights outputs aggregated insights as JSON.
+// This is a thin wrapper around GetCASSInsights() for CLI output.
+func PrintCASSInsights() error {
+	output, err := GetCASSInsights()
+	if err != nil {
+		return err
+	}
 	return encodeJSON(output)
 }
 
@@ -297,11 +306,12 @@ type CASSContextSession struct {
 	When      string   `json:"when"`
 }
 
-// PrintCASSContext outputs relevant past context for spawning
-func PrintCASSContext(query string) error {
+// GetCASSContext returns relevant past context for spawning.
+// This function returns the data struct directly, enabling CLI/REST parity.
+func GetCASSContext(query string) (*CASSContextOutput, error) {
 	client := cass.NewClient()
 	if !client.IsInstalled() {
-		output := CASSContextOutput{
+		return &CASSContextOutput{
 			RobotResponse: NewErrorResponse(
 				fmt.Errorf("cass not installed"),
 				ErrCodeDependencyMissing,
@@ -309,8 +319,7 @@ func PrintCASSContext(query string) error {
 			),
 			Query:            query,
 			RelevantSessions: []CASSContextSession{},
-		}
-		return encodeJSON(output)
+		}, nil
 	}
 	// Search for relevant sessions
 	resp, err := client.Search(context.Background(), cass.SearchOptions{
@@ -319,10 +328,18 @@ func PrintCASSContext(query string) error {
 	})
 
 	if err != nil {
-		return fmt.Errorf("context search failed: %w", err)
+		return &CASSContextOutput{
+			RobotResponse: NewErrorResponse(
+				err,
+				ErrCodeInternalError,
+				"Check cass index health",
+			),
+			Query:            query,
+			RelevantSessions: []CASSContextSession{},
+		}, nil
 	}
 
-	output := CASSContextOutput{
+	output := &CASSContextOutput{
 		RobotResponse:    NewRobotResponse(true),
 		Query:            query,
 		RelevantSessions: []CASSContextSession{},
@@ -355,6 +372,16 @@ func PrintCASSContext(query string) error {
 		output.SuggestedContext = fmt.Sprintf("Consider reviewing: %s", strings.Join(suggestions, ", "))
 	}
 
+	return output, nil
+}
+
+// PrintCASSContext outputs relevant past context for spawning.
+// This is a thin wrapper around GetCASSContext() for CLI output.
+func PrintCASSContext(query string) error {
+	output, err := GetCASSContext(query)
+	if err != nil {
+		return err
+	}
 	return encodeJSON(output)
 }
 
