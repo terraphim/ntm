@@ -697,6 +697,40 @@ func TestGetPaneActivity(t *testing.T) {
 	}
 }
 
+func TestParsePaneActivityTimestamp(t *testing.T) {
+	now := time.Date(2026, 1, 25, 6, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name      string
+		raw       string
+		want      time.Time
+		wantError bool
+	}{
+		{name: "empty", raw: "", want: now},
+		{name: "whitespace", raw: "   ", want: now},
+		{name: "zero", raw: "0", want: now},
+		{name: "negative", raw: "-1", want: now},
+		{name: "valid", raw: "123", want: time.Unix(123, 0)},
+		{name: "invalid", raw: "abc", wantError: true},
+	}
+
+	for _, tt := range tests {
+		got, err := parsePaneActivityTimestamp(tt.raw, now)
+		if tt.wantError {
+			if err == nil {
+				t.Fatalf("%s: expected error for %q", tt.name, tt.raw)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("%s: unexpected error for %q: %v", tt.name, tt.raw, err)
+		}
+		if !got.Equal(tt.want) {
+			t.Fatalf("%s: got %v want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestGetPanesWithActivity(t *testing.T) {
 	skipIfNoTmux(t)
 
@@ -832,5 +866,67 @@ func TestAgentType_ProfileName(t *testing.T) {
 				t.Errorf("ProfileName() = %q, want %q", result, tt.expected)
 			}
 		})
+	}
+}
+
+// ============== Binary Path Resolution Tests ==============
+
+func TestBinaryPath(t *testing.T) {
+	// BinaryPath should return a non-empty path
+	path := BinaryPath()
+	if path == "" {
+		t.Fatal("BinaryPath() returned empty string")
+	}
+
+	// Path should either be a full path or "tmux" as fallback
+	if path != "tmux" && !strings.HasPrefix(path, "/") {
+		t.Errorf("BinaryPath() should return absolute path or 'tmux', got %q", path)
+	}
+
+	// If tmux is installed, the path should be a valid executable
+	if IsInstalled() {
+		// Path should point to an existing file
+		if _, err := os.Stat(path); err != nil && path != "tmux" {
+			t.Errorf("BinaryPath() returned non-existent path: %q", path)
+		}
+	}
+}
+
+func TestBinaryPathConsistency(t *testing.T) {
+	// BinaryPath should return the same value when called multiple times
+	// (it uses sync.Once internally)
+	path1 := BinaryPath()
+	path2 := BinaryPath()
+	path3 := BinaryPath()
+
+	if path1 != path2 || path2 != path3 {
+		t.Errorf("BinaryPath() inconsistent: %q, %q, %q", path1, path2, path3)
+	}
+}
+
+func TestBinaryPathPreferredLocations(t *testing.T) {
+	// BinaryPath should prefer standard install locations
+	path := BinaryPath()
+
+	// If tmux is installed in a standard location, BinaryPath should find it
+	preferredPaths := []string{
+		"/usr/bin/tmux",
+		"/usr/local/bin/tmux",
+		"/opt/homebrew/bin/tmux",
+	}
+
+	// Check if path matches one of the preferred locations
+	isPreferred := path == "tmux" // fallback is also acceptable
+	for _, p := range preferredPaths {
+		if path == p {
+			isPreferred = true
+			break
+		}
+	}
+
+	// If tmux is installed but path is not from preferred locations,
+	// it should at least be in PATH
+	if IsInstalled() && !isPreferred {
+		t.Logf("BinaryPath returned non-standard path: %q (this is fine if tmux is installed elsewhere)", path)
 	}
 }

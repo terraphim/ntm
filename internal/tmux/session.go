@@ -955,17 +955,11 @@ func (c *Client) GetPaneActivity(paneID string) (time.Time, error) {
 		return time.Time{}, err
 	}
 
-	// Some tmux versions may return an empty string for fresh panes; treat as current time
-	if strings.TrimSpace(output) == "" {
-		return time.Now(), nil
-	}
-
-	timestamp, err := strconv.ParseInt(output, 10, 64)
+	activity, err := parsePaneActivityTimestamp(output, time.Now())
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to parse pane activity timestamp: %w", err)
 	}
-
-	return time.Unix(timestamp, 0), nil
+	return activity, nil
 }
 
 // GetPaneActivity returns the last activity time for a pane (default client)
@@ -1003,8 +997,13 @@ func (c *Client) GetPanesWithActivityContext(ctx context.Context, session string
 		width, _ := strconv.Atoi(parts[4])
 		height, _ := strconv.Atoi(parts[5])
 		active := parts[6] == "1"
-		timestamp, _ := strconv.ParseInt(parts[7], 10, 64)
+		rawTimestamp := strings.TrimSpace(parts[7])
 		pid, _ := strconv.Atoi(parts[8])
+		lastActivity, err := parsePaneActivityTimestamp(rawTimestamp, time.Now())
+		if err != nil {
+			// Unparseable timestamps should not produce huge idle durations.
+			lastActivity = time.Time{}
+		}
 
 		pane := Pane{
 			ID:      parts[0],
@@ -1022,11 +1021,28 @@ func (c *Client) GetPanesWithActivityContext(ctx context.Context, session string
 
 		panes = append(panes, PaneActivity{
 			Pane:         pane,
-			LastActivity: time.Unix(timestamp, 0),
+			LastActivity: lastActivity,
 		})
 	}
 
 	return panes, nil
+}
+
+func parsePaneActivityTimestamp(raw string, now time.Time) (time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return now, nil
+	}
+
+	timestamp, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if timestamp <= 0 {
+		// Some tmux versions return 0 for fresh panes; treat as current time.
+		return now, nil
+	}
+	return time.Unix(timestamp, 0), nil
 }
 
 // GetPanesWithActivity returns all panes in a session with their activity times
