@@ -82,6 +82,12 @@ func countAgents(panes []tmux.Pane) AgentConfig {
 			config.Codex++
 		case tmux.AgentGemini:
 			config.Gemini++
+		case tmux.AgentCursor:
+			config.Cursor++
+		case tmux.AgentWindsurf:
+			config.Windsurf++
+		case tmux.AgentAider:
+			config.Aider++
 		case tmux.AgentUser:
 			config.User++
 		}

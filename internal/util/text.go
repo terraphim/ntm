@@ -177,3 +177,20 @@ func FormatBytes(b int64) string {
 	}
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
+
+// SafeSlice truncates a string to maxLen bytes, ensuring the cut is at a rune boundary.
+// Unlike Truncate, it does not add an ellipsis.
+func SafeSlice(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	// Find the last rune start that keeps the string within maxLen
+	lastValid := 0
+	for i := range s {
+		if i > maxLen {
+			break
+		}
+		lastValid = i
+	}
+	return s[:lastValid]
+}

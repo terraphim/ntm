@@ -729,6 +729,9 @@ func (s *Server) buildRouter() chi.Router {
 			r.Delete("/{id}", s.handleCancelJob)
 		})
 
+		// Pipeline API
+		s.registerPipelineRoutes(r)
+
 		// WebSocket endpoint
 		r.Get("/ws", s.handleWebSocket)
 	})

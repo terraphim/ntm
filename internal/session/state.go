@@ -39,15 +39,18 @@ type SessionState struct {
 
 // AgentConfig represents agent counts by type.
 type AgentConfig struct {
-	Claude int `json:"cc"`
-	Codex  int `json:"cod"`
-	Gemini int `json:"gmi"`
-	User   int `json:"user"`
+	Claude   int `json:"cc"`
+	Codex    int `json:"cod"`
+	Gemini   int `json:"gmi"`
+	Cursor   int `json:"cursor"`
+	Windsurf int `json:"windsurf"`
+	Aider    int `json:"aider"`
+	User     int `json:"user"`
 }
 
 // Total returns the total number of agents.
 func (a AgentConfig) Total() int {
-	return a.Claude + a.Codex + a.Gemini + a.User
+	return a.Claude + a.Codex + a.Gemini + a.Cursor + a.Windsurf + a.Aider + a.User
 }
 
 // PaneState represents the state of a single pane.

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Dicklesworthstone/ntm/internal/agentmail"
 	"github.com/Dicklesworthstone/ntm/internal/handoff"
+	"github.com/Dicklesworthstone/ntm/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -637,7 +638,7 @@ func cleanContextLine(line string) string {
 		}
 	}
 	if len(trimmed) > 120 {
-		trimmed = truncateAtRuneBoundary(trimmed, 120) + "..."
+		trimmed = util.SafeSlice(trimmed, 120) + "..."
 	}
 	return trimmed
 }
@@ -993,7 +994,7 @@ func truncateToTokens(text string, maxTokens int) string {
 	if len(text) <= maxChars {
 		return text
 	}
-	truncated := truncateAtRuneBoundary(text, maxChars)
+	truncated := util.SafeSlice(text, maxChars)
 	lastPeriod := strings.LastIndex(truncated, ".")
 	lastNewline := strings.LastIndex(truncated, "\n")
 
@@ -1007,19 +1008,7 @@ func truncateToTokens(text string, maxTokens int) string {
 	return text[:cutPoint] + "\n\n[Summary truncated due to token limit]"
 }
 
-func truncateAtRuneBoundary(s string, maxBytes int) string {
-	if len(s) <= maxBytes {
-		return s
-	}
-	lastValid := 0
-	for i := range s {
-		if i > maxBytes {
-			break
-		}
-		lastValid = i
-	}
-	return s[:lastValid]
-}
+
 
 // yamlMarshal is a small wrapper to avoid leaking yaml dependency in callers.
 func yamlMarshal(h *handoff.Handoff) ([]byte, error) {
