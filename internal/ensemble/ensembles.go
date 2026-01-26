@@ -3,7 +3,7 @@ package ensemble
 import "time"
 
 // EmbeddedEnsembles contains the 9 built-in ensemble presets.
-// These use only core-tier modes and are the primary user interface.
+// Most use core-tier modes; bug-hunt and root-cause-analysis require advanced modes.
 var EmbeddedEnsembles = []EnsemblePreset{
 	{
 		Name:        "project-diagnosis",
@@ -171,7 +171,8 @@ var EmbeddedEnsembles = []EnsemblePreset{
 			TimeoutPerMode:   2 * time.Minute,
 			TotalTimeout:     10 * time.Minute,
 		},
-		Tags: []string{"debugging", "verification"},
+		Tags:          []string{"debugging", "verification"},
+		AllowAdvanced: true,
 	},
 	{
 		Name:        "root-cause-analysis",
@@ -195,7 +196,8 @@ var EmbeddedEnsembles = []EnsemblePreset{
 			TimeoutPerMode:   2 * time.Minute,
 			TotalTimeout:     10 * time.Minute,
 		},
-		Tags: []string{"analysis", "debugging"},
+		Tags:          []string{"analysis", "debugging"},
+		AllowAdvanced: true,
 	},
 	{
 		Name:        "strategic-planning",
