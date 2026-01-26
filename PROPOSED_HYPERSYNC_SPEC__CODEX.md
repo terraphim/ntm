@@ -792,7 +792,7 @@ V1 requirements:
 Implementation guidance:
 - Use BLAKE3 truncated to 256 bits for internal nodes (same as chunks).
 - Internal node format: BLAKE3(left_child_hash || right_child_hash || node_metadata).
-- node_metadata includes: subtree size, depth, optional flags.
+- node_metadata MUST be a canonical serialization and MUST NOT include non-deterministic fields (addresses, pointer values, wall-clock other than committed_at, etc.).
 
 Performance targets:
 - Merkle root update: < 10us p99 for single-chunk mutations
@@ -1236,7 +1236,7 @@ Telemetry:
 
 A snapshot at log index k is:
 - snapshot_index = k
-- merkle_root = root_k
+- fs_merkle_root = root_k
 - a compact manifest sufficient to reconstruct S_k:
   - directory tree nodes + per-node metadata
   - per-file extent lists (chunk hashes + offsets)
@@ -1262,7 +1262,7 @@ Snapshot transfer uses QUIC reliable streams (not RaptorQ) by default for determ
 
 ### 13.4 Integrity
 
-After applying snapshot + tail ops, worker MUST validate that its computed merkle_root equals leader-provided root at the target index.
+After applying snapshot + tail ops, worker MUST validate that its computed fs_merkle_root equals leader-provided root at the target index.
 
 ---
 
@@ -1292,8 +1292,8 @@ Rules (normative):
    - referenced by any in-flight (not-yet-fully-applied-by-all-workers) snapshot transfer.
 
 2) Unlinked/orphaned content safety:
-   - Chunks that are only reachable from unlinked NodeIDs MUST be retained for ORPHAN_TTL (default 24h),
-     unless OpenRefDelta evidence shows all workers have zero opens for that NodeID (6.8, 9.5).
+   - Chunks that are only reachable from unlinked NodeIDs MUST be retained while ANY worker holds an open-lease for that NodeID (6.8, 9.5).
+   - After all open-leases have been released/expired, the leader MAY delete orphaned chunks subject to replay protection window and snapshot reachability rules.
 
 3) Incrementality:
    - GC MUST be incremental and rate-limited (background task) to avoid stalls.
@@ -1444,6 +1444,14 @@ Provide a standalone Rust microbench harness that can run on a single host and m
 - apply throughput on worker with ordered apply and parallel prefetch
 - replication fanout cost vs worker count (1, 2, 4, 8, 16)
 
+Additions (required because these are likely primary bottlenecks at 70+ agents):
+- FUSE crossing overhead microbench:
+  - open/stat/readdir throughput (ops/s) and p99 latency with varying attr_timeout/entry_timeout settings
+- Cache invalidation microbench:
+  - cost of notify_inval_inode + notify_inval_entry under high mutation rates
+- Append correctness + performance:
+  - concurrent O_APPEND writers across workers: throughput and validation of non-overlap behavior
+
 ---
 
 ## 18. Security
@@ -1513,6 +1521,12 @@ This section is normative: a V1 implementation is not "done" without these tests
 6) Read-only on partition:
    - leader unreachable => all new mutations fail EROFS (no queued writes).
 
+7) Atomic append correctness:
+   - For any file opened with O_APPEND, committed write ops MUST have leader-chosen offsets that are strictly non-overlapping and strictly increasing in log order.
+
+8) Unlink-on-open safety:
+   - Orphaned NodeID content MUST NOT be GC'd while any worker holds an open-lease for that NodeID.
+
 ### 22.2 Deterministic replay golden tests
 Build a "golden trace" format:
 - trace = {oplog segment(s), all referenced chunks, snapshot manifest(s), expected merkle roots}
@@ -1545,6 +1559,9 @@ Run with deterministic fault injection points:
 3) Editor-like scans:
    - simulate ripgrep / LSP file walks: massive open/stat/readdir
    - validate leader does not become bottleneck (no per-open RPC requirement in V1)
+4) Append torture:
+   - multiple workers concurrently append to the same file (O_APPEND) while another worker tails/reads
+   - validate content is the concatenation of committed writes in log order (no overlaps, no holes unless explicitly written)
 
 ### 22.5 Performance regression tests (extreme optimization discipline)
 Maintain performance baselines for:
