@@ -675,6 +675,7 @@ func (s *Server) buildRouter() chi.Router {
 	r.Use(s.loggingMiddlewareFunc)
 	r.Use(s.corsMiddlewareFunc)
 	r.Use(s.authMiddlewareFunc)
+	r.Use(s.rbacMiddleware) // Extract role from auth claims
 
 	// Health check (no versioning)
 	r.Get("/health", s.handleHealth)
@@ -701,39 +702,39 @@ func (s *Server) buildRouter() chi.Router {
 
 	// /api/v1 routes (canonical)
 	r.Route("/api/v1", func(r chi.Router) {
-		// System endpoints
-		r.Get("/health", s.handleHealthV1)
-		r.Get("/version", s.handleVersionV1)
-		r.Get("/capabilities", s.handleCapabilitiesV1)
+		// System endpoints (read-only, require PermReadHealth)
+		r.With(s.RequirePermission(PermReadHealth)).Get("/health", s.handleHealthV1)
+		r.With(s.RequirePermission(PermReadHealth)).Get("/version", s.handleVersionV1)
+		r.With(s.RequirePermission(PermReadHealth)).Get("/capabilities", s.handleCapabilitiesV1)
 
-		// Sessions
-		r.Get("/sessions", s.handleSessionsV1)
-		r.Get("/sessions/{id}", s.handleSessionV1)
-		r.Get("/sessions/{id}/agents", func(w http.ResponseWriter, req *http.Request) {
+		// Sessions - read endpoints
+		r.With(s.RequirePermission(PermReadSessions)).Get("/sessions", s.handleSessionsV1)
+		r.With(s.RequirePermission(PermReadSessions)).Get("/sessions/{id}", s.handleSessionV1)
+		r.With(s.RequirePermission(PermReadAgents)).Get("/sessions/{id}/agents", func(w http.ResponseWriter, req *http.Request) {
 			s.handleSessionAgentsV1(w, req, chi.URLParam(req, "id"))
 		})
-		r.Get("/sessions/{id}/events", func(w http.ResponseWriter, req *http.Request) {
+		r.With(s.RequirePermission(PermReadEvents)).Get("/sessions/{id}/events", func(w http.ResponseWriter, req *http.Request) {
 			s.handleSessionEventsV1(w, req, chi.URLParam(req, "id"))
 		})
 
-		// Robot endpoints
-		r.Get("/robot/status", s.handleRobotStatusV1)
-		r.Get("/robot/health", s.handleRobotHealthV1)
+		// Robot endpoints (read-only)
+		r.With(s.RequirePermission(PermReadHealth)).Get("/robot/status", s.handleRobotStatusV1)
+		r.With(s.RequirePermission(PermReadHealth)).Get("/robot/health", s.handleRobotHealthV1)
 
-		// Jobs API
+		// Jobs API - read requires PermReadJobs, write requires PermWriteJobs
 		r.Route("/jobs", func(r chi.Router) {
 			r.Use(s.idempotencyMiddleware)
-			r.Get("/", s.handleListJobs)
-			r.Post("/", s.handleCreateJob)
-			r.Get("/{id}", s.handleGetJob)
-			r.Delete("/{id}", s.handleCancelJob)
+			r.With(s.RequirePermission(PermReadJobs)).Get("/", s.handleListJobs)
+			r.With(s.RequirePermission(PermWriteJobs)).Post("/", s.handleCreateJob)
+			r.With(s.RequirePermission(PermReadJobs)).Get("/{id}", s.handleGetJob)
+			r.With(s.RequirePermission(PermWriteJobs)).Delete("/{id}", s.handleCancelJob)
 		})
 
 		// Pipeline API
 		s.registerPipelineRoutes(r)
 
-		// WebSocket endpoint
-		r.Get("/ws", s.handleWebSocket)
+		// WebSocket endpoint (requires read permission)
+		r.With(s.RequirePermission(PermReadWebSocket)).Get("/ws", s.handleWebSocket)
 	})
 
 	return r

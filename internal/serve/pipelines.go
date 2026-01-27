@@ -64,30 +64,30 @@ type PipelineExecRequest struct {
 // registerPipelineRoutes registers pipeline-related REST endpoints
 func (s *Server) registerPipelineRoutes(r chi.Router) {
 	r.Route("/pipelines", func(r chi.Router) {
-		// List all pipelines
-		r.Get("/", s.handleListPipelines)
+		// List all pipelines (read permission)
+		r.With(s.RequirePermission(PermReadPipelines)).Get("/", s.handleListPipelines)
 
-		// Run a new pipeline from a workflow file
-		r.Post("/run", s.handleRunPipeline)
+		// Run a new pipeline from a workflow file (write permission)
+		r.With(s.RequirePermission(PermWritePipelines)).Post("/run", s.handleRunPipeline)
 
-		// Execute a pipeline from inline workflow definition
-		r.Post("/exec", s.handleExecPipeline)
+		// Execute a pipeline from inline workflow definition (write permission)
+		r.With(s.RequirePermission(PermWritePipelines)).Post("/exec", s.handleExecPipeline)
 
-		// Validate a workflow
-		r.Post("/validate", s.handleValidatePipeline)
+		// Validate a workflow (read permission - non-destructive)
+		r.With(s.RequirePermission(PermReadPipelines)).Post("/validate", s.handleValidatePipeline)
 
-		// List available workflow templates
-		r.Get("/templates", s.handleListPipelineTemplates)
+		// List available workflow templates (read permission)
+		r.With(s.RequirePermission(PermReadPipelines)).Get("/templates", s.handleListPipelineTemplates)
 
-		// Cleanup old pipeline state files
-		r.Post("/cleanup", s.handleCleanupPipelines)
+		// Cleanup old pipeline state files (dangerous operation - admin only)
+		r.With(s.RequirePermission(PermDangerousOps)).Post("/cleanup", s.handleCleanupPipelines)
 
 		// Single pipeline operations
 		r.Route("/{id}", func(r chi.Router) {
-			r.Get("/", s.handleGetPipeline)
-			r.Delete("/", s.handleCancelPipeline)
-			r.Post("/cancel", s.handleCancelPipeline)
-			r.Post("/resume", s.handleResumePipeline)
+			r.With(s.RequirePermission(PermReadPipelines)).Get("/", s.handleGetPipeline)
+			r.With(s.RequirePermission(PermWritePipelines)).Delete("/", s.handleCancelPipeline)
+			r.With(s.RequirePermission(PermWritePipelines)).Post("/cancel", s.handleCancelPipeline)
+			r.With(s.RequirePermission(PermWritePipelines)).Post("/resume", s.handleResumePipeline)
 		})
 	})
 }

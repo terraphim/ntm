@@ -1,0 +1,407 @@
+package serve
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestParseRole(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected Role
+	}{
+		{"admin", RoleAdmin},
+		{"Admin", RoleAdmin},
+		{"ADMIN", RoleAdmin},
+		{"operator", RoleOperator},
+		{"Operator", RoleOperator},
+		{"viewer", RoleViewer},
+		{"Viewer", RoleViewer},
+		{"unknown", RoleViewer}, // Defaults to viewer
+		{"", RoleViewer},        // Defaults to viewer
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			result := ParseRole(tc.input)
+			if result != tc.expected {
+				t.Errorf("ParseRole(%q) = %q, want %q", tc.input, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestRoleHasPermission(t *testing.T) {
+	tests := []struct {
+		role Role
+		perm Permission
+		want bool
+	}{
+		// Viewer permissions
+		{RoleViewer, PermReadSessions, true},
+		{RoleViewer, PermReadAgents, true},
+		{RoleViewer, PermWriteSessions, false},
+		{RoleViewer, PermDangerousOps, false},
+		{RoleViewer, PermApproveRequests, false},
+
+		// Operator permissions
+		{RoleOperator, PermReadSessions, true},
+		{RoleOperator, PermWriteSessions, true},
+		{RoleOperator, PermWriteAgents, true},
+		{RoleOperator, PermDangerousOps, false},
+		{RoleOperator, PermApproveRequests, false},
+
+		// Admin permissions
+		{RoleAdmin, PermReadSessions, true},
+		{RoleAdmin, PermWriteSessions, true},
+		{RoleAdmin, PermDangerousOps, true},
+		{RoleAdmin, PermApproveRequests, true},
+		{RoleAdmin, PermForceRelease, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(string(tc.role)+"_"+string(tc.perm), func(t *testing.T) {
+			result := tc.role.HasPermission(tc.perm)
+			if result != tc.want {
+				t.Errorf("%s.HasPermission(%s) = %v, want %v", tc.role, tc.perm, result, tc.want)
+			}
+		})
+	}
+}
+
+func TestRoleHierarchy(t *testing.T) {
+	// Admin > Operator > Viewer
+	if roleHierarchy(RoleAdmin) <= roleHierarchy(RoleOperator) {
+		t.Error("Admin should have higher hierarchy than Operator")
+	}
+	if roleHierarchy(RoleOperator) <= roleHierarchy(RoleViewer) {
+		t.Error("Operator should have higher hierarchy than Viewer")
+	}
+	if roleHierarchy(RoleViewer) <= 0 {
+		t.Error("Viewer should have positive hierarchy")
+	}
+}
+
+func TestRoleFromContext(t *testing.T) {
+	// Test with no role context
+	ctx := context.Background()
+	if rc := RoleFromContext(ctx); rc != nil {
+		t.Error("Expected nil for context without role")
+	}
+
+	// Test with role context
+	rc := &RoleContext{
+		Role:   RoleOperator,
+		UserID: "test-user",
+	}
+	ctx = withRoleContext(ctx, rc)
+	extracted := RoleFromContext(ctx)
+	if extracted == nil {
+		t.Fatal("Expected role context to be present")
+	}
+	if extracted.Role != RoleOperator {
+		t.Errorf("Role = %q, want %q", extracted.Role, RoleOperator)
+	}
+	if extracted.UserID != "test-user" {
+		t.Errorf("UserID = %q, want %q", extracted.UserID, "test-user")
+	}
+}
+
+func TestExtractUserIDFromClaims(t *testing.T) {
+	tests := []struct {
+		name   string
+		claims map[string]interface{}
+		want   string
+	}{
+		{
+			name:   "sub claim",
+			claims: map[string]interface{}{"sub": "user-123"},
+			want:   "user-123",
+		},
+		{
+			name:   "email claim",
+			claims: map[string]interface{}{"email": "user@example.com"},
+			want:   "user@example.com",
+		},
+		{
+			name:   "preferred_username",
+			claims: map[string]interface{}{"preferred_username": "jdoe"},
+			want:   "jdoe",
+		},
+		{
+			name:   "sub takes precedence",
+			claims: map[string]interface{}{"sub": "user-123", "email": "other@example.com"},
+			want:   "user-123",
+		},
+		{
+			name:   "empty claims",
+			claims: map[string]interface{}{},
+			want:   "anonymous",
+		},
+		{
+			name:   "nil claims",
+			claims: nil,
+			want:   "anonymous",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := extractUserIDFromClaims(tc.claims)
+			if result != tc.want {
+				t.Errorf("extractUserIDFromClaims() = %q, want %q", result, tc.want)
+			}
+		})
+	}
+}
+
+func TestServerExtractRoleFromClaims(t *testing.T) {
+	tests := []struct {
+		name     string
+		authMode AuthMode
+		claims   map[string]interface{}
+		want     Role
+	}{
+		{
+			name:     "local mode gets admin",
+			authMode: AuthModeLocal,
+			claims:   nil,
+			want:     RoleAdmin,
+		},
+		{
+			name:     "role claim direct",
+			authMode: AuthModeAPIKey,
+			claims:   map[string]interface{}{"role": "operator"},
+			want:     RoleOperator,
+		},
+		{
+			name:     "roles array - highest wins",
+			authMode: AuthModeAPIKey,
+			claims:   map[string]interface{}{"roles": []interface{}{"viewer", "admin"}},
+			want:     RoleAdmin,
+		},
+		{
+			name:     "ntm_role custom claim",
+			authMode: AuthModeAPIKey,
+			claims:   map[string]interface{}{"ntm_role": "admin"},
+			want:     RoleAdmin,
+		},
+		{
+			name:     "keycloak realm_access format",
+			authMode: AuthModeOIDC,
+			claims: map[string]interface{}{
+				"realm_access": map[string]interface{}{
+					"roles": []interface{}{"operator"},
+				},
+			},
+			want: RoleOperator,
+		},
+		{
+			name:     "no role defaults to viewer",
+			authMode: AuthModeAPIKey,
+			claims:   map[string]interface{}{"sub": "user-123"},
+			want:     RoleViewer,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{auth: AuthConfig{Mode: tc.authMode}}
+			result := s.extractRoleFromClaims(tc.claims)
+			if result != tc.want {
+				t.Errorf("extractRoleFromClaims() = %q, want %q", result, tc.want)
+			}
+		})
+	}
+}
+
+func TestRequirePermission(t *testing.T) {
+	s := &Server{}
+
+	// Create a test handler that just returns 200 OK
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	tests := []struct {
+		name       string
+		role       Role
+		permission Permission
+		wantCode   int
+	}{
+		{
+			name:       "admin has dangerous ops",
+			role:       RoleAdmin,
+			permission: PermDangerousOps,
+			wantCode:   http.StatusOK,
+		},
+		{
+			name:       "operator lacks dangerous ops",
+			role:       RoleOperator,
+			permission: PermDangerousOps,
+			wantCode:   http.StatusForbidden,
+		},
+		{
+			name:       "viewer lacks write",
+			role:       RoleViewer,
+			permission: PermWriteSessions,
+			wantCode:   http.StatusForbidden,
+		},
+		{
+			name:       "operator has write",
+			role:       RoleOperator,
+			permission: PermWriteSessions,
+			wantCode:   http.StatusOK,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Wrap handler with permission middleware
+			handler := s.RequirePermission(tc.permission)(testHandler)
+
+			// Create request with role context
+			req := httptest.NewRequest("GET", "/test", nil)
+			rc := &RoleContext{Role: tc.role, UserID: "test-user"}
+			ctx := withRoleContext(req.Context(), rc)
+			req = req.WithContext(ctx)
+
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
+			if w.Code != tc.wantCode {
+				t.Errorf("status = %d, want %d", w.Code, tc.wantCode)
+			}
+		})
+	}
+}
+
+func TestRequireRole(t *testing.T) {
+	s := &Server{}
+
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	tests := []struct {
+		name     string
+		userRole Role
+		minRole  Role
+		wantCode int
+	}{
+		{
+			name:     "admin meets admin requirement",
+			userRole: RoleAdmin,
+			minRole:  RoleAdmin,
+			wantCode: http.StatusOK,
+		},
+		{
+			name:     "admin exceeds operator requirement",
+			userRole: RoleAdmin,
+			minRole:  RoleOperator,
+			wantCode: http.StatusOK,
+		},
+		{
+			name:     "operator meets operator requirement",
+			userRole: RoleOperator,
+			minRole:  RoleOperator,
+			wantCode: http.StatusOK,
+		},
+		{
+			name:     "viewer fails operator requirement",
+			userRole: RoleViewer,
+			minRole:  RoleOperator,
+			wantCode: http.StatusForbidden,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := s.RequireRole(tc.minRole)(testHandler)
+
+			req := httptest.NewRequest("GET", "/test", nil)
+			rc := &RoleContext{Role: tc.userRole, UserID: "test-user"}
+			ctx := withRoleContext(req.Context(), rc)
+			req = req.WithContext(ctx)
+
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
+			if w.Code != tc.wantCode {
+				t.Errorf("status = %d, want %d", w.Code, tc.wantCode)
+			}
+		})
+	}
+}
+
+func TestCheckPermission(t *testing.T) {
+	tests := []struct {
+		name     string
+		role     *RoleContext
+		perm     Permission
+		wantOK   bool
+		wantCode int
+	}{
+		{
+			name:     "permission granted",
+			role:     &RoleContext{Role: RoleAdmin, UserID: "admin"},
+			perm:     PermDangerousOps,
+			wantOK:   true,
+			wantCode: 0, // No error written
+		},
+		{
+			name:     "permission denied",
+			role:     &RoleContext{Role: RoleViewer, UserID: "viewer"},
+			perm:     PermWriteSessions,
+			wantOK:   false,
+			wantCode: http.StatusForbidden,
+		},
+		{
+			name:     "no role context",
+			role:     nil,
+			perm:     PermReadSessions,
+			wantOK:   false,
+			wantCode: http.StatusForbidden,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/test", nil)
+			if tc.role != nil {
+				ctx := withRoleContext(req.Context(), tc.role)
+				req = req.WithContext(ctx)
+			}
+
+			w := httptest.NewRecorder()
+			result := CheckPermission(w, req, tc.perm)
+
+			if result != tc.wantOK {
+				t.Errorf("CheckPermission() = %v, want %v", result, tc.wantOK)
+			}
+
+			if !tc.wantOK && w.Code != tc.wantCode {
+				t.Errorf("status = %d, want %d", w.Code, tc.wantCode)
+			}
+		})
+	}
+}
+
+func TestDefaultRBACConfig(t *testing.T) {
+	cfg := DefaultRBACConfig()
+
+	if !cfg.Enabled {
+		t.Error("Default RBAC should be enabled")
+	}
+	if cfg.DefaultRole != RoleViewer {
+		t.Errorf("Default role = %q, want %q", cfg.DefaultRole, RoleViewer)
+	}
+	if cfg.RoleClaimKey != "role" {
+		t.Errorf("RoleClaimKey = %q, want %q", cfg.RoleClaimKey, "role")
+	}
+	if cfg.AllowAnonymous {
+		t.Error("Default should not allow anonymous")
+	}
+}
