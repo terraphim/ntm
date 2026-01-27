@@ -808,6 +808,9 @@ func (s *Server) buildRouter() chi.Router {
 		// Mail and Reservations API
 		s.registerMailRoutes(r)
 
+		// Beads and BV Robot API
+		s.registerBeadsRoutes(r)
+
 		// Metrics API - performance and analytics data
 		r.Route("/metrics", func(r chi.Router) {
 			r.With(s.RequirePermission(PermReadHealth)).Get("/", s.handleMetricsV1)
