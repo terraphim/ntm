@@ -4682,10 +4682,11 @@ func generateContextHints(lowUsage, highUsage []string, highCount, total int) *C
 	return hints
 }
 
-// PrintContext outputs context window usage information for all agents in a session.
-func PrintContext(session string, lines int) error {
+// GetContext retrieves context window usage information for all agents in a session.
+// This function returns the data struct directly, enabling CLI/REST parity.
+func GetContext(session string, lines int) (*ContextOutput, error) {
 	if !tmux.SessionExists(session) {
-		return encodeJSON(ContextOutput{
+		return &ContextOutput{
 			RobotResponse: NewErrorResponse(
 				fmt.Errorf("session '%s' not found", session),
 				ErrCodeSessionNotFound,
@@ -4693,19 +4694,19 @@ func PrintContext(session string, lines int) error {
 			),
 			Session:    session,
 			CapturedAt: time.Now().UTC(),
-		})
+		}, nil
 	}
 
 	panes, err := tmux.GetPanes(session)
 	if err != nil {
-		return encodeJSON(ContextOutput{
+		return &ContextOutput{
 			RobotResponse: NewErrorResponse(err, ErrCodeInternalError, "Failed to get panes"),
 			Session:       session,
 			CapturedAt:    time.Now().UTC(),
-		})
+		}, nil
 	}
 
-	output := ContextOutput{
+	output := &ContextOutput{
 		RobotResponse: NewRobotResponse(true),
 		Session:       session,
 		CapturedAt:    time.Now().UTC(),
@@ -4786,6 +4787,15 @@ func PrintContext(session string, lines int) error {
 
 	output.AgentHints = generateContextHints(lowUsage, highUsage, len(highUsage), len(output.Agents))
 
+	return output, nil
+}
+
+// PrintContext outputs context window usage information for all agents in a session.
+func PrintContext(session string, lines int) error {
+	output, err := GetContext(session, lines)
+	if err != nil {
+		return err
+	}
 	return encodeJSON(output)
 }
 
