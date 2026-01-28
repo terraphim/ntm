@@ -35,6 +35,12 @@ type BVSearchOptions struct {
 	Mode  string
 }
 
+// BVGroupedTriageOptions configures grouped triage output.
+type BVGroupedTriageOptions struct {
+	ByLabel bool
+	ByTrack bool
+}
+
 // NewBVAdapter creates a new BV adapter
 func NewBVAdapter() *BVAdapter {
 	return &BVAdapter{
@@ -91,12 +97,16 @@ func (a *BVAdapter) Capabilities(ctx context.Context) ([]Capability, error) {
 			"robot_suggest",
 			"robot_impact",
 			"robot_search",
+			"robot_history",
+			"robot_burndown",
 			"robot_label_attention",
 			"robot_label_flow",
 			"robot_label_health",
 			"robot_file_beads",
 			"robot_file_hotspots",
 			"robot_file_relations",
+			"robot_triage_by_label",
+			"robot_triage_by_track",
 		)
 	}
 
@@ -198,6 +208,28 @@ func (a *BVAdapter) GetGraph(ctx context.Context, dir string, opts BVGraphOption
 	args := []string{"--robot-graph"}
 	if opts.Format != "" {
 		args = append(args, "--graph-format", opts.Format)
+	}
+	return a.runRobotCommand(ctx, dir, args...)
+}
+
+func (a *BVAdapter) GetGroupedTriage(ctx context.Context, dir string, opts BVGroupedTriageOptions) (json.RawMessage, error) {
+	if opts.ByLabel {
+		return a.runRobotCommand(ctx, dir, "--robot-triage-by-label")
+	}
+	if opts.ByTrack {
+		return a.runRobotCommand(ctx, dir, "--robot-triage-by-track")
+	}
+	return a.runRobotCommand(ctx, dir, "--robot-triage")
+}
+
+func (a *BVAdapter) GetHistory(ctx context.Context, dir string) (json.RawMessage, error) {
+	return a.runRobotCommand(ctx, dir, "--robot-history")
+}
+
+func (a *BVAdapter) GetBurndown(ctx context.Context, dir string, sprint string) (json.RawMessage, error) {
+	args := []string{"--robot-burndown"}
+	if sprint != "" {
+		args = append(args, sprint)
 	}
 	return a.runRobotCommand(ctx, dir, args...)
 }

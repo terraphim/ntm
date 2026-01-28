@@ -773,6 +773,20 @@ func TestBVAdapterRobotModes(t *testing.T) {
 
 	tests := []modeTest{
 		{
+			name: "triage_by_label",
+			key:  "triage_by_label",
+			call: func() (json.RawMessage, error) {
+				return adapter.GetGroupedTriage(ctx, projectRoot, BVGroupedTriageOptions{ByLabel: true})
+			},
+		},
+		{
+			name: "triage_by_track",
+			key:  "triage_by_track",
+			call: func() (json.RawMessage, error) {
+				return adapter.GetGroupedTriage(ctx, projectRoot, BVGroupedTriageOptions{ByTrack: true})
+			},
+		},
+		{
 			name: "alerts",
 			key:  "alerts",
 			call: func() (json.RawMessage, error) {
@@ -784,6 +798,20 @@ func TestBVAdapterRobotModes(t *testing.T) {
 			key:  "graph",
 			call: func() (json.RawMessage, error) {
 				return adapter.GetGraph(ctx, projectRoot, BVGraphOptions{Format: "json"})
+			},
+		},
+		{
+			name: "history",
+			key:  "stats",
+			call: func() (json.RawMessage, error) {
+				return adapter.GetHistory(ctx, projectRoot)
+			},
+		},
+		{
+			name: "burndown",
+			key:  "progress",
+			call: func() (json.RawMessage, error) {
+				return adapter.GetBurndown(ctx, projectRoot, "s1")
 			},
 		},
 		{
