@@ -488,6 +488,60 @@ func (w *Writer) Archive(path string) error {
 	return nil
 }
 
+// WriteToPath writes a handoff directly to the specified path.
+// Unlike Write(), this doesn't auto-generate the filename or session directory.
+func (w *Writer) WriteToPath(h *Handoff, path string) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+
+	w.logger.Debug("writing handoff to path",
+		"path", path,
+		"session", h.Session,
+	)
+
+	// Validate handoff
+	if errs := h.Validate(); len(errs) > 0 {
+		w.logger.Error("handoff validation failed",
+			"path", path,
+			"error_count", len(errs),
+		)
+		return fmt.Errorf("validation failed: %v", errs[0])
+	}
+
+	// Set defaults
+	h.SetDefaults()
+
+	// Ensure parent directory exists
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Serialize to YAML
+	data, err := yaml.Marshal(h)
+	if err != nil {
+		return fmt.Errorf("marshal failed: %w", err)
+	}
+
+	// Atomic write
+	if err := w.atomicWrite(path, data); err != nil {
+		return err
+	}
+
+	w.logger.Info("handoff written to path",
+		"path", path,
+		"session", h.Session,
+		"size_bytes", len(data),
+	)
+
+	return nil
+}
+
+// MarshalYAML serializes a handoff to YAML bytes.
+func MarshalYAML(h *Handoff) ([]byte, error) {
+	return yaml.Marshal(h)
+}
+
 // CleanArchive removes archived handoffs older than the given duration.
 func (w *Writer) CleanArchive(sessionName string, olderThan time.Duration) (int, error) {
 	writeMu.Lock()

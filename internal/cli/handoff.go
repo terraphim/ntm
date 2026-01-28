@@ -51,6 +51,9 @@ func newHandoffCreateCmd() *cobra.Command {
 		auto        bool
 		description string
 		jsonFormat  bool
+		output      string
+		format      string
+		includeGit  bool
 	)
 
 	cmd := &cobra.Command{
@@ -65,6 +68,7 @@ Use --from-file to load from an existing YAML file.
 Examples:
   ntm handoff create myproject --goal "Completed auth" --now "Add tests"
   ntm handoff create myproject --auto
+  ntm handoff create myproject --auto --output - --format markdown  # Output to stdout as markdown
   ntm handoff create myproject --from-file handoff.yaml
   ntm handoff create                     # Interactive mode`,
 		Args: cobra.MaximumNArgs(1),
@@ -73,7 +77,7 @@ Examples:
 			if len(args) > 0 {
 				sessionName = args[0]
 			}
-			return runHandoffCreate(cmd, sessionName, goal, now, fromFile, auto, description, jsonFormat)
+			return runHandoffCreate(cmd, sessionName, goal, now, fromFile, auto, description, jsonFormat, output, format, includeGit)
 		},
 	}
 
@@ -82,7 +86,10 @@ Examples:
 	cmd.Flags().StringVar(&fromFile, "from-file", "", "Create from YAML file")
 	cmd.Flags().BoolVar(&auto, "auto", false, "Generate from agent output")
 	cmd.Flags().StringVar(&description, "description", "", "Short description for filename")
-	cmd.Flags().BoolVar(&jsonFormat, "json", false, "Output as JSON")
+	cmd.Flags().BoolVar(&jsonFormat, "json", false, "Output as JSON (deprecated: use --format json)")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "Output file path (use '-' for stdout)")
+	cmd.Flags().StringVar(&format, "format", "yaml", "Output format: yaml, json, or markdown")
+	cmd.Flags().BoolVar(&includeGit, "include-git", true, "Include git state in handoff")
 
 	return cmd
 }
@@ -144,10 +151,15 @@ Examples:
 	return cmd
 }
 
-func runHandoffCreate(cmd *cobra.Command, sessionName, goal, now, fromFile string, auto bool, description string, jsonFormat bool) error {
+func runHandoffCreate(cmd *cobra.Command, sessionName, goal, now, fromFile string, auto bool, description string, jsonFormat bool, output, format string, includeGit bool) error {
 	// Check global JSON flag
 	if IsJSONOutput() {
 		jsonFormat = true
+	}
+
+	// Normalize format flag
+	if jsonFormat && format == "yaml" {
+		format = "json" // --json flag overrides default
 	}
 
 	projectDir, err := os.Getwd()
@@ -161,6 +173,9 @@ func runHandoffCreate(cmd *cobra.Command, sessionName, goal, now, fromFile strin
 		"now_provided", now != "",
 		"from_file", fromFile,
 		"auto", auto,
+		"output", output,
+		"format", format,
+		"include_git", includeGit,
 	)
 
 	writer := handoff.NewWriter(projectDir)
@@ -232,9 +247,11 @@ func runHandoffCreate(cmd *cobra.Command, sessionName, goal, now, fromFile strin
 		h.Status = handoff.StatusComplete
 		h.Outcome = handoff.OutcomeSucceeded
 
-		// Enrich with git state
-		if err := generator.EnrichWithGitState(h); err != nil {
-			slog.Warn("git enrichment failed", "error", err)
+		// Enrich with git state if requested
+		if includeGit {
+			if err := generator.EnrichWithGitState(h); err != nil {
+				slog.Warn("git enrichment failed", "error", err)
+			}
 		}
 	}
 
@@ -243,15 +260,30 @@ func runHandoffCreate(cmd *cobra.Command, sessionName, goal, now, fromFile strin
 		return fmt.Errorf("validation failed: %v", errs[0])
 	}
 
+	// Handle output to stdout
+	if output == "-" {
+		return outputHandoffToStdout(cmd, h, format)
+	}
+
 	// Determine description for filename
 	if description == "" {
 		description = generateDescription(h.Goal)
 	}
 
-	// Write handoff
-	path, err := writer.Write(h, description)
-	if err != nil {
-		return fmt.Errorf("failed to write handoff: %w", err)
+	// Write handoff to file
+	var path string
+	if output != "" {
+		// Write to specified path
+		path = output
+		if err := writer.WriteToPath(h, path); err != nil {
+			return fmt.Errorf("failed to write handoff: %w", err)
+		}
+	} else {
+		// Write to auto-generated path
+		path, err = writer.Write(h, description)
+		if err != nil {
+			return fmt.Errorf("failed to write handoff: %w", err)
+		}
 	}
 	reader.InvalidateCache()
 
@@ -261,7 +293,7 @@ func runHandoffCreate(cmd *cobra.Command, sessionName, goal, now, fromFile strin
 		"goal", truncateForDisplay(h.Goal, 50),
 	)
 
-	if jsonFormat {
+	if format == "json" {
 		return outputHandoffJSON(cmd, map[string]interface{}{
 			"success":       true,
 			"path":          path,
@@ -279,6 +311,97 @@ func runHandoffCreate(cmd *cobra.Command, sessionName, goal, now, fromFile strin
 	fmt.Fprintf(cmd.OutOrStdout(), "  Goal: %s\n", truncateForDisplay(h.Goal, 70))
 	fmt.Fprintf(cmd.OutOrStdout(), "  Now: %s\n", truncateForDisplay(h.Now, 70))
 	return nil
+}
+
+// outputHandoffToStdout outputs the handoff to stdout in the specified format.
+func outputHandoffToStdout(cmd *cobra.Command, h *handoff.Handoff, format string) error {
+	switch format {
+	case "json":
+		data, err := json.MarshalIndent(h, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshaling json: %w", err)
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), string(data))
+	case "markdown":
+		fmt.Fprintln(cmd.OutOrStdout(), formatHandoffMarkdown(h))
+	default: // yaml
+		data, err := handoff.MarshalYAML(h)
+		if err != nil {
+			return fmt.Errorf("marshaling yaml: %w", err)
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), string(data))
+	}
+	return nil
+}
+
+// formatHandoffMarkdown converts a handoff to human-readable markdown.
+func formatHandoffMarkdown(h *handoff.Handoff) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# Handoff: %s\n\n", h.Session))
+	sb.WriteString(fmt.Sprintf("**Status:** %s (%s)\n\n", h.Status, h.Outcome))
+
+	sb.WriteString("## Goal\n")
+	sb.WriteString(h.Goal + "\n\n")
+
+	sb.WriteString("## Now\n")
+	sb.WriteString(h.Now + "\n\n")
+
+	if len(h.DoneThisSession) > 0 {
+		sb.WriteString("## Done This Session\n")
+		for _, task := range h.DoneThisSession {
+			sb.WriteString(fmt.Sprintf("- %s\n", task.Task))
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(h.Next) > 0 {
+		sb.WriteString("## Next Steps\n")
+		for _, item := range h.Next {
+			sb.WriteString(fmt.Sprintf("- %s\n", item))
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(h.Blockers) > 0 {
+		sb.WriteString("## Blockers\n")
+		for _, blocker := range h.Blockers {
+			sb.WriteString(fmt.Sprintf("- %s\n", blocker))
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(h.Decisions) > 0 {
+		sb.WriteString("## Key Decisions\n")
+		for key, val := range h.Decisions {
+			sb.WriteString(fmt.Sprintf("- **%s:** %s\n", key, val))
+		}
+		sb.WriteString("\n")
+	}
+
+	if h.TotalFileChanges() > 0 {
+		sb.WriteString("## File Changes\n")
+		if len(h.Files.Created) > 0 {
+			sb.WriteString("**Created:**\n")
+			for _, f := range h.Files.Created {
+				sb.WriteString(fmt.Sprintf("- %s\n", f))
+			}
+		}
+		if len(h.Files.Modified) > 0 {
+			sb.WriteString("**Modified:**\n")
+			for _, f := range h.Files.Modified {
+				sb.WriteString(fmt.Sprintf("- %s\n", f))
+			}
+		}
+		if len(h.Files.Deleted) > 0 {
+			sb.WriteString("**Deleted:**\n")
+			for _, f := range h.Files.Deleted {
+				sb.WriteString(fmt.Sprintf("- %s\n", f))
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
 }
 
 func runInteractiveHandoff(sessionName string) (*handoff.Handoff, error) {

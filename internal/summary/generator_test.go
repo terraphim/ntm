@@ -2,6 +2,9 @@ package summary
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -79,6 +82,46 @@ func TestSummarizeSessionBriefFallback(t *testing.T) {
 	}
 	if !created || !modified {
 		t.Fatalf("expected file changes extracted (created=%v modified=%v)", created, modified)
+	}
+}
+
+func TestSummarizeSessionIncludesGitChanges(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	projectDir := t.TempDir()
+	cmd := exec.Command("git", "init")
+	cmd.Dir = projectDir
+	if err := cmd.Run(); err != nil {
+		t.Skipf("git init failed: %v", err)
+	}
+
+	filePath := filepath.Join(projectDir, "new.txt")
+	if err := os.WriteFile(filePath, []byte("hello"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	summary, err := SummarizeSession(context.Background(), Options{
+		Session:        "demo",
+		Outputs:        []AgentOutput{{AgentID: "a1", AgentType: "cc", Output: "did work"}},
+		Format:         FormatBrief,
+		ProjectDir:     projectDir,
+		IncludeGitDiff: true,
+	})
+	if err != nil {
+		t.Fatalf("summarize: %v", err)
+	}
+
+	found := false
+	for _, fc := range summary.Files {
+		if fc.Path == "new.txt" && fc.Action == FileActionCreated {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected git-created file in summary, got: %#v", summary.Files)
 	}
 }
 

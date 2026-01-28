@@ -19,6 +19,7 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/output"
 	"github.com/Dicklesworthstone/ntm/internal/persona"
 	"github.com/Dicklesworthstone/ntm/internal/plugins"
+	"github.com/Dicklesworthstone/ntm/internal/ratelimit"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 )
 
@@ -297,6 +298,18 @@ func runAdd(opts AddOptions) error {
 	// Add agents
 	flatAgents := opts.Agents.Flatten()
 	ccCount, codCount, gmiCount, cursorCount, windsurfCount, aiderCount := 0, 0, 0, 0, 0, 0
+	var rateLimitTracker *ratelimit.RateLimitTracker
+	openAICooldownWaited := false
+
+	for _, agent := range flatAgents {
+		if agent.Type == AgentTypeCodex {
+			rateLimitTracker = ratelimit.NewRateLimitTracker(dir)
+			if err := rateLimitTracker.LoadFromDir(dir); err != nil && !IsJSONOutput() {
+				output.PrintWarningf("Failed to load rate limit history: %v", err)
+			}
+			break
+		}
+	}
 
 	for _, agent := range flatAgents {
 		agentTypeStr := string(agent.Type)
@@ -425,6 +438,17 @@ func runAdd(opts AddOptions) error {
 			return outputError(fmt.Errorf("invalid agent command: %w", err))
 		}
 
+		if agent.Type == AgentTypeCodex {
+			var cooldown time.Duration
+			cooldown, openAICooldownWaited = codexCooldownRemaining(rateLimitTracker, openAICooldownWaited)
+			if cooldown > 0 {
+				if !IsJSONOutput() {
+					output.PrintWarningf("Codex cooldown active; waiting %s before launching", ratelimit.FormatDelay(cooldown))
+				}
+				time.Sleep(cooldown)
+			}
+		}
+
 		cmd, err := tmux.BuildPaneCommand(dir, safeCmd)
 		if err != nil {
 			return outputError(fmt.Errorf("building agent command: %w", err))
@@ -432,6 +456,12 @@ func runAdd(opts AddOptions) error {
 
 		if err := tmux.SendKeys(paneID, cmd, true); err != nil {
 			return outputError(fmt.Errorf("launching agent: %w", err))
+		}
+		if rateLimitTracker != nil && agent.Type == AgentTypeCodex {
+			rateLimitTracker.RecordSuccess("openai")
+			if err := rateLimitTracker.SaveToDir(dir); err != nil && !IsJSONOutput() {
+				output.PrintWarningf("Failed to persist rate limit history: %v", err)
+			}
 		}
 
 		// Gemini post-spawn setup: auto-select Pro model

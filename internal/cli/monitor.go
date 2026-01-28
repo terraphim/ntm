@@ -215,10 +215,12 @@ func generateEndSessionSummary(session string, lastOutputs map[string]string, ma
 	}
 
 	opts := summary.Options{
-		Session:    session,
-		Outputs:    outputs,
-		Format:     summary.FormatHandoff, // Handoff format is good for end of session
-		ProjectKey: manifest.ProjectDir,
+		Session:        session,
+		Outputs:        outputs,
+		Format:         summary.FormatHandoff, // Handoff format is good for end of session
+		ProjectKey:     manifest.ProjectDir,
+		ProjectDir:     manifest.ProjectDir,
+		IncludeGitDiff: true,
 	}
 
 	s, err := summary.SummarizeSession(context.Background(), opts)

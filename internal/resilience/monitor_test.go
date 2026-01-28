@@ -418,6 +418,47 @@ func TestCheckHealthDetectsRateLimit(t *testing.T) {
 	}
 }
 
+func TestCheckHealthRateLimitUpdatesTracker(t *testing.T) {
+	restore := saveHooks()
+	defer restore()
+
+	setHooksLocked(func() {
+		checkSessionFn = func(session string) (*health.SessionHealth, error) {
+			return &health.SessionHealth{
+				Session: session,
+				Agents: []health.AgentHealth{
+					{
+						PaneID:        "pane-1",
+						Status:        health.StatusWarning,
+						ProcessStatus: health.ProcessRunning,
+						RateLimited:   true,
+						WaitSeconds:   45,
+					},
+				},
+			}, nil
+		}
+	})
+
+	cfg := config.Default()
+	cfg.Resilience.RateLimit.Detect = true
+	projectDir := t.TempDir()
+	m := NewMonitor("test-session", projectDir, cfg, true)
+	m.RegisterAgent("pane-1", 1, "cod", "gpt-4", "codex")
+
+	m.checkHealth(context.Background())
+
+	state := m.rateLimitTracker.GetProviderState("openai")
+	if state == nil {
+		t.Fatal("expected rate limit tracker state for openai provider")
+	}
+	if state.TotalRateLimits != 1 {
+		t.Errorf("expected TotalRateLimits=1, got %d", state.TotalRateLimits)
+	}
+	if state.CooldownUntil.IsZero() {
+		t.Error("expected cooldown window to be set")
+	}
+}
+
 func TestCheckHealthRateLimitCleared(t *testing.T) {
 	restore := saveHooks()
 	defer restore()
@@ -460,6 +501,47 @@ func TestCheckHealthRateLimitCleared(t *testing.T) {
 	}
 	if waitSeconds != 0 {
 		t.Errorf("wait seconds should be 0, got %d", waitSeconds)
+	}
+}
+
+func TestCheckHealthRateLimitClearedRecordsSuccess(t *testing.T) {
+	restore := saveHooks()
+	defer restore()
+
+	setHooksLocked(func() {
+		checkSessionFn = func(session string) (*health.SessionHealth, error) {
+			return &health.SessionHealth{
+				Session: session,
+				Agents: []health.AgentHealth{
+					{
+						PaneID:        "pane-1",
+						Status:        health.StatusOK,
+						ProcessStatus: health.ProcessRunning,
+						RateLimited:   false,
+					},
+				},
+			}, nil
+		}
+	})
+
+	cfg := config.Default()
+	cfg.Resilience.RateLimit.Detect = true
+	projectDir := t.TempDir()
+	m := NewMonitor("test-session", projectDir, cfg, true)
+	m.RegisterAgent("pane-1", 1, "cod", "gpt-4", "codex")
+
+	m.mu.Lock()
+	m.agents["pane-1"].RateLimited = true
+	m.mu.Unlock()
+
+	m.checkHealth(context.Background())
+
+	state := m.rateLimitTracker.GetProviderState("openai")
+	if state == nil {
+		t.Fatal("expected rate limit tracker state for openai provider")
+	}
+	if state.TotalSuccesses != 1 {
+		t.Errorf("expected TotalSuccesses=1, got %d", state.TotalSuccesses)
 	}
 }
 

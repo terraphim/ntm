@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Dicklesworthstone/ntm/internal/config"
 	"github.com/Dicklesworthstone/ntm/internal/output"
 	"github.com/Dicklesworthstone/ntm/internal/summary"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
@@ -121,12 +122,24 @@ func runSummary(args []string, sinceStr, format string) error {
 	}
 
 	wd, _ := os.Getwd()
+	projectDir := ""
+	if cfg != nil {
+		projectDir = cfg.GetProjectDir(session)
+	}
+	if projectDir == "" {
+		projectDir = config.Default().GetProjectDir(session)
+	}
+	if projectDir == "" {
+		projectDir = wd
+	}
 
 	opts := summary.Options{
-		Session:    session,
-		Outputs:    outputs,
-		Format:     sumFormat,
-		ProjectKey: wd,
+		Session:        session,
+		Outputs:        outputs,
+		Format:         sumFormat,
+		ProjectKey:     wd,
+		ProjectDir:     projectDir,
+		IncludeGitDiff: true,
 	}
 
 	s, err := summary.SummarizeSession(context.Background(), opts)
