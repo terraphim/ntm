@@ -943,6 +943,59 @@ func TestRobotStatusErrorHandling(t *testing.T) {
 	logger.Log("[E2E-ROBOT-STATUS-ERROR] Error handling validated successfully")
 }
 
+// TestRobotStatusPagination validates limit/offset pagination for robot-status outputs.
+func TestRobotStatusPagination(t *testing.T) {
+	testutil.RequireE2E(t)
+	testutil.RequireTmuxThrottled(t)
+	testutil.RequireNTMBinary(t)
+
+	logger := testutil.NewTestLogger(t, t.TempDir())
+
+	sessionA := createSyntheticAgentSession(t, logger)
+	sessionB := createSyntheticAgentSession(t, logger)
+	logger.Log("[E2E-ROBOT-PAGINATION] bead=bd-20ong sessions=%s,%s", sessionA, sessionB)
+
+	out := testutil.AssertCommandSuccess(t, logger, "ntm", "--robot-status", "--robot-limit=1", "--robot-offset=0")
+	logger.Log("[E2E-ROBOT-PAGINATION] bead=bd-20ong status output:\n%s", string(out))
+
+	var payload struct {
+		Sessions []struct {
+			Name string `json:"name"`
+		} `json:"sessions"`
+		Pagination struct {
+			Limit      int  `json:"limit"`
+			Offset     int  `json:"offset"`
+			Count      int  `json:"count"`
+			Total      int  `json:"total"`
+			HasMore    bool `json:"has_more"`
+			NextCursor *int `json:"next_cursor"`
+		} `json:"pagination"`
+	}
+
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	if payload.Pagination.Limit != 1 {
+		t.Fatalf("pagination.limit = %d, want 1", payload.Pagination.Limit)
+	}
+	if payload.Pagination.Offset != 0 {
+		t.Fatalf("pagination.offset = %d, want 0", payload.Pagination.Offset)
+	}
+	if payload.Pagination.Count != len(payload.Sessions) {
+		t.Fatalf("pagination.count = %d, sessions = %d", payload.Pagination.Count, len(payload.Sessions))
+	}
+	if payload.Pagination.Total < payload.Pagination.Count {
+		t.Fatalf("pagination.total (%d) should be >= count (%d)", payload.Pagination.Total, payload.Pagination.Count)
+	}
+	if !payload.Pagination.HasMore {
+		t.Fatalf("pagination.has_more should be true when total exceeds limit")
+	}
+	if payload.Pagination.NextCursor == nil || *payload.Pagination.NextCursor != 1 {
+		t.Fatalf("pagination.next_cursor = %+v, want 1", payload.Pagination.NextCursor)
+	}
+}
+
 // TestRobotStatusFieldStability tests that JSON schema remains stable
 func TestRobotStatusFieldStability(t *testing.T) {
 	testutil.RequireNTMBinary(t)
@@ -1821,9 +1874,9 @@ func TestRobotEnsembleSuggest(t *testing.T) {
 			logger.Log("FULL JSON OUTPUT:\n%s", string(out))
 
 			var payload struct {
-				Success     bool   `json:"success"`
-				Question    string `json:"question"`
-				TopPick     *struct {
+				Success  bool   `json:"success"`
+				Question string `json:"question"`
+				TopPick  *struct {
 					PresetName  string   `json:"preset_name"`
 					DisplayName string   `json:"display_name"`
 					Description string   `json:"description"`

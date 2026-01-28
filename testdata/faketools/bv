@@ -33,6 +33,14 @@ case "$1" in
         cat "$FIXTURES_DIR/bv_triage.json" 2>/dev/null || echo '{"generated_at": "2026-01-01T00:00:00Z", "data_hash": "test", "triage": {"meta": {"version": "1.0.0"}, "quick_ref": {"open_count": 10, "actionable_count": 5}}}'
         exit 0
         ;;
+    --robot-triage-by-label)
+        echo '{"generated_at":"2026-01-01T00:00:00Z","triage_by_label":[{"label":"backend","top_pick":{"id":"bd-1","title":"Test"}}]}'
+        exit 0
+        ;;
+    --robot-triage-by-track)
+        echo '{"generated_at":"2026-01-01T00:00:00Z","triage_by_track":[{"track":"main","top_pick":{"id":"bd-1","title":"Test"}}]}'
+        exit 0
+        ;;
     --robot-plan)
         cat "$FIXTURES_DIR/bv_plan.json" 2>/dev/null || echo '{"generated_at": "2026-01-01T00:00:00Z", "plan": {"tracks": []}}'
         exit 0
@@ -51,6 +59,14 @@ case "$1" in
         ;;
     --robot-graph)
         echo '{"graph":{"nodes":[],"edges":[]},"format":"json"}'
+        exit 0
+        ;;
+    --robot-history)
+        echo '{"stats":{"total_beads":1,"total_commits":0,"correlated_count":0},"histories":[{"id":"bd-1","title":"Test","events":[]}]}'
+        exit 0
+        ;;
+    --robot-burndown)
+        echo '{"sprint":"s1","progress":{"total_points":10,"completed_points":4,"percent_complete":40,"days_remaining":3},"scope_changes":[],"at_risk":[]}'
         exit 0
         ;;
     --robot-forecast)
