@@ -31,6 +31,7 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/robot"
 	sessionPkg "github.com/Dicklesworthstone/ntm/internal/session"
 	"github.com/Dicklesworthstone/ntm/internal/state"
+	"github.com/Dicklesworthstone/ntm/internal/summary"
 	"github.com/Dicklesworthstone/ntm/internal/templates"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 	"github.com/Dicklesworthstone/ntm/internal/tools"
@@ -66,10 +67,11 @@ type SessionInterruptInput struct {
 
 // SessionKillInput is the kernel input for sessions.kill.
 type SessionKillInput struct {
-	Session string   `json:"session"`
-	Force   bool     `json:"force,omitempty"`
-	Tags    []string `json:"tags,omitempty"`
-	NoHooks bool     `json:"no_hooks,omitempty"`
+	Session   string   `json:"session"`
+	Force     bool     `json:"force,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
+	NoHooks   bool     `json:"no_hooks,omitempty"`
+	Summarize bool     `json:"summarize,omitempty"` // Generate summary before killing
 }
 
 func init() {
@@ -166,7 +168,7 @@ func init() {
 		if strings.TrimSpace(opts.Session) == "" {
 			return nil, fmt.Errorf("session is required")
 		}
-		return buildKillResponse(opts.Session, opts.Force, opts.Tags, opts.NoHooks)
+		return buildKillResponse(opts.Session, opts.Force, opts.Tags, opts.NoHooks, opts.Summarize)
 	})
 }
 
@@ -1326,6 +1328,7 @@ func newKillCmd() *cobra.Command {
 	var force bool
 	var tags []string
 	var noHooks bool
+	var summarize bool
 
 	cmd := &cobra.Command{
 		Use:   "kill <session>",
@@ -1335,28 +1338,31 @@ func newKillCmd() *cobra.Command {
 Examples:
   ntm kill myproject           # Prompts for confirmation
   ntm kill myproject --force   # No confirmation
-  ntm kill myproject --tag=ui  # Kill only panes with 'ui' tag`,
+  ntm kill myproject --tag=ui  # Kill only panes with 'ui' tag
+  ntm kill myproject --summarize # Generate summary before killing`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runKill(args[0], force, tags, noHooks)
+			return runKill(args[0], force, tags, noHooks, summarize)
 		},
 	}
 
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "skip confirmation")
 	cmd.Flags().StringSliceVar(&tags, "tag", nil, "filter panes to kill by tag (if used, only matching panes are killed)")
 	cmd.Flags().BoolVar(&noHooks, "no-hooks", false, "Disable command hooks")
+	cmd.Flags().BoolVar(&summarize, "summarize", false, "Generate session summary before killing")
 
 	return cmd
 }
 
-func runKill(session string, force bool, tags []string, noHooks bool) error {
+func runKill(session string, force bool, tags []string, noHooks bool, summarize bool) error {
 	// Use kernel for JSON output mode
 	if IsJSONOutput() {
 		result, err := kernel.Run(context.Background(), "sessions.kill", SessionKillInput{
-			Session: session,
-			Force:   force,
-			Tags:    tags,
-			NoHooks: noHooks,
+			Session:   session,
+			Force:     force,
+			Tags:      tags,
+			NoHooks:   noHooks,
+			Summarize: summarize,
 		})
 		if err != nil {
 			return output.PrintJSON(output.NewError(err.Error()))
@@ -1410,6 +1416,17 @@ func runKill(session string, force bool, tags []string, noHooks bool) error {
 		}
 		if hooks.AnyFailed(results) {
 			return fmt.Errorf("pre-kill hook failed: %w", hooks.AllErrors(results))
+		}
+	}
+
+	// Generate summary before killing if requested
+	if summarize {
+		fmt.Println("Generating session summary...")
+		summaryResult, err := generateKillSummary(session)
+		if err != nil {
+			fmt.Printf("⚠ Summary generation failed: %v\n", err)
+		} else {
+			fmt.Println("\n" + summaryResult.Text + "\n")
 		}
 	}
 
@@ -1600,6 +1617,49 @@ func buildKillResponse(session string, force bool, tags []string, noHooks bool) 
 		Killed:              true,
 		Message:             message,
 	}, nil
+}
+
+// generateKillSummary generates a session summary for use before killing.
+// It captures pane outputs and runs them through the summary generator.
+func generateKillSummary(session string) (*summary.SessionSummary, error) {
+	// Get panes from session
+	panes, err := tmux.GetPanes(session)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get panes: %w", err)
+	}
+
+	// Build agent outputs by capturing pane content
+	var outputs []summary.AgentOutput
+	for _, pane := range panes {
+		agentType := string(pane.Type)
+		if agentType == "" || agentType == "unknown" {
+			continue // Skip non-agent panes
+		}
+
+		// Capture output (500 lines)
+		out, _ := tmux.CapturePaneOutput(pane.ID, 500)
+
+		outputs = append(outputs, summary.AgentOutput{
+			AgentID:   pane.ID,
+			AgentType: agentType,
+			Output:    out,
+		})
+	}
+
+	if len(outputs) == 0 {
+		return nil, fmt.Errorf("no agent outputs to summarize")
+	}
+
+	wd, _ := os.Getwd()
+
+	opts := summary.Options{
+		Session:    session,
+		Outputs:    outputs,
+		Format:     summary.FormatBrief,
+		ProjectKey: wd,
+	}
+
+	return summary.SummarizeSession(context.Background(), opts)
 }
 
 // truncatePrompt truncates a prompt to the specified length for display, respecting UTF-8 boundaries.
