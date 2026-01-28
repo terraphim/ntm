@@ -2551,7 +2551,7 @@ func runSendBatch(opts SendOptions) error {
 				sendErr = fmt.Errorf("pane %d not found", paneIdx)
 				continue
 			}
-			if err := sendPromptToPane(session, p, promptText); err != nil {
+			if err := sendPromptToPane(opts.Session, p, promptText); err != nil {
 				paneFailed++
 				sendErr = err
 			} else {
