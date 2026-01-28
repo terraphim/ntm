@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Dicklesworthstone/ntm/internal/archive"
 	"github.com/Dicklesworthstone/ntm/internal/config"
 	"github.com/Dicklesworthstone/ntm/internal/output"
 	"github.com/Dicklesworthstone/ntm/internal/summary"
@@ -22,10 +24,11 @@ import (
 
 func newSummaryCmd() *cobra.Command {
 	var (
-		since   string
-		format  string
-		listAll bool
-		recent  bool
+		since      string
+		format     string
+		listAll    bool
+		recent     bool
+		regenerate bool
 	)
 
 	cmd := &cobra.Command{
@@ -49,16 +52,17 @@ Examples:
   ntm summary --since 1h           # Look back 1 hour
   ntm summary --format markdown    # Output as markdown
   ntm summary --json               # Output as JSON
-  ntm summary --all                # List all available summaries`,
+  ntm summary --all                # List all available summaries
+  ntm summary --regenerate         # Regenerate from archived output`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if listAll {
 				return runSummaryList(format)
 			}
-			if recent && listAll {
-				return fmt.Errorf("--recent and --all cannot be used together")
+			if recent && regenerate {
+				return fmt.Errorf("--recent and --regenerate cannot be used together")
 			}
-			return runSummary(args, since, format, recent)
+			return runSummary(args, since, format, recent, regenerate)
 		},
 	}
 
@@ -66,6 +70,7 @@ Examples:
 	cmd.Flags().StringVar(&format, "format", "text", "Output format: text, json, markdown, detailed, or handoff")
 	cmd.Flags().BoolVar(&listAll, "all", false, "List all available summaries")
 	cmd.Flags().BoolVar(&recent, "recent", false, "Show most recent summary (optionally filtered by session)")
+	cmd.Flags().BoolVar(&regenerate, "regenerate", false, "Regenerate summary from archived output (if available)")
 
 	return cmd
 }
@@ -77,8 +82,9 @@ type summaryFileInfo struct {
 }
 
 var summaryFilenameRegex = regexp.MustCompile(`^(?P<session>.+)-(?P<ts>\d{8}-\d{6})\.json$`)
+var archiveFilenameRegex = regexp.MustCompile(`^(?P<session>.+)_(?P<date>\d{4}-\d{2}-\d{2})\.jsonl$`)
 
-func runSummary(args []string, sinceStr, format string, recent bool) error {
+func runSummary(args []string, sinceStr, format string, recent, regenerate bool) error {
 	sessionArg := ""
 	if len(args) > 0 {
 		sessionArg = args[0]
@@ -94,6 +100,10 @@ func runSummary(args []string, sinceStr, format string, recent bool) error {
 	summaryFiles, err := listSummaryFiles(projectDir)
 	if err != nil {
 		return err
+	}
+
+	if regenerate {
+		return regenerateSummaryFromArchive(sessionArg, sumFormat, forceJSON || IsJSONOutput(), projectDir, wd)
 	}
 
 	if recent {
@@ -390,4 +400,211 @@ func outputSummaryFromFile(path string, format summary.SummaryFormat, jsonOut bo
 	text := summary.RenderSummary(&sum, format)
 	fmt.Println(text)
 	return nil
+}
+
+type archiveFileInfo struct {
+	Session   string
+	Timestamp time.Time
+	Path      string
+}
+
+func regenerateSummaryFromArchive(sessionArg string, format summary.SummaryFormat, jsonOut bool, projectDir, wd string) error {
+	archiveFile, sessionName, err := findArchiveFile(sessionArg)
+	if err != nil {
+		return err
+	}
+	if archiveFile == "" {
+		return fmt.Errorf("no archived output found")
+	}
+
+	if sessionName == "" {
+		sessionName = sessionArg
+	}
+	projectDir = resolveProjectDir(sessionName, wd)
+
+	outputs, err := loadArchiveOutputs(archiveFile)
+	if err != nil {
+		return err
+	}
+	if len(outputs) == 0 {
+		return fmt.Errorf("no archived output found for session %q", sessionName)
+	}
+
+	opts := summary.Options{
+		Session:        sessionName,
+		Outputs:        outputs,
+		Format:         format,
+		ProjectKey:     projectDir,
+		ProjectDir:     projectDir,
+		IncludeGitDiff: true,
+	}
+
+	sum, err := summary.SummarizeSession(context.Background(), opts)
+	if err != nil {
+		return err
+	}
+
+	if err := writeSummaryFile(projectDir, sessionName, sum); err != nil {
+		return err
+	}
+
+	if jsonOut {
+		return output.PrintJSON(sum)
+	}
+
+	fmt.Println(summary.RenderSummary(sum, format))
+	return nil
+}
+
+func writeSummaryFile(projectDir, session string, sum *summary.SessionSummary) error {
+	if projectDir == "" {
+		return fmt.Errorf("project directory required to write summary")
+	}
+	summaryDir := filepath.Join(projectDir, ".ntm", "summaries")
+	if err := os.MkdirAll(summaryDir, 0755); err != nil {
+		return fmt.Errorf("failed to create summary dir: %w", err)
+	}
+	timestamp := time.Now().Format("20060102-150405")
+	filename := filepath.Join(summaryDir, fmt.Sprintf("%s-%s.json", session, timestamp))
+	file, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("failed to create summary file: %w", err)
+	}
+	defer file.Close()
+
+	if err := json.NewEncoder(file).Encode(sum); err != nil {
+		return fmt.Errorf("failed to write summary file: %w", err)
+	}
+	return nil
+}
+
+func findArchiveFile(session string) (string, string, error) {
+	files, err := listArchiveFiles()
+	if err != nil {
+		return "", "", err
+	}
+	if len(files) == 0 {
+		return "", "", nil
+	}
+
+	if session == "" {
+		return files[0].Path, files[0].Session, nil
+	}
+
+	for _, f := range files {
+		if f.Session == session {
+			return f.Path, f.Session, nil
+		}
+	}
+	return "", "", nil
+}
+
+func listArchiveFiles() ([]archiveFileInfo, error) {
+	ntmDir, err := util.NTMDir()
+	if err != nil {
+		return nil, err
+	}
+	archiveDir := filepath.Join(ntmDir, "archive")
+	entries, err := os.ReadDir(archiveDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var files []archiveFileInfo
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		session, ts, ok := parseArchiveFilename(entry.Name())
+		if !ok {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if ts.IsZero() {
+			ts = info.ModTime()
+		}
+		files = append(files, archiveFileInfo{
+			Session:   session,
+			Timestamp: ts,
+			Path:      filepath.Join(archiveDir, entry.Name()),
+		})
+	}
+
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Timestamp.After(files[j].Timestamp)
+	})
+
+	return files, nil
+}
+
+func parseArchiveFilename(name string) (string, time.Time, bool) {
+	matches := archiveFilenameRegex.FindStringSubmatch(name)
+	if len(matches) != 3 {
+		return "", time.Time{}, false
+	}
+	session := matches[1]
+	ts, err := time.Parse("2006-01-02", matches[2])
+	if err != nil {
+		return session, time.Time{}, true
+	}
+	return session, ts, true
+}
+
+func loadArchiveOutputs(path string) ([]summary.AgentOutput, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	dec := json.NewDecoder(file)
+	paneBuilders := make(map[string]*strings.Builder)
+	paneTypes := make(map[string]string)
+	for {
+		var record archive.ArchiveRecord
+		if err := dec.Decode(&record); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+		if record.Content == "" {
+			continue
+		}
+		builder := paneBuilders[record.Pane]
+		if builder == nil {
+			builder = &strings.Builder{}
+			paneBuilders[record.Pane] = builder
+		}
+		builder.WriteString(record.Content)
+		if record.Agent != "" {
+			paneTypes[record.Pane] = record.Agent
+		}
+	}
+
+	var panes []string
+	for pane := range paneBuilders {
+		panes = append(panes, pane)
+	}
+	sort.Strings(panes)
+
+	outputs := make([]summary.AgentOutput, 0, len(panes))
+	for _, pane := range panes {
+		agentType := paneTypes[pane]
+		if agentType == "" {
+			agentType = "unknown"
+		}
+		outputs = append(outputs, summary.AgentOutput{
+			AgentID:   pane,
+			AgentType: agentType,
+			Output:    paneBuilders[pane].String(),
+		})
+	}
+	return outputs, nil
 }
