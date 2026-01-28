@@ -103,3 +103,23 @@ func TestApplyPagination_NegativeOffset(t *testing.T) {
 		t.Fatalf("expected offset clamped to 0, got %d", page.Offset)
 	}
 }
+
+func TestPaginationHintOffsets(t *testing.T) {
+	page := &PaginationInfo{
+		Limit:   2,
+		Offset:  0,
+		Count:   2,
+		Total:   5,
+		HasMore: true,
+	}
+	next := 2
+	page.NextCursor = &next
+
+	nextOffset, pagesRemaining := paginationHintOffsets(page)
+	if nextOffset == nil || *nextOffset != 2 {
+		t.Fatalf("expected next_offset=2, got %+v", nextOffset)
+	}
+	if pagesRemaining == nil || *pagesRemaining != 2 {
+		t.Fatalf("expected pages_remaining=2, got %+v", pagesRemaining)
+	}
+}

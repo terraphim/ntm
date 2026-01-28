@@ -40,6 +40,8 @@ type HistoryAgentHints struct {
 	Summary           string   `json:"summary,omitempty"`
 	SuggestedCommands []string `json:"suggested_commands,omitempty"`
 	Warnings          []string `json:"warnings,omitempty"`
+	NextOffset        *int     `json:"next_offset,omitempty"`
+	PagesRemaining    *int     `json:"pages_remaining,omitempty"`
 }
 
 // GetHistory returns command history as structured output.
@@ -248,6 +250,11 @@ func generateHistoryHints(output HistoryOutput, opts HistoryOptions) *HistoryAge
 		fmt.Sprintf("ntm --robot-history=%s --stats", opts.Session),
 		fmt.Sprintf("ntm --robot-history=%s --last=10", opts.Session),
 		fmt.Sprintf("ntm --robot-history=%s --since=1h", opts.Session),
+	}
+
+	if next, pages := paginationHintOffsets(output.Pagination); next != nil {
+		hints.NextOffset = next
+		hints.PagesRemaining = pages
 	}
 
 	if output.Total > 1000 {

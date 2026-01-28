@@ -1051,6 +1051,7 @@ type StatusOutput struct {
 	System         SystemInfo             `json:"system"`
 	Sessions       []SessionInfo          `json:"sessions"`
 	Pagination     *PaginationInfo        `json:"pagination,omitempty"`
+	AgentHints     *AgentHints            `json:"_agent_hints,omitempty"`
 	Summary        StatusSummary          `json:"summary"`
 	Beads          *bv.BeadsSummary       `json:"beads,omitempty"`
 	GraphMetrics   *GraphMetrics          `json:"graph_metrics,omitempty"`
@@ -1497,6 +1498,12 @@ func GetStatusWithOptions(opts PaginationOptions) (*StatusOutput, error) {
 	if paged, page := ApplyPagination(output.Sessions, opts); page != nil {
 		output.Sessions = paged
 		output.Pagination = page
+		if next, pages := paginationHintOffsets(page); next != nil {
+			output.AgentHints = &AgentHints{
+				NextOffset:     next,
+				PagesRemaining: pages,
+			}
+		}
 	}
 
 	return output, nil
@@ -2880,6 +2887,7 @@ type SnapshotOutput struct {
 	Timestamp      string             `json:"ts"`
 	Sessions       []SnapshotSession  `json:"sessions"`
 	Pagination     *PaginationInfo    `json:"pagination,omitempty"`
+	AgentHints     *AgentHints        `json:"_agent_hints,omitempty"`
 	BeadsSummary   *bv.BeadsSummary   `json:"beads_summary,omitempty"`
 	AgentMail      *SnapshotAgentMail `json:"agent_mail,omitempty"`
 	MailUnread     int                `json:"mail_unread,omitempty"`
@@ -3153,6 +3161,12 @@ func GetSnapshotWithOptions(cfg *config.Config, opts PaginationOptions) (*Snapsh
 	if paged, page := ApplyPagination(output.Sessions, opts); page != nil {
 		output.Sessions = paged
 		output.Pagination = page
+		if next, pages := paginationHintOffsets(page); next != nil {
+			output.AgentHints = &AgentHints{
+				NextOffset:     next,
+				PagesRemaining: pages,
+			}
+		}
 	}
 
 	return output, nil

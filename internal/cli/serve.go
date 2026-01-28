@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -59,6 +60,7 @@ Examples:
 	cmd.Flags().StringVar(&opts.MTLSKey, "mtls-key", "", "Server TLS key file for mtls auth mode")
 	cmd.Flags().StringVar(&opts.MTLSCA, "mtls-ca", "", "Client CA bundle for mtls auth mode")
 	cmd.Flags().StringArrayVar(&opts.CORSAllowOrigins, "cors-allow-origin", nil, "Allowed CORS origins (repeatable). Defaults to localhost only.")
+	cmd.Flags().StringVar(&opts.PublicBaseURL, "public-base-url", "", "Public base URL for external clients (optional)")
 
 	return cmd
 }
@@ -66,6 +68,7 @@ Examples:
 type serveOptions struct {
 	Host             string
 	Port             int
+	PublicBaseURL    string
 	AuthMode         string
 	APIKey           string
 	OIDCIssuer       string
@@ -104,6 +107,7 @@ func runServe(opts serveOptions) error {
 	cfg := serve.Config{
 		Host:           opts.Host,
 		Port:           opts.Port,
+		PublicBaseURL:  opts.PublicBaseURL,
 		EventBus:       events.DefaultBus,
 		StateStore:     stateStore,
 		AllowedOrigins: opts.CORSAllowOrigins,
@@ -145,6 +149,14 @@ func runServe(opts serveOptions) error {
 	if mode == serve.AuthModeMTLS {
 		scheme = "https"
 	}
+	slog.Info("server starting",
+		"host", opts.Host,
+		"port", opts.Port,
+		"auth_mode", opts.AuthMode,
+		"tls_enabled", mode == serve.AuthModeMTLS,
+		"public_base_url", opts.PublicBaseURL,
+		"allowed_origins", len(opts.CORSAllowOrigins),
+	)
 	fmt.Printf("Starting NTM server on %s://%s:%d\n", scheme, opts.Host, opts.Port)
 	fmt.Println("Press Ctrl+C to stop")
 

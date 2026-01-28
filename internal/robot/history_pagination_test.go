@@ -42,6 +42,12 @@ func TestGetHistoryPagination(t *testing.T) {
 	if !output.Pagination.HasMore || output.Pagination.NextCursor == nil || *output.Pagination.NextCursor != 2 {
 		t.Fatalf("expected next_cursor=2 and has_more=true, got %+v", output.Pagination)
 	}
+	if output.AgentHints == nil || output.AgentHints.NextOffset == nil || *output.AgentHints.NextOffset != 2 {
+		t.Fatalf("expected _agent_hints.next_offset=2, got %+v", output.AgentHints)
+	}
+	if output.AgentHints.PagesRemaining == nil || *output.AgentHints.PagesRemaining != 1 {
+		t.Fatalf("expected _agent_hints.pages_remaining=1, got %+v", output.AgentHints)
+	}
 	if len(output.Entries) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(output.Entries))
 	}

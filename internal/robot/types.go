@@ -409,6 +409,12 @@ type AgentHints struct {
 	// Example: "2 sessions, 6 agents total (4 working, 2 idle)"
 	Summary string `json:"summary,omitempty"`
 
+	// NextOffset indicates the next pagination offset to request.
+	NextOffset *int `json:"next_offset,omitempty"`
+
+	// PagesRemaining estimates how many pages remain given current limit.
+	PagesRemaining *int `json:"pages_remaining,omitempty"`
+
 	// SuggestedActions are actions the agent might want to take.
 	SuggestedActions []RobotAction `json:"suggested_actions,omitempty"`
 

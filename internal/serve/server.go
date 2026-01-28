@@ -46,12 +46,13 @@ import (
 
 // Server provides HTTP API and event streaming for NTM.
 type Server struct {
-	host       string
-	port       int
-	eventBus   *events.EventBus
-	stateStore *state.Store
-	server     *http.Server
-	auth       AuthConfig
+	host          string
+	port          int
+	publicBaseURL string
+	eventBus      *events.EventBus
+	stateStore    *state.Store
+	server        *http.Server
+	auth          AuthConfig
 
 	// SSE clients
 	sseClients   map[chan events.BusEvent]struct{}
@@ -116,11 +117,14 @@ type MTLSConfig struct {
 
 // Config holds server configuration.
 type Config struct {
-	Host       string
-	Port       int
-	EventBus   *events.EventBus
-	StateStore *state.Store
-	Auth       AuthConfig
+	Host string
+	Port int
+	// PublicBaseURL advertises the externally reachable base URL for clients.
+	// Optional: leave empty to derive from host/port in documentation or clients.
+	PublicBaseURL string
+	EventBus      *events.EventBus
+	StateStore    *state.Store
+	Auth          AuthConfig
 	// AllowedOrigins controls CORS origin allowlist. Empty means default localhost only.
 	AllowedOrigins []string
 }
@@ -680,6 +684,12 @@ func ValidateConfig(cfg Config) error {
 	if mode == AuthModeLocal && !isLoopbackHost(cfg.Host) {
 		return fmt.Errorf("refusing to bind %s without auth; set --auth-mode and required credentials", cfg.Host)
 	}
+	if cfg.PublicBaseURL != "" {
+		parsed, err := url.Parse(cfg.PublicBaseURL)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("invalid public base URL %q", cfg.PublicBaseURL)
+		}
+	}
 	return nil
 }
 
@@ -689,6 +699,7 @@ func New(cfg Config) *Server {
 	s := &Server{
 		host:               cfg.Host,
 		port:               cfg.Port,
+		publicBaseURL:      cfg.PublicBaseURL,
 		eventBus:           cfg.EventBus,
 		stateStore:         cfg.StateStore,
 		auth:               cfg.Auth,
@@ -2009,9 +2020,9 @@ func (s *Server) handleHealthV1(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleVersionV1(w http.ResponseWriter, r *http.Request) {
 	reqID := requestIDFromContext(r.Context())
 	writeSuccessResponse(w, http.StatusOK, map[string]interface{}{
-		"version":    "1.0.0", // TODO: inject from build
+		"version":     "1.0.0", // TODO: inject from build
 		"api_version": "v1",
-		"go_version": "1.25",
+		"go_version":  "1.25",
 	}, reqID)
 }
 
@@ -2093,6 +2104,7 @@ func (s *Server) handleGetConfigV1(w http.ResponseWriter, r *http.Request) {
 		"port":            s.port,
 		"auth_mode":       string(s.auth.Mode),
 		"allowed_origins": s.corsAllowedOrigins,
+		"public_base_url": s.publicBaseURL,
 		"project_dir":     s.projectDir,
 	}, reqID)
 }
@@ -2934,11 +2946,11 @@ func (s *Server) handleListAgentsV1(w http.ResponseWriter, r *http.Request) {
 
 // AgentSpawnRequest is the request body for POST /sessions/{id}/agents/spawn.
 type AgentSpawnRequest struct {
-	CCCount  int    `json:"cc_count,omitempty"`
-	CodCount int    `json:"cod_count,omitempty"`
-	GmiCount int    `json:"gmi_count,omitempty"`
-	Preset   string `json:"preset,omitempty"`
-	WaitReady bool  `json:"wait_ready,omitempty"`
+	CCCount   int    `json:"cc_count,omitempty"`
+	CodCount  int    `json:"cod_count,omitempty"`
+	GmiCount  int    `json:"gmi_count,omitempty"`
+	Preset    string `json:"preset,omitempty"`
+	WaitReady bool   `json:"wait_ready,omitempty"`
 }
 
 // handleAgentSpawnV1 handles POST /api/v1/sessions/{sessionId}/agents/spawn.
@@ -3088,13 +3100,13 @@ func (s *Server) handleAgentInterruptV1(w http.ResponseWriter, r *http.Request) 
 
 // AgentWaitRequest is the request body for POST /sessions/{id}/agents/wait.
 type AgentWaitRequest struct {
-	Condition    string `json:"condition"`
-	TimeoutMs    int    `json:"timeout_ms,omitempty"`
-	PollMs       int    `json:"poll_ms,omitempty"`
-	Panes        []int  `json:"panes,omitempty"`
-	AgentType    string `json:"agent_type,omitempty"`
-	WaitForAny   bool   `json:"wait_for_any,omitempty"`
-	ExitOnError  bool   `json:"exit_on_error,omitempty"`
+	Condition   string `json:"condition"`
+	TimeoutMs   int    `json:"timeout_ms,omitempty"`
+	PollMs      int    `json:"poll_ms,omitempty"`
+	Panes       []int  `json:"panes,omitempty"`
+	AgentType   string `json:"agent_type,omitempty"`
+	WaitForAny  bool   `json:"wait_for_any,omitempty"`
+	ExitOnError bool   `json:"exit_on_error,omitempty"`
 }
 
 // handleAgentWaitV1 handles POST /api/v1/sessions/{sessionId}/agents/wait.
@@ -4265,11 +4277,11 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 
 	// Validate job type
 	validTypes := map[string]bool{
-		"spawn":       true,
-		"scan":        true,
-		"checkpoint":  true,
-		"import":      true,
-		"export":      true,
+		"spawn":      true,
+		"scan":       true,
+		"checkpoint": true,
+		"import":     true,
+		"export":     true,
 	}
 	if !validTypes[req.Type] {
 		writeErrorResponse(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid job type", map[string]interface{}{

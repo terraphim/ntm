@@ -73,6 +73,46 @@ func TestNewWithCustomPort(t *testing.T) {
 	}
 }
 
+func TestValidateConfigDefaults(t *testing.T) {
+	if err := ValidateConfig(Config{}); err != nil {
+		t.Fatalf("ValidateConfig default should succeed, got %v", err)
+	}
+}
+
+func TestValidateConfigRejectsExternalLocalAuth(t *testing.T) {
+	cfg := Config{
+		Host: "0.0.0.0",
+		Auth: AuthConfig{Mode: AuthModeLocal},
+	}
+	if err := ValidateConfig(cfg); err == nil || !strings.Contains(err.Error(), "refusing to bind") {
+		t.Fatalf("expected bind refusal error, got %v", err)
+	}
+}
+
+func TestValidateConfigAllowsExternalWithAuth(t *testing.T) {
+	cfg := Config{
+		Host: "0.0.0.0",
+		Auth: AuthConfig{Mode: AuthModeAPIKey, APIKey: "test-key"},
+	}
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("expected external bind with auth to succeed, got %v", err)
+	}
+}
+
+func TestValidateConfigPublicBaseURL(t *testing.T) {
+	cfg := Config{
+		PublicBaseURL: "https://ntm.example.com",
+	}
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("expected valid public base URL, got %v", err)
+	}
+
+	cfg.PublicBaseURL = "not-a-url"
+	if err := ValidateConfig(cfg); err == nil {
+		t.Fatalf("expected invalid public base URL error")
+	}
+}
+
 func TestHealthEndpoint(t *testing.T) {
 	srv, _ := setupTestServer(t)
 
@@ -494,6 +534,38 @@ func TestWebSocketRejectedWithoutToken(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("ws unauth status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestCheckWSOriginAllowsConfiguredOrigin(t *testing.T) {
+	srv := New(Config{
+		Auth: AuthConfig{
+			Mode:   AuthModeAPIKey,
+			APIKey: "secret",
+		},
+		AllowedOrigins: []string{"https://ui.example.com"},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/ws", nil)
+	req.Header.Set("Origin", "https://ui.example.com")
+
+	if !srv.checkWSOrigin(req) {
+		t.Fatalf("expected origin to be allowed")
+	}
+}
+
+func TestCheckWSOriginRejectsUnlistedOrigin(t *testing.T) {
+	srv := New(Config{
+		Auth: AuthConfig{
+			Mode:   AuthModeAPIKey,
+			APIKey: "secret",
+		},
+		AllowedOrigins: []string{"https://ui.example.com"},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/ws", nil)
+	req.Header.Set("Origin", "https://evil.example.com")
+
+	if srv.checkWSOrigin(req) {
+		t.Fatalf("expected origin to be rejected")
 	}
 }
 

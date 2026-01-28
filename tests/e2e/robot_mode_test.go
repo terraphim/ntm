@@ -962,6 +962,9 @@ func TestRobotStatusPagination(t *testing.T) {
 		Sessions []struct {
 			Name string `json:"name"`
 		} `json:"sessions"`
+		AgentHints struct {
+			NextOffset *int `json:"next_offset"`
+		} `json:"_agent_hints"`
 		Pagination struct {
 			Limit      int  `json:"limit"`
 			Offset     int  `json:"offset"`
@@ -993,6 +996,9 @@ func TestRobotStatusPagination(t *testing.T) {
 	}
 	if payload.Pagination.NextCursor == nil || *payload.Pagination.NextCursor != 1 {
 		t.Fatalf("pagination.next_cursor = %+v, want 1", payload.Pagination.NextCursor)
+	}
+	if payload.AgentHints.NextOffset == nil || *payload.AgentHints.NextOffset != 1 {
+		t.Fatalf("_agent_hints.next_offset = %+v, want 1", payload.AgentHints.NextOffset)
 	}
 }
 

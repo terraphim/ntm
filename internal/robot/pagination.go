@@ -60,3 +60,21 @@ func ApplyPagination[T any](items []T, opts PaginationOptions) ([]T, *Pagination
 
 	return paged, info
 }
+
+func paginationHintOffsets(page *PaginationInfo) (*int, *int) {
+	if page == nil || page.Limit <= 0 || !page.HasMore || page.NextCursor == nil {
+		return nil, nil
+	}
+
+	remaining := page.Total - (page.Offset + page.Count)
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	pages := 0
+	if remaining > 0 {
+		pages = (remaining + page.Limit - 1) / page.Limit
+	}
+
+	return page.NextCursor, &pages
+}

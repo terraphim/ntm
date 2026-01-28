@@ -4640,6 +4640,34 @@ go build -o ntm ./cmd/ntm
 go test ./...
 ```
 
+### API/WS Server Deployment
+
+For split hosting (recommended), run the API/WS daemon on a long-lived host and
+serve the Web UI separately (e.g., Vercel for UI, Fly.io/Render/bare metal for API/WS).
+
+Local-only (safe default):
+
+```bash
+ntm serve --host 127.0.0.1 --port 7337
+```
+
+Remote bind (requires auth) + CORS allowlist:
+
+```bash
+ntm serve \
+  --host 0.0.0.0 \
+  --port 7337 \
+  --auth-mode api_key \
+  --api-key $NTM_API_KEY \
+  --cors-allow-origin https://ui.example.com \
+  --public-base-url https://api.example.com
+```
+
+Notes:
+- Non-loopback binds require an auth mode.
+- `--cors-allow-origin` controls both CORS and WebSocket origin checks.
+- `--public-base-url` advertises the externally reachable URL for clients.
+
 ### Building with Docker
 
 ```bash
