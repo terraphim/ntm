@@ -180,6 +180,40 @@ func TestWriterWrite(t *testing.T) {
 	}
 }
 
+func TestWriterWriteAppendsLedger(t *testing.T) {
+	tmpDir := t.TempDir()
+	w := NewWriter(tmpDir)
+
+	h := New("ledger-session").
+		WithGoalAndNow("Implemented feature X", "Write tests next").
+		WithStatus(StatusComplete, OutcomeSucceeded)
+
+	path, err := w.Write(h, "ledger-test")
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	ledgerPath := filepath.Join(tmpDir, ".ntm", "ledgers", "CONTINUITY_ledger-session.md")
+	data, err := os.ReadFile(ledgerPath)
+	if err != nil {
+		t.Fatalf("failed to read ledger: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "(manual)") {
+		t.Errorf("expected ledger entry to include manual marker, got: %s", content)
+	}
+	if !strings.Contains(content, filepath.Base(path)) {
+		t.Errorf("expected ledger to include handoff filename, got: %s", content)
+	}
+	if !strings.Contains(content, "- goal: Implemented feature X") {
+		t.Errorf("expected ledger to include goal, got: %s", content)
+	}
+	if !strings.Contains(content, "- now: Write tests next") {
+		t.Errorf("expected ledger to include now, got: %s", content)
+	}
+}
+
 func TestWriterWriteValidationFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	w := NewWriter(tmpDir)
@@ -269,6 +303,37 @@ func TestWriterWriteAuto(t *testing.T) {
 
 	if parsed.TokensPct != 80.0 {
 		t.Errorf("tokens_pct mismatch: got %f", parsed.TokensPct)
+	}
+}
+
+func TestWriterWriteAutoAppendsLedger(t *testing.T) {
+	tmpDir := t.TempDir()
+	w := NewWriter(tmpDir)
+
+	h := New("auto-ledger").
+		WithGoalAndNow("Auto goal", "Auto now").
+		SetTokenInfo(80000, 100000)
+
+	path, err := w.WriteAuto(h)
+	if err != nil {
+		t.Fatalf("WriteAuto failed: %v", err)
+	}
+
+	ledgerPath := filepath.Join(tmpDir, ".ntm", "ledgers", "CONTINUITY_auto-ledger.md")
+	data, err := os.ReadFile(ledgerPath)
+	if err != nil {
+		t.Fatalf("failed to read ledger: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "(auto)") {
+		t.Errorf("expected ledger entry to include auto marker, got: %s", content)
+	}
+	if !strings.Contains(content, filepath.Base(path)) {
+		t.Errorf("expected ledger to include handoff filename, got: %s", content)
+	}
+	if !strings.Contains(content, "tokens_pct: 80.00") {
+		t.Errorf("expected ledger to include tokens_pct, got: %s", content)
 	}
 }
 

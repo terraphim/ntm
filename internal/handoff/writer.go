@@ -121,6 +121,14 @@ func (w *Writer) Write(h *Handoff, description string) (string, error) {
 		return "", err
 	}
 
+	if err := w.appendLedgerEntry(h, path, false); err != nil {
+		w.logger.Warn("failed to append handoff ledger",
+			"session", h.Session,
+			"path", path,
+			"error", err,
+		)
+	}
+
 	w.logger.Info("handoff written successfully",
 		"path", path,
 		"session", h.Session,
@@ -180,6 +188,14 @@ func (w *Writer) WriteAuto(h *Handoff) (string, error) {
 	// Atomic write
 	if err := w.atomicWrite(path, data); err != nil {
 		return "", err
+	}
+
+	if err := w.appendLedgerEntry(h, path, true); err != nil {
+		w.logger.Warn("failed to append auto-handoff ledger",
+			"session", h.Session,
+			"path", path,
+			"error", err,
+		)
 	}
 
 	w.logger.Info("auto-handoff written",
@@ -354,6 +370,113 @@ func (w *Writer) checkRotation(sessionName string) error {
 	}
 
 	return nil
+}
+
+func (w *Writer) appendLedgerEntry(h *Handoff, handoffPath string, isAuto bool) error {
+	ledgerDir := filepath.Join(filepath.Dir(w.baseDir), "ledgers")
+	if err := os.MkdirAll(ledgerDir, 0755); err != nil {
+		return fmt.Errorf("create ledger dir: %w", err)
+	}
+
+	session := h.Session
+	if session == "" {
+		session = "general"
+	}
+
+	ledgerPath := filepath.Join(ledgerDir, fmt.Sprintf("CONTINUITY_%s.md", session))
+	entry := formatLedgerEntry(h, handoffPath, isAuto, time.Now().UTC())
+
+	f, err := os.OpenFile(ledgerPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("open ledger: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString(entry); err != nil {
+		return fmt.Errorf("append ledger: %w", err)
+	}
+
+	return nil
+}
+
+func formatLedgerEntry(h *Handoff, handoffPath string, isAuto bool, now time.Time) string {
+	mode := "manual"
+	if isAuto {
+		mode = "auto"
+	}
+
+	lines := []string{
+		fmt.Sprintf("## %s (%s)", now.Format(time.RFC3339), mode),
+		fmt.Sprintf("- file: %s", filepath.Base(handoffPath)),
+	}
+
+	if h.Status != "" {
+		lines = append(lines, fmt.Sprintf("- status: %s", h.Status))
+	}
+	if h.Outcome != "" {
+		lines = append(lines, fmt.Sprintf("- outcome: %s", h.Outcome))
+	}
+	if goal := truncateLog(singleLine(h.Goal), 200); goal != "" {
+		lines = append(lines, fmt.Sprintf("- goal: %s", goal))
+	}
+	if nowText := truncateLog(singleLine(h.Now), 200); nowText != "" {
+		lines = append(lines, fmt.Sprintf("- now: %s", nowText))
+	}
+	if test := truncateLog(singleLine(h.Test), 200); test != "" {
+		lines = append(lines, fmt.Sprintf("- test: %s", test))
+	}
+	if blockers := compactList(h.Blockers, 5); blockers != "" {
+		lines = append(lines, fmt.Sprintf("- blockers: %s", blockers))
+	}
+	if next := compactList(h.Next, 5); next != "" {
+		lines = append(lines, fmt.Sprintf("- next: %s", next))
+	}
+	if len(h.ActiveBeads) > 0 {
+		lines = append(lines, fmt.Sprintf("- beads: %s", strings.Join(h.ActiveBeads, ", ")))
+	}
+	if h.TokensPct > 0 {
+		lines = append(lines, fmt.Sprintf("- tokens_pct: %.2f", h.TokensPct))
+	}
+
+	return strings.Join(lines, "\n") + "\n\n"
+}
+
+func singleLine(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(trimmed), " ")
+}
+
+func compactList(items []string, maxItems int) string {
+	if len(items) == 0 {
+		return ""
+	}
+
+	limit := maxItems
+	if limit <= 0 || limit > len(items) {
+		limit = len(items)
+	}
+
+	clean := make([]string, 0, limit)
+	for i := 0; i < limit; i++ {
+		item := singleLine(items[i])
+		if item != "" {
+			clean = append(clean, item)
+		}
+	}
+
+	if len(clean) == 0 {
+		return ""
+	}
+
+	out := strings.Join(clean, ", ")
+	if remaining := len(items) - limit; remaining > 0 {
+		out = fmt.Sprintf("%s +%d more", out, remaining)
+	}
+
+	return truncateLog(out, 200)
 }
 
 // sanitizeDescription converts a description to kebab-case for use in filenames.
