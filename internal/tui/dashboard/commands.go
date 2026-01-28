@@ -17,6 +17,7 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/history"
 	"github.com/Dicklesworthstone/ntm/internal/integrations/pt"
 	"github.com/Dicklesworthstone/ntm/internal/robot"
+	"github.com/Dicklesworthstone/ntm/internal/state"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 	"github.com/Dicklesworthstone/ntm/internal/tokens"
 	"github.com/Dicklesworthstone/ntm/internal/tracker"
@@ -174,6 +175,25 @@ func (m *Model) fetchCASSContextCmd() tea.Cmd {
 		}
 
 		return CASSContextMsg{Hits: resp.Hits, Gen: gen}
+	}
+}
+
+// fetchTimelineCmd loads persisted timeline events for the session.
+func (m *Model) fetchTimelineCmd() tea.Cmd {
+	session := m.session
+	return func() tea.Msg {
+		if session == "" {
+			return TimelineLoadMsg{Events: nil}
+		}
+		persister, err := state.GetDefaultTimelinePersister()
+		if err != nil {
+			return TimelineLoadMsg{Err: err}
+		}
+		events, err := persister.LoadTimeline(session)
+		if err != nil {
+			return TimelineLoadMsg{Err: err}
+		}
+		return TimelineLoadMsg{Events: events}
 	}
 }
 

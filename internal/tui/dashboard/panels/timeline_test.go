@@ -333,6 +333,61 @@ func TestTimelinePanel_RenderWithData(t *testing.T) {
 		len(view), strings.Count(view, "\n")+1)
 }
 
+func TestTimelinePanel_StatsLine(t *testing.T) {
+	t.Log("TIMELINE_TEST: TestTimelinePanel_StatsLine | Testing stats line rendering")
+
+	panel := NewTimelinePanel()
+	panel.SetSize(80, 20)
+
+	base := time.Now().Add(-10 * time.Minute)
+	events := []state.AgentEvent{
+		{
+			AgentID:   "cc_1",
+			AgentType: state.AgentTypeClaude,
+			State:     state.TimelineWorking,
+			Timestamp: base,
+		},
+		{
+			AgentID:   "cod_1",
+			AgentType: state.AgentTypeCodex,
+			State:     state.TimelineIdle,
+			Timestamp: base.Add(5 * time.Minute),
+		},
+	}
+	markers := []state.TimelineMarker{
+		{
+			ID:        "m1",
+			AgentID:   "cc_1",
+			SessionID: "test",
+			Type:      state.MarkerPrompt,
+			Timestamp: base.Add(2 * time.Minute),
+		},
+	}
+	stats := state.TimelineStats{
+		TotalAgents: 2,
+		TotalEvents: 2,
+		OldestEvent: base,
+		NewestEvent: base.Add(5 * time.Minute),
+	}
+
+	panel.SetData(TimelineData{Events: events, Markers: markers, Stats: stats}, nil)
+
+	view := panel.View()
+
+	if !strings.Contains(view, "Agents: 2") {
+		t.Error("expected stats line to include agent count")
+	}
+	if !strings.Contains(view, "Events: 2") {
+		t.Error("expected stats line to include event count")
+	}
+	if !strings.Contains(view, "Markers: 1") {
+		t.Error("expected stats line to include marker count")
+	}
+	if !strings.Contains(view, "Span: 5m") {
+		t.Error("expected stats line to include span duration")
+	}
+}
+
 func TestTimelinePanel_Keybindings(t *testing.T) {
 	t.Log("TIMELINE_TEST: TestTimelinePanel_Keybindings | Testing keyboard shortcuts")
 

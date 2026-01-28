@@ -147,6 +147,12 @@ type mockTmuxClient struct {
 	mu            sync.Mutex
 	sendKeysCalls []sendKeysCall
 	sendKeysErr   error
+	runCalls      [][]string
+	runOutput     string
+	runErr        error
+	captureSeq    []string
+	captureIndex  int
+	captureErr    error
 }
 
 func (m *mockTmuxClient) recordSendKeys(paneID, text string, enter bool) {
@@ -157,6 +163,36 @@ func (m *mockTmuxClient) recordSendKeys(paneID, text string, enter bool) {
 		text:   text,
 		enter:  enter,
 	})
+}
+
+func (m *mockTmuxClient) SendKeys(paneID, text string, enter bool) error {
+	m.recordSendKeys(paneID, text, enter)
+	return m.sendKeysErr
+}
+
+func (m *mockTmuxClient) Run(args ...string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.runCalls = append(m.runCalls, append([]string(nil), args...))
+	if m.runErr != nil {
+		return "", m.runErr
+	}
+	return m.runOutput, nil
+}
+
+func (m *mockTmuxClient) CapturePaneOutput(target string, lines int) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.captureErr != nil {
+		return "", m.captureErr
+	}
+	if m.captureIndex < len(m.captureSeq) {
+		output := m.captureSeq[m.captureIndex]
+		m.captureIndex++
+		return output, nil
+	}
+	return "", nil
 }
 
 func TestNewAutoRespawner(t *testing.T) {
@@ -235,6 +271,115 @@ func TestAutoRespawnerWithConfig(t *testing.T) {
 	}
 	if r.Config.AutoRotateAccounts != true {
 		t.Error("AutoRotateAccounts not set")
+	}
+}
+
+func TestAutoRespawnerKillAgentSequences(t *testing.T) {
+	tests := []struct {
+		name        string
+		agentType   string
+		expectCalls []sendKeysCall
+	}{
+		{
+			name:      "cc_double_ctrl_c",
+			agentType: "cc",
+			expectCalls: []sendKeysCall{
+				{paneID: "test:1.1", text: "\x03", enter: false},
+				{paneID: "test:1.1", text: "\x03", enter: false},
+			},
+		},
+		{
+			name:      "cod_exit_command",
+			agentType: "cod",
+			expectCalls: []sendKeysCall{
+				{paneID: "test:1.1", text: "/exit", enter: true},
+			},
+		},
+		{
+			name:      "gmi_escape_ctrl_c",
+			agentType: "gmi",
+			expectCalls: []sendKeysCall{
+				{paneID: "test:1.1", text: "\x1b", enter: false},
+				{paneID: "test:1.1", text: "\x03", enter: false},
+			},
+		},
+		{
+			name:      "unknown_default_double_ctrl_c",
+			agentType: "unknown",
+			expectCalls: []sendKeysCall{
+				{paneID: "test:1.1", text: "\x03", enter: false},
+				{paneID: "test:1.1", text: "\x03", enter: false},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockTmuxClient{}
+			r := NewAutoRespawner().WithTmuxClient(mock)
+
+			t.Logf("[TEST] killAgent agentType=%s", tt.agentType)
+			if err := r.killAgent("test:1.1", tt.agentType); err != nil {
+				t.Fatalf("killAgent failed: %v", err)
+			}
+
+			if len(mock.sendKeysCalls) != len(tt.expectCalls) {
+				t.Fatalf("expected %d SendKeys calls, got %d", len(tt.expectCalls), len(mock.sendKeysCalls))
+			}
+
+			for i, call := range tt.expectCalls {
+				got := mock.sendKeysCalls[i]
+				if got != call {
+					t.Errorf("SendKeys call %d mismatch: got=%+v want=%+v", i, got, call)
+				}
+			}
+		})
+	}
+}
+
+func TestAutoRespawnerKillWithFallbackGraceful(t *testing.T) {
+	mock := &mockTmuxClient{
+		captureSeq: []string{"user@host:~$ "},
+	}
+	r := NewAutoRespawner().WithTmuxClient(mock)
+	r.Config.ExitWaitTimeout = 20 * time.Millisecond
+	r.Config.ExitPollInterval = 5 * time.Millisecond
+
+	called := false
+	r.forceKillFn = func(sessionPane string) error {
+		called = true
+		return nil
+	}
+
+	t.Log("[TEST] killWithFallback graceful exit path")
+	if err := r.killWithFallback("test:1.1", "cc"); err != nil {
+		t.Fatalf("killWithFallback failed: %v", err)
+	}
+	if called {
+		t.Fatal("forceKill should not be called when exit detected")
+	}
+}
+
+func TestAutoRespawnerKillWithFallbackForceKill(t *testing.T) {
+	mock := &mockTmuxClient{
+		captureSeq: []string{"still running"},
+	}
+	r := NewAutoRespawner().WithTmuxClient(mock)
+	r.Config.ExitWaitTimeout = 20 * time.Millisecond
+	r.Config.ExitPollInterval = 5 * time.Millisecond
+
+	called := false
+	r.forceKillFn = func(sessionPane string) error {
+		called = true
+		return nil
+	}
+
+	t.Log("[TEST] killWithFallback force kill path")
+	if err := r.killWithFallback("test:1.1", "cc"); err != nil {
+		t.Fatalf("killWithFallback failed: %v", err)
+	}
+	if !called {
+		t.Fatal("expected forceKill to be called when exit not detected")
 	}
 }
 

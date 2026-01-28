@@ -1,0 +1,3 @@
+session: "my-project_123"
+goal: "Fixed \"bug\" with 'quotes' and\nnewlines"
+now: "Test: `code blocks` and <tags>"

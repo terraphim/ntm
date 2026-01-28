@@ -45,6 +45,54 @@ case "$1" in
         cat "$FIXTURES_DIR/bv_next.json" 2>/dev/null || echo '{"id": "test-1", "title": "Test issue", "command": "bd update test-1 --status in_progress"}'
         exit 0
         ;;
+    --robot-alerts)
+        echo '{"alerts":[{"type":"stale","severity":"warning","message":"Stale issue","issue_id":"bd-1","labels":["backend"]}]}'
+        exit 0
+        ;;
+    --robot-graph)
+        echo '{"graph":{"nodes":[],"edges":[]},"format":"json"}'
+        exit 0
+        ;;
+    --robot-forecast)
+        echo '{"forecasts":[{"id":"bd-1","title":"Test issue","estimated_eta":"2026-02-01T00:00:00Z","confidence_level":0.8,"dependency_count":2,"critical_path":true,"blocking_factors":["blocked"]}]}'
+        exit 0
+        ;;
+    --robot-suggest)
+        echo '{"suggestions":[{"type":"duplicate","description":"Check duplicates","items":["bd-1"]}]}'
+        exit 0
+        ;;
+    --robot-impact)
+        echo '{"impact_score":0.75,"affected_beads":["bd-1","bd-2"]}'
+        exit 0
+        ;;
+    --robot-search)
+        echo '{"results":[{"id":"bd-1","title":"Test issue","score":0.9}]}'
+        exit 0
+        ;;
+    --robot-label-attention)
+        echo '{"labels":[{"name":"backend","score":0.7}]}'
+        exit 0
+        ;;
+    --robot-label-flow)
+        echo '{"flow_matrix":{"backend":{"frontend":2}},"dependencies":[{"from":"backend","to":"frontend","count":2,"weight":0.5}],"bottleneck_labels":["backend"]}'
+        exit 0
+        ;;
+    --robot-label-health)
+        echo '{"results":{"labels":[{"label":"backend","health_level":"warning","velocity_score":0.5,"staleness":1.2,"blocked_count":3}]}}'
+        exit 0
+        ;;
+    --robot-file-beads)
+        echo '{"files":[{"path":"internal/foo.go","beads":["bd-1"]}]}'
+        exit 0
+        ;;
+    --robot-file-hotspots)
+        echo '{"hotspots":[{"path":"internal/foo.go","score":5}]}'
+        exit 0
+        ;;
+    --robot-file-relations)
+        echo '{"relations":[{"source":"a.go","target":"b.go","weight":0.8}]}'
+        exit 0
+        ;;
     --help|-h)
         echo "bv - Beads Viewer (fake for testing)"
         echo "Usage: bv [options]"

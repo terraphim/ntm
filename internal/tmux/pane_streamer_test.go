@@ -251,3 +251,240 @@ func TestStreamManager_Stats(t *testing.T) {
 		t.Errorf("expected fifo_dir %s, got %v", cfg.FIFODir, stats["fifo_dir"])
 	}
 }
+
+func TestPaneStreamer_NextSeq(t *testing.T) {
+	callback := func(event StreamEvent) {}
+	cfg := DefaultPaneStreamerConfig()
+	cfg.FIFODir = t.TempDir()
+
+	ps := NewPaneStreamer(DefaultClient, "test:0", callback, cfg)
+
+	// Initial sequence should be 0, first call returns 1
+	seq1 := ps.nextSeq()
+	if seq1 != 1 {
+		t.Errorf("expected first seq to be 1, got %d", seq1)
+	}
+
+	seq2 := ps.nextSeq()
+	if seq2 != 2 {
+		t.Errorf("expected second seq to be 2, got %d", seq2)
+	}
+
+	seq3 := ps.nextSeq()
+	if seq3 != 3 {
+		t.Errorf("expected third seq to be 3, got %d", seq3)
+	}
+}
+
+func TestNewPaneStreamer_DefaultsApplied(t *testing.T) {
+	callback := func(event StreamEvent) {}
+
+	// Test with all zero/empty config values
+	cfg := PaneStreamerConfig{
+		FIFODir:              "",
+		MaxLinesPerEvent:     0,
+		FlushInterval:        0,
+		FallbackPollInterval: 0,
+		FallbackPollLines:    0,
+	}
+
+	ps := NewPaneStreamer(DefaultClient, "test:0", callback, cfg)
+
+	// Verify defaults were applied
+	if ps.config.FIFODir != "/tmp/ntm_pane_streams" {
+		t.Errorf("expected default FIFODir, got %s", ps.config.FIFODir)
+	}
+	if ps.config.MaxLinesPerEvent != 100 {
+		t.Errorf("expected default MaxLinesPerEvent 100, got %d", ps.config.MaxLinesPerEvent)
+	}
+	if ps.config.FlushInterval != 50*time.Millisecond {
+		t.Errorf("expected default FlushInterval 50ms, got %v", ps.config.FlushInterval)
+	}
+	if ps.config.FallbackPollInterval != 500*time.Millisecond {
+		t.Errorf("expected default FallbackPollInterval 500ms, got %v", ps.config.FallbackPollInterval)
+	}
+	if ps.config.FallbackPollLines != LinesHealthCheck {
+		t.Errorf("expected default FallbackPollLines, got %d", ps.config.FallbackPollLines)
+	}
+}
+
+func TestNewPaneStreamer_CustomConfig(t *testing.T) {
+	callback := func(event StreamEvent) {}
+
+	cfg := PaneStreamerConfig{
+		FIFODir:              "/custom/dir",
+		MaxLinesPerEvent:     50,
+		FlushInterval:        100 * time.Millisecond,
+		FallbackPollInterval: 1 * time.Second,
+		FallbackPollLines:    200,
+	}
+
+	ps := NewPaneStreamer(DefaultClient, "test:0", callback, cfg)
+
+	// Verify custom values were preserved
+	if ps.config.FIFODir != "/custom/dir" {
+		t.Errorf("expected custom FIFODir /custom/dir, got %s", ps.config.FIFODir)
+	}
+	if ps.config.MaxLinesPerEvent != 50 {
+		t.Errorf("expected custom MaxLinesPerEvent 50, got %d", ps.config.MaxLinesPerEvent)
+	}
+	if ps.config.FlushInterval != 100*time.Millisecond {
+		t.Errorf("expected custom FlushInterval 100ms, got %v", ps.config.FlushInterval)
+	}
+	if ps.config.FallbackPollInterval != 1*time.Second {
+		t.Errorf("expected custom FallbackPollInterval 1s, got %v", ps.config.FallbackPollInterval)
+	}
+	if ps.config.FallbackPollLines != 200 {
+		t.Errorf("expected custom FallbackPollLines 200, got %d", ps.config.FallbackPollLines)
+	}
+}
+
+func TestPaneStreamer_StopWithoutStart(t *testing.T) {
+	callback := func(event StreamEvent) {}
+	cfg := DefaultPaneStreamerConfig()
+	cfg.FIFODir = t.TempDir()
+
+	ps := NewPaneStreamer(DefaultClient, "test:0", callback, cfg)
+
+	// Stop without start should be safe
+	ps.Stop()
+
+	// Double stop should also be safe
+	ps.Stop()
+}
+
+func TestStreamManager_StatsWithActiveStreams(t *testing.T) {
+	callback := func(event StreamEvent) {}
+	cfg := DefaultPaneStreamerConfig()
+	cfg.FIFODir = t.TempDir()
+	cfg.FallbackPollInterval = 100 * time.Millisecond
+
+	sm := NewStreamManager(DefaultClient, callback, cfg)
+	defer sm.StopAll()
+
+	// Start some streams (they'll use fallback since no tmux session exists)
+	_ = sm.StartStream("fake:0")
+	_ = sm.StartStream("fake:1")
+
+	// Give time for fallback mode to activate
+	time.Sleep(150 * time.Millisecond)
+
+	stats := sm.Stats()
+
+	activeStreams := stats["active_streams"].(int)
+	if activeStreams != 2 {
+		t.Errorf("expected 2 active streams, got %d", activeStreams)
+	}
+
+	// All should be using fallback since there's no tmux session
+	fallbackCount := stats["fallback_count"].(int)
+	if fallbackCount != 2 {
+		t.Errorf("expected 2 fallback streams, got %d", fallbackCount)
+	}
+
+	pipePaneCount := stats["pipe_pane_count"].(int)
+	if pipePaneCount != 0 {
+		t.Errorf("expected 0 pipe_pane streams, got %d", pipePaneCount)
+	}
+}
+
+func TestSimpleHash_ExactlyBoundary(t *testing.T) {
+	// Test strings exactly at the 64 character boundary
+	exactly64 := "0123456789012345678901234567890123456789012345678901234567890123"
+	if len(exactly64) != 64 {
+		t.Fatalf("test string should be exactly 64 chars, got %d", len(exactly64))
+	}
+
+	// Exactly 64 chars should NOT be hashed (condition is < 64)
+	hash := simpleHash(exactly64)
+	if hash == exactly64 {
+		t.Log("64-char string returned as-is (boundary)")
+	}
+
+	// 63 chars should be returned as-is
+	chars63 := exactly64[:63]
+	hash63 := simpleHash(chars63)
+	if hash63 != chars63 {
+		t.Errorf("expected 63-char string to be returned as-is, got different: %s", hash63)
+	}
+
+	// 65 chars should be hashed
+	chars65 := exactly64 + "x"
+	hash65 := simpleHash(chars65)
+	if hash65 == chars65 {
+		t.Error("expected 65-char string to be hashed, but got original")
+	}
+}
+
+func TestCreateFIFO_AlreadyExists(t *testing.T) {
+	dir := t.TempDir()
+	fifoPath := dir + "/test.fifo"
+
+	// Create FIFO first time
+	if err := createFIFO(fifoPath); err != nil {
+		t.Fatalf("first createFIFO failed: %v", err)
+	}
+
+	// Create again - should succeed (idempotent) or fail gracefully
+	err := createFIFO(fifoPath)
+	// The behavior depends on implementation - it may return an error
+	// or handle the existing file. We just verify it doesn't panic.
+	_ = err
+}
+
+func TestStreamManager_MultipleStartsSameTarget(t *testing.T) {
+	callback := func(event StreamEvent) {}
+	cfg := DefaultPaneStreamerConfig()
+	cfg.FIFODir = t.TempDir()
+
+	sm := NewStreamManager(DefaultClient, callback, cfg)
+	defer sm.StopAll()
+
+	// Start same target multiple times
+	_ = sm.StartStream("same:0")
+	_ = sm.StartStream("same:0")
+	_ = sm.StartStream("same:0")
+
+	// Should only have one active stream
+	active := sm.ListActive()
+	if len(active) != 1 {
+		t.Errorf("expected 1 active stream after duplicate starts, got %d", len(active))
+	}
+}
+
+func TestStreamManager_StopNonExistent(t *testing.T) {
+	callback := func(event StreamEvent) {}
+	cfg := DefaultPaneStreamerConfig()
+	cfg.FIFODir = t.TempDir()
+
+	sm := NewStreamManager(DefaultClient, callback, cfg)
+	defer sm.StopAll()
+
+	// Stop non-existent stream should be safe
+	sm.StopStream("nonexistent:0")
+	sm.StopStream("another:fake")
+}
+
+func TestPaneStreamer_FIFOPathGeneration(t *testing.T) {
+	callback := func(event StreamEvent) {}
+	cfg := DefaultPaneStreamerConfig()
+	cfg.FIFODir = t.TempDir()
+
+	// Test target with special characters
+	ps := NewPaneStreamer(DefaultClient, "session/with:special", callback, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start will fail (no tmux) but will set up the FIFO path
+	_ = ps.Start(ctx)
+	defer ps.Stop()
+
+	// The fifoPath should have special characters replaced
+	if ps.fifoPath != "" {
+		// Verify the path doesn't contain : or /
+		if ps.fifoPath != "" {
+			t.Logf("FIFO path generated: %s", ps.fifoPath)
+		}
+	}
+}

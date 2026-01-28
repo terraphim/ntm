@@ -199,6 +199,7 @@ func TestCommandsReturnTeaCmd(t *testing.T) {
 		{"fetchHistoryCmd", func() tea.Cmd { return m.fetchHistoryCmd() }},
 		{"fetchFileChangesCmd", func() tea.Cmd { return m.fetchFileChangesCmd() }},
 		{"fetchCASSContextCmd", func() tea.Cmd { return m.fetchCASSContextCmd() }},
+		{"fetchTimelineCmd", func() tea.Cmd { return m.fetchTimelineCmd() }},
 	}
 
 	for _, tc := range tests {

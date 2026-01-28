@@ -16,6 +16,18 @@ type BVAdapter struct {
 	*BaseAdapter
 }
 
+// BVAlertOptions configures BV alert filtering.
+type BVAlertOptions struct {
+	AlertType string
+	Severity  string
+	Label     string
+}
+
+// BVGraphOptions configures BV graph output.
+type BVGraphOptions struct {
+	Format string
+}
+
 // NewBVAdapter creates a new BV adapter
 func NewBVAdapter() *BVAdapter {
 	return &BVAdapter{
@@ -143,6 +155,28 @@ func (a *BVAdapter) GetNext(ctx context.Context, dir string) (json.RawMessage, e
 }
 
 // Analysis mode methods for advanced BV analysis
+func (a *BVAdapter) GetAlerts(ctx context.Context, dir string, opts BVAlertOptions) (json.RawMessage, error) {
+	args := []string{"--robot-alerts"}
+	if opts.AlertType != "" {
+		args = append(args, "--alert-type", opts.AlertType)
+	}
+	if opts.Label != "" {
+		args = append(args, "--alert-label", opts.Label)
+	}
+	if opts.Severity != "" {
+		args = append(args, "--severity", opts.Severity)
+	}
+	return a.runRobotCommand(ctx, dir, args...)
+}
+
+func (a *BVAdapter) GetGraph(ctx context.Context, dir string, opts BVGraphOptions) (json.RawMessage, error) {
+	args := []string{"--robot-graph"}
+	if opts.Format != "" {
+		args = append(args, "--graph-format", opts.Format)
+	}
+	return a.runRobotCommand(ctx, dir, args...)
+}
+
 func (a *BVAdapter) GetForecast(ctx context.Context, dir string, target string) (json.RawMessage, error) {
 	return a.runRobotCommand(ctx, dir, "--robot-forecast", target)
 }
@@ -234,5 +268,3 @@ func (a *BVAdapter) runRobotCommand(ctx context.Context, dir string, args ...str
 
 	return output, nil
 }
-
-

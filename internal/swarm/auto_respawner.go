@@ -126,7 +126,7 @@ type AutoRespawner struct {
 
 	// TmuxClient for direct tmux operations.
 	// If nil, the default tmux client is used.
-	TmuxClient *tmux.Client
+	TmuxClient autoRespawnerTmux
 
 	// ProjectPathLookup resolves project path from session:pane (optional).
 	// If provided, respawn will cd to the project directory before launching.
@@ -149,6 +149,15 @@ type AutoRespawner struct {
 
 	// cancel stops all respawn goroutines.
 	cancel context.CancelFunc
+
+	// forceKillFn overrides forceKill behavior in tests (optional).
+	forceKillFn func(sessionPane string) error
+}
+
+type autoRespawnerTmux interface {
+	SendKeys(target, keys string, enter bool) error
+	CapturePaneOutput(target string, lines int) (string, error)
+	Run(args ...string) (string, error)
 }
 
 // NewAutoRespawner creates a new AutoRespawner with default settings.
@@ -191,7 +200,7 @@ func (r *AutoRespawner) WithPaneSpawner(ps ntmcontext.PaneSpawner) *AutoRespawne
 }
 
 // WithTmuxClient sets the tmux client.
-func (r *AutoRespawner) WithTmuxClient(client *tmux.Client) *AutoRespawner {
+func (r *AutoRespawner) WithTmuxClient(client autoRespawnerTmux) *AutoRespawner {
 	r.TmuxClient = client
 	return r
 }
@@ -222,7 +231,7 @@ func (r *AutoRespawner) WithMarchingOrders(orders map[string]string) *AutoRespaw
 }
 
 // tmuxClient returns the configured tmux client or the default client.
-func (r *AutoRespawner) tmuxClient() *tmux.Client {
+func (r *AutoRespawner) tmuxClient() autoRespawnerTmux {
 	if r.TmuxClient != nil {
 		return r.TmuxClient
 	}
@@ -551,6 +560,10 @@ func (r *AutoRespawner) killWithFallback(sessionPane, agentType string) error {
 
 // forceKill sends SIGKILL to the process in the pane.
 func (r *AutoRespawner) forceKill(sessionPane string) error {
+	if r.forceKillFn != nil {
+		return r.forceKillFn(sessionPane)
+	}
+
 	r.logger().Warn("[AutoRespawner] force_kill_start",
 		"session_pane", sessionPane)
 

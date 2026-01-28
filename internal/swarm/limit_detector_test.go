@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Dicklesworthstone/ntm/internal/agent"
 	"github.com/Dicklesworthstone/ntm/internal/ratelimit"
 )
 
@@ -319,6 +320,65 @@ func TestCheckOutputPatternsByAgent(t *testing.T) {
 	}
 }
 
+func TestCheckOutputAllKnownPatterns(t *testing.T) {
+	detector := NewLimitDetector()
+
+	ccSet := agent.GetPatternSet(agent.AgentTypeClaudeCode)
+	if ccSet == nil {
+		t.Fatal("expected Claude pattern set")
+	}
+	codSet := agent.GetPatternSet(agent.AgentTypeCodex)
+	if codSet == nil {
+		t.Fatal("expected Codex pattern set")
+	}
+	gmiSet := agent.GetPatternSet(agent.AgentTypeGemini)
+	if gmiSet == nil {
+		t.Fatal("expected Gemini pattern set")
+	}
+
+	cases := []struct {
+		name      string
+		agentType string
+		patterns  []string
+	}{
+		{
+			name:      "claude",
+			agentType: "cc",
+			patterns:  ccSet.RateLimitPatterns,
+		},
+		{
+			name:      "codex",
+			agentType: "cod",
+			patterns:  codSet.RateLimitPatterns,
+		},
+		{
+			name:      "gemini",
+			agentType: "gmi",
+			patterns:  gmiSet.RateLimitPatterns,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if len(tc.patterns) == 0 {
+				t.Fatalf("expected patterns for %s", tc.name)
+			}
+			for _, pattern := range tc.patterns {
+				output := "prefix " + pattern + " suffix"
+				t.Logf("AgentType=%s Pattern=%q Output=%q", tc.agentType, pattern, output)
+
+				event := detector.checkOutput("test:1.1", tc.agentType, output)
+				if event == nil {
+					t.Fatalf("expected match for pattern %q", pattern)
+				}
+				if event.Pattern != pattern {
+					t.Fatalf("pattern mismatch: got %q want %q", event.Pattern, pattern)
+				}
+			}
+		})
+	}
+}
+
 func TestCheckOutputCaseInsensitive(t *testing.T) {
 	detector := NewLimitDetector()
 
@@ -328,6 +388,83 @@ func TestCheckOutputCaseInsensitive(t *testing.T) {
 
 	if event == nil {
 		t.Error("expected pattern matching to be case insensitive")
+	}
+}
+
+func TestCheckOutputMultiline(t *testing.T) {
+	detector := NewLimitDetector()
+
+	output := "Processing...\nWorking...\nError: rate limit exceeded\nRetrying..."
+	t.Logf("Output=%q", output)
+
+	event := detector.checkOutput("test:1.1", "cc", output)
+	if event == nil {
+		t.Fatal("expected match for multiline output")
+	}
+	if event.RawOutput != output {
+		t.Fatalf("raw output mismatch: got %q want %q", event.RawOutput, output)
+	}
+}
+
+func TestLimitDetectorCheckPaneWithMockClient(t *testing.T) {
+	mock := &MockTmuxClient{
+		t:               t,
+		CaptureSequence: []string{"Normal agent output", "Error: rate limit exceeded"},
+	}
+	detector := NewLimitDetector()
+	detector.TmuxClient = mock
+	detector.CaptureLines = 5
+
+	t.Logf("Capturing pane output for test:1.1")
+	event, err := detector.CheckPane("test:1.1", "cc")
+	if err != nil {
+		t.Fatalf("unexpected error on first capture: %v", err)
+	}
+	if event != nil {
+		t.Fatalf("expected no event on first capture, got %v", event)
+	}
+
+	t.Logf("Capturing pane output for test:1.1 (limit expected)")
+	event, err = detector.CheckPane("test:1.1", "cc")
+	if err != nil {
+		t.Fatalf("unexpected error on second capture: %v", err)
+	}
+	if event == nil {
+		t.Fatal("expected rate limit event on second capture, got nil")
+	}
+	if event.Pattern == "" {
+		t.Fatal("expected non-empty pattern on rate limit event")
+	}
+	t.Logf("Detected pattern=%q", event.Pattern)
+}
+
+func TestLimitDetectorMonitorPaneEmitsEvent(t *testing.T) {
+	mock := &MockTmuxClient{
+		t:               t,
+		CaptureSequence: []string{"Normal output", "Error: rate limit exceeded"},
+	}
+	detector := NewLimitDetector()
+	detector.TmuxClient = mock
+	detector.CheckInterval = 10 * time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+
+	if err := detector.StartPane(ctx, "test:1.1", "cc"); err != nil {
+		t.Fatalf("StartPane failed: %v", err)
+	}
+
+	select {
+	case event := <-detector.Events():
+		t.Logf("Event received: %+v", event)
+		if event.AgentType != "cc" {
+			t.Fatalf("unexpected agent type: %s", event.AgentType)
+		}
+		if event.Pattern == "" {
+			t.Fatal("expected non-empty pattern in event")
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for limit event")
 	}
 }
 

@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -212,6 +213,163 @@ func TestLaunchSwarmEmptyPlan(t *testing.T) {
 	}
 	if result.TotalFailed != 0 {
 		t.Errorf("expected 0 failed, got %d", result.TotalFailed)
+	}
+}
+
+func TestAgentLauncherLaunchAgent(t *testing.T) {
+	mock := &MockTmuxClient{t: t}
+	launcher := NewAgentLauncherWithClient(mock)
+	launcher.PostLaunchDelay = 0
+
+	t.Log("[TEST] launching agent in pane")
+	if err := launcher.LaunchAgent("test_session", 1, AgentCC); err != nil {
+		t.Fatalf("LaunchAgent failed: %v", err)
+	}
+
+	if len(mock.SendKeysCalls) != 2 {
+		t.Fatalf("expected 2 SendKeys calls, got %d", len(mock.SendKeysCalls))
+	}
+
+	first := mock.SendKeysCalls[0]
+	if first.Target != "test_session:1.1" || first.Keys != AgentCC || first.Enter {
+		t.Errorf("unexpected first SendKeys call: %+v", first)
+	}
+
+	second := mock.SendKeysCalls[1]
+	if second.Target != "test_session:1.1" || second.Keys != "" || !second.Enter {
+		t.Errorf("unexpected second SendKeys call: %+v", second)
+	}
+}
+
+func TestAgentLauncherLaunchAgentSendError(t *testing.T) {
+	mock := &MockTmuxClient{t: t, SendErr: errors.New("send failed")}
+	launcher := NewAgentLauncherWithClient(mock)
+	launcher.PostLaunchDelay = 0
+
+	t.Log("[TEST] launching agent with send error")
+	err := launcher.LaunchAgent("test_session", 1, AgentCC)
+	if err == nil {
+		t.Fatal("expected error from LaunchAgent")
+	}
+	if len(mock.SendKeysCalls) != 1 {
+		t.Fatalf("expected 1 SendKeys call on error, got %d", len(mock.SendKeysCalls))
+	}
+}
+
+func TestLaunchAllInSession(t *testing.T) {
+	mock := &MockTmuxClient{
+		t: t,
+		Panes: []tmux.Pane{
+			{Index: 0}, // user pane
+			{Index: 1},
+			{Index: 2},
+		},
+	}
+	launcher := NewAgentLauncherWithClient(mock)
+	launcher.LaunchDelay = 0
+	launcher.PostLaunchDelay = 0
+
+	t.Log("[TEST] launching agents in session with user pane skipped")
+	if err := launcher.LaunchAllInSession("test_session", AgentCOD); err != nil {
+		t.Fatalf("LaunchAllInSession failed: %v", err)
+	}
+
+	if len(mock.GetPanesCalls) != 1 || mock.GetPanesCalls[0] != "test_session" {
+		t.Fatalf("expected GetPanes called once with session name, got %v", mock.GetPanesCalls)
+	}
+
+	if len(mock.SendKeysCalls) != 4 {
+		t.Fatalf("expected 4 SendKeys calls (2 panes x 2 calls), got %d", len(mock.SendKeysCalls))
+	}
+}
+
+func TestLaunchAllInSessionEmptyPanes(t *testing.T) {
+	mock := &MockTmuxClient{t: t}
+	launcher := NewAgentLauncherWithClient(mock)
+
+	t.Log("[TEST] launching agents with empty pane list")
+	if err := launcher.LaunchAllInSession("test_session", AgentCC); err == nil {
+		t.Fatal("expected error for empty pane list")
+	}
+}
+
+func TestLaunchAllInSessionGetPanesError(t *testing.T) {
+	mock := &MockTmuxClient{t: t, PaneErr: errors.New("get panes failed")}
+	launcher := NewAgentLauncherWithClient(mock)
+
+	t.Log("[TEST] launching agents with GetPanes error")
+	if err := launcher.LaunchAllInSession("test_session", AgentCC); err == nil {
+		t.Fatal("expected error from GetPanes")
+	}
+}
+
+func TestLaunchSwarmSuccess(t *testing.T) {
+	mock := &MockTmuxClient{t: t}
+	launcher := NewAgentLauncherWithClient(mock)
+	launcher.LaunchDelay = 0
+	launcher.PostLaunchDelay = 0
+
+	plan := &SwarmPlan{
+		Sessions: []SessionSpec{
+			{
+				Name: "cc_agents_1",
+				Panes: []PaneSpec{
+					{Index: 1, AgentType: AgentCC},
+					{Index: 2, AgentType: AgentCC},
+				},
+			},
+		},
+	}
+
+	t.Log("[TEST] launching swarm with two panes")
+	result, err := launcher.LaunchSwarm(plan)
+	if err != nil {
+		t.Fatalf("LaunchSwarm failed: %v", err)
+	}
+	if result.TotalLaunched != 2 || result.TotalFailed != 0 {
+		t.Fatalf("unexpected counts: launched=%d failed=%d", result.TotalLaunched, result.TotalFailed)
+	}
+	if len(result.LaunchResults) != 2 {
+		t.Fatalf("expected 2 launch results, got %d", len(result.LaunchResults))
+	}
+}
+
+func TestLaunchSwarmFailures(t *testing.T) {
+	mock := &MockTmuxClient{t: t, SendErr: errors.New("send failed")}
+	launcher := NewAgentLauncherWithClient(mock)
+	launcher.LaunchDelay = 0
+	launcher.PostLaunchDelay = 0
+
+	plan := &SwarmPlan{
+		Sessions: []SessionSpec{
+			{
+				Name: "cc_agents_1",
+				Panes: []PaneSpec{
+					{Index: 1, AgentType: AgentCC},
+					{Index: 2, AgentType: AgentCC},
+				},
+			},
+		},
+	}
+
+	t.Log("[TEST] launching swarm with SendKeys failures")
+	result, err := launcher.LaunchSwarm(plan)
+	if err != nil {
+		t.Fatalf("LaunchSwarm returned error: %v", err)
+	}
+	if result.TotalFailed != 2 {
+		t.Fatalf("expected 2 failures, got %d", result.TotalFailed)
+	}
+	if result.TotalLaunched != 0 {
+		t.Fatalf("expected 0 launched, got %d", result.TotalLaunched)
+	}
+	for _, res := range result.LaunchResults {
+		if res.Success {
+			t.Fatalf("expected failure result, got success for %s", res.SessionPane)
+		}
+		if res.Error == "" {
+			t.Fatalf("expected error message for %s", res.SessionPane)
+		}
 	}
 }
 

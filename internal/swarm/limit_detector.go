@@ -25,7 +25,7 @@ type LimitEvent struct {
 type LimitDetector struct {
 	// TmuxClient for capturing pane output.
 	// If nil, the default tmux client is used.
-	TmuxClient *tmux.Client
+	TmuxClient paneCapturer
 
 	// Tracker records limit events for learning (optional).
 	Tracker *ratelimit.RateLimitTracker
@@ -53,6 +53,10 @@ type LimitDetector struct {
 
 	// ctx is the context for all monitoring goroutines.
 	ctx context.Context
+}
+
+type paneCapturer interface {
+	CapturePaneOutput(target string, lines int) (string, error)
 }
 
 // NewLimitDetector creates a new LimitDetector with default settings.
@@ -83,7 +87,7 @@ func NewLimitDetectorWithClient(client *tmux.Client) *LimitDetector {
 }
 
 // tmuxClient returns the configured tmux client or the default client.
-func (d *LimitDetector) tmuxClient() *tmux.Client {
+func (d *LimitDetector) tmuxClient() paneCapturer {
 	if d.TmuxClient != nil {
 		return d.TmuxClient
 	}

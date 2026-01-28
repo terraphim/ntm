@@ -35,7 +35,7 @@ type AgentLauncherResult struct {
 type AgentLauncher struct {
 	// TmuxClient is the tmux client used for sending keys.
 	// If nil, the default tmux client is used.
-	TmuxClient *tmux.Client
+	TmuxClient agentLauncherTmux
 
 	// LaunchDelay is the delay between agent launches to avoid overwhelming
 	// the terminal or hitting rate limits.
@@ -49,6 +49,11 @@ type AgentLauncher struct {
 	Logger *slog.Logger
 }
 
+type agentLauncherTmux interface {
+	SendKeys(target, keys string, enter bool) error
+	GetPanes(session string) ([]tmux.Pane, error)
+}
+
 // NewAgentLauncher creates a new AgentLauncher with default settings.
 func NewAgentLauncher() *AgentLauncher {
 	return &AgentLauncher{
@@ -60,7 +65,7 @@ func NewAgentLauncher() *AgentLauncher {
 }
 
 // NewAgentLauncherWithClient creates an AgentLauncher with a custom tmux client.
-func NewAgentLauncherWithClient(client *tmux.Client) *AgentLauncher {
+func NewAgentLauncherWithClient(client agentLauncherTmux) *AgentLauncher {
 	return &AgentLauncher{
 		TmuxClient:      client,
 		LaunchDelay:     200 * time.Millisecond,
@@ -80,7 +85,7 @@ func NewAgentLauncherWithLogger(logger *slog.Logger) *AgentLauncher {
 }
 
 // tmuxClient returns the configured tmux client or the default client.
-func (l *AgentLauncher) tmuxClient() *tmux.Client {
+func (l *AgentLauncher) tmuxClient() agentLauncherTmux {
 	if l.TmuxClient != nil {
 		return l.TmuxClient
 	}

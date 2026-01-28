@@ -12,6 +12,7 @@ import (
 
 	"github.com/Dicklesworthstone/ntm/internal/state"
 	"github.com/Dicklesworthstone/ntm/internal/tui/components"
+	"github.com/Dicklesworthstone/ntm/internal/tui/layout"
 	"github.com/Dicklesworthstone/ntm/internal/tui/theme"
 )
 
@@ -305,6 +306,14 @@ func (m *TimelinePanel) View() string {
 
 	content.WriteString(headerStyle.Render(title) + "\n")
 
+	// Stats line (best-effort)
+	if w > 20 {
+		statsLine := m.renderStatsLine(w - 4)
+		if statsLine != "" {
+			content.WriteString(statsLine + "\n")
+		}
+	}
+
 	// Show error message if present
 	if m.err != nil {
 		content.WriteString(components.ErrorState(m.err.Error(), "Press r to retry", w-4) + "\n")
@@ -429,6 +438,137 @@ func (m *TimelinePanel) View() string {
 }
 
 // Helper methods
+
+func (m *TimelinePanel) renderStatsLine(width int) string {
+	if width <= 4 {
+		return ""
+	}
+
+	t := m.theme
+	totalAgents := len(m.getAgentList())
+	totalEvents := len(m.data.Events)
+	if totalAgents == 0 && m.data.Stats.TotalAgents > 0 {
+		totalAgents = m.data.Stats.TotalAgents
+	}
+	if totalEvents == 0 && m.data.Stats.TotalEvents > 0 {
+		totalEvents = m.data.Stats.TotalEvents
+	}
+	markers := len(m.data.Markers)
+
+	if totalAgents == 0 && totalEvents == 0 && markers == 0 {
+		return ""
+	}
+
+	oldest, newest := m.data.Stats.OldestEvent, m.data.Stats.NewestEvent
+	if oldest.IsZero() || newest.IsZero() {
+		oldest, newest = m.eventBounds()
+	}
+	span := ""
+	if !oldest.IsZero() && !newest.IsZero() && newest.After(oldest) {
+		span = formatTimelineSpan(newest.Sub(oldest))
+	}
+
+	segments := make([]string, 0, 5)
+	if totalAgents > 0 {
+		segments = append(segments, fmt.Sprintf("Agents: %d", totalAgents))
+	}
+	if totalEvents > 0 {
+		segments = append(segments, fmt.Sprintf("Events: %d", totalEvents))
+	}
+	if markers > 0 {
+		segments = append(segments, fmt.Sprintf("Markers: %d", markers))
+	}
+	if span != "" {
+		segments = append(segments, fmt.Sprintf("Span: %s", span))
+	}
+
+	if stateCounts := m.currentStateCounts(); len(stateCounts) > 0 {
+		var nowParts []string
+		if count := stateCounts[state.TimelineWorking]; count > 0 {
+			nowParts = append(nowParts, lipgloss.NewStyle().Foreground(t.Green).Render(fmt.Sprintf("W:%d", count)))
+		}
+		if count := stateCounts[state.TimelineWaiting]; count > 0 {
+			nowParts = append(nowParts, lipgloss.NewStyle().Foreground(t.Yellow).Render(fmt.Sprintf("Q:%d", count)))
+		}
+		if count := stateCounts[state.TimelineError]; count > 0 {
+			nowParts = append(nowParts, lipgloss.NewStyle().Foreground(t.Red).Render(fmt.Sprintf("E:%d", count)))
+		}
+		if count := stateCounts[state.TimelineIdle]; count > 0 {
+			nowParts = append(nowParts, lipgloss.NewStyle().Foreground(t.Overlay).Render(fmt.Sprintf("I:%d", count)))
+		}
+		if count := stateCounts[state.TimelineStopped]; count > 0 {
+			nowParts = append(nowParts, lipgloss.NewStyle().Foreground(t.Surface2).Render(fmt.Sprintf("S:%d", count)))
+		}
+		if len(nowParts) > 0 {
+			segments = append(segments, "Now "+strings.Join(nowParts, " "))
+		}
+	}
+
+	line := strings.Join(segments, "  ")
+	line = layout.TruncateWidthDefault(line, width-2)
+
+	statsStyle := lipgloss.NewStyle().Foreground(t.Subtext).Padding(0, 1)
+	return statsStyle.Render(line)
+}
+
+func (m *TimelinePanel) eventBounds() (time.Time, time.Time) {
+	if len(m.data.Events) == 0 {
+		return time.Time{}, time.Time{}
+	}
+
+	oldest := m.data.Events[0].Timestamp
+	newest := m.data.Events[0].Timestamp
+	for _, event := range m.data.Events[1:] {
+		if event.Timestamp.Before(oldest) {
+			oldest = event.Timestamp
+		}
+		if event.Timestamp.After(newest) {
+			newest = event.Timestamp
+		}
+	}
+	return oldest, newest
+}
+
+func (m *TimelinePanel) currentStateCounts() map[state.TimelineState]int {
+	if len(m.data.Events) == 0 {
+		return nil
+	}
+
+	latest := make(map[string]state.AgentEvent)
+	for _, event := range m.data.Events {
+		if prev, ok := latest[event.AgentID]; !ok || event.Timestamp.After(prev.Timestamp) {
+			latest[event.AgentID] = event
+		}
+	}
+
+	counts := make(map[state.TimelineState]int, len(latest))
+	for _, event := range latest {
+		counts[event.State]++
+	}
+	return counts
+}
+
+func formatTimelineSpan(d time.Duration) string {
+	if d <= 0 {
+		return "0s"
+	}
+	d = d.Round(time.Second)
+
+	hours := int(d.Hours())
+	minutes := int(d.Minutes()) % 60
+	seconds := int(d.Seconds()) % 60
+
+	if hours > 0 {
+		if minutes > 0 {
+			return fmt.Sprintf("%dh%dm", hours, minutes)
+		}
+		return fmt.Sprintf("%dh", hours)
+	}
+	if minutes > 0 {
+		return fmt.Sprintf("%dm", minutes)
+	}
+	return fmt.Sprintf("%ds", seconds)
+}
 
 func (m *TimelinePanel) getAgentList() []string {
 	agentSet := make(map[string]struct{})

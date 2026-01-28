@@ -1,0 +1,61 @@
+version: "1.0"
+session: "myproject"
+date: "2026-01-28"
+created_at: 2026-01-28T12:34:56Z
+updated_at: 2026-01-28T12:35:56Z
+status: complete
+outcome: SUCCEEDED
+goal: "Implemented auth"
+now: "Add tests"
+test: "go test ./..."
+done_this_session:
+  - task: "Created handler"
+    files:
+      - "handler.go"
+      - "handler_test.go"
+blockers:
+  - "rate limit"
+questions:
+  - "Should we cache?"
+decisions:
+  alg: "RS256"
+findings:
+  perf: "10x faster"
+worked:
+  - "TDD"
+  - "pairing"
+failed:
+  - "skipped validation"
+next:
+  - "Add tests"
+  - "Update docs"
+files:
+  created:
+    - "new_file.go"
+  modified:
+    - "existing.go"
+  deleted:
+    - "old.go"
+active_beads:
+  - "bd-18kw9"
+agent_mail_threads:
+  - "bd-18kw9"
+cm_memories:
+  - "mem-1"
+agent_id: "cc_1"
+agent_type: "cc"
+pane_id: "%42"
+tokens_used: 500
+tokens_max: 1000
+tokens_pct: 50
+reservation_transfer:
+  from_agent: "BlueLake"
+  project_key: "/data/projects/ntm"
+  ttl_seconds: 3600
+  grace_period_seconds: 300
+  created_at: 2026-01-28T12:00:00Z
+  reservations:
+    - path_pattern: "internal/handoff/**"
+      exclusive: true
+      reason: "bd-18kw9"
+      expires_at: 2026-01-28T13:00:00Z

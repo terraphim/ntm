@@ -57,7 +57,7 @@ func TestRealTitleParsingAgentFormat(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.title, func(t *testing.T) {
-			gotType, gotVariant, _ := parseAgentFromTitle(tc.title)
+			gotType, _, gotVariant, _ := parseAgentFromTitle(tc.title)
 			if gotType != tc.wantType {
 				t.Errorf("parseAgentFromTitle(%q) type = %v, want %v", tc.title, gotType, tc.wantType)
 			}
@@ -83,7 +83,7 @@ func TestRealTitleParsingWithTags(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.title, func(t *testing.T) {
-			_, _, gotTags := parseAgentFromTitle(tc.title)
+			_, _, _, gotTags := parseAgentFromTitle(tc.title)
 			if len(gotTags) != len(tc.wantTags) {
 				t.Errorf("parseAgentFromTitle(%q) tags len = %d, want %d", tc.title, len(gotTags), len(tc.wantTags))
 				return
@@ -196,7 +196,7 @@ func TestRealTitleWithVariants(t *testing.T) {
 					// Verify variant is parsed correctly
 					if p.Variant == "" && title != "proj__cc_1" {
 						// Check parseAgentFromTitle
-						_, variant, _ := parseAgentFromTitle(title)
+						_, _, variant, _ := parseAgentFromTitle(title)
 						if variant == "" {
 							t.Errorf("variant should be parsed from %q", title)
 						}
