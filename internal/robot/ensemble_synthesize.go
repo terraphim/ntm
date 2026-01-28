@@ -51,7 +51,7 @@ type SynthesisReport struct {
 type SynthesisAudit struct {
 	ConflictCount     int      `json:"conflict_count"`
 	UnresolvedCount   int      `json:"unresolved_count"`
-	HighConflictPairs []string `json:"high_conflict_pairs,omitempty"`
+	HighConflictPairs []string `json:"high_conflict_pairs"`
 }
 
 // EnsembleSynthesizeOptions configures the synthesize operation.
