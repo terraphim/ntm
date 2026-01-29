@@ -165,7 +165,12 @@ func (c *BVClient) GetRecommendations(opts RecommendationOpts) ([]Recommendation
 // GetInsights returns graph analysis insights.
 func (c *BVClient) GetInsights() (*Insights, error) {
 	// Try to get insights from bv -robot-insights
-	insightsResp, err := GetInsights(c.workDir())
+	workDir, err := c.workDir()
+	if err != nil {
+		return nil, err
+	}
+
+	insightsResp, err := GetInsights(workDir)
 	if err != nil {
 		// Fall back to triage data if insights fail
 		triage, triageErr := c.getTriage()
@@ -246,7 +251,10 @@ func (c *BVClient) InvalidateCache() {
 
 // getTriage returns triage data, using cache if valid.
 func (c *BVClient) getTriage() (*TriageResponse, error) {
-	dir := c.workDir()
+	dir, err := c.workDir()
+	if err != nil {
+		return nil, err
+	}
 
 	c.mu.RLock()
 	if c.triageCache != nil && c.triageCacheDir == dir && time.Since(c.triageCacheAt) < c.CacheTTL {
@@ -312,9 +320,9 @@ func (c *BVClient) fetchTriage(dir string) (*TriageResponse, error) {
 	return &resp, nil
 }
 
-// workDir returns the workspace directory, defaulting to empty (current dir).
-func (c *BVClient) workDir() string {
-	return c.WorkspacePath
+// workDir returns the normalized workspace directory, defaulting to current dir.
+func (c *BVClient) workDir() (string, error) {
+	return normalizeTriageDir(c.WorkspacePath)
 }
 
 // convertRecommendation converts a TriageRecommendation to our Recommendation format.
