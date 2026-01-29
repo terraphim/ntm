@@ -484,11 +484,14 @@ func TestCachedClientInvalidateAll(t *testing.T) {
 
 func TestSupportedProviders(t *testing.T) {
 	providers := SupportedProviders()
-	if len(providers) != 3 {
-		t.Errorf("expected 3 providers, got %d", len(providers))
+	if len(providers) != 6 {
+		t.Errorf("expected 6 providers, got %d", len(providers))
 	}
 
-	expected := map[string]bool{"claude": true, "codex": true, "gemini": true}
+	expected := map[string]bool{
+		"claude": true, "codex": true, "gemini": true,
+		"cursor": true, "windsurf": true, "aider": true,
+	}
 	for _, p := range providers {
 		if !expected[p] {
 			t.Errorf("unexpected provider: %s", p)

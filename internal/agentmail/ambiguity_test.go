@@ -94,11 +94,16 @@ func TestUpdateSessionActivityTargeting(t *testing.T) {
 	infoB := &SessionAgentInfo{AgentName: "agent-b", ProjectKey: projectB, LastActiveAt: time.Now().Add(-1 * time.Hour)}
 	SaveSessionAgent(sessionName, projectB, infoB)
 
-	// Update activity for Project B explicitly
+	// Update activity for Project B explicitly.
+	// The local timestamp update is what we care about; if the MCP server
+	// rejects the test project (e.g., project not provisioned), that is
+	// expected in unit-test environments and should not fail the test.
 	client := NewClient()
-	// We don't care about server availability for the local update part
-	if err := client.UpdateSessionActivity(context.Background(), sessionName, projectB); err != nil {
-		t.Fatalf("UpdateSessionActivity failed: %v", err)
+	err = client.UpdateSessionActivity(context.Background(), sessionName, projectB)
+	if err != nil {
+		// Accept server-side failures (project not found, server down) since
+		// we only need the local timestamp side-effect.
+		t.Logf("UpdateSessionActivity server error (expected in unit tests): %v", err)
 	}
 
 	// Verify Project B was updated
