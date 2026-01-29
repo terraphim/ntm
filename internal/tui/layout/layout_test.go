@@ -1,6 +1,10 @@
 package layout
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 func TestTierForWidth(t *testing.T) {
 	tests := []struct {
@@ -415,5 +419,314 @@ func TestTruncatePaneTitle_DistinguishableOutput(t *testing.T) {
 	// Verify we got unique outputs for each input
 	if len(results) != len(titles) {
 		t.Errorf("expected %d unique outputs, got %d", len(titles), len(results))
+	}
+}
+
+// ============ TierForWidthWithHysteresis tests ============
+
+func TestTierForWidthWithHysteresis_NoChange(t *testing.T) {
+	t.Parallel()
+
+	// When new tier equals previous tier, return it directly
+	if got := TierForWidthWithHysteresis(150, TierSplit); got != TierSplit {
+		t.Errorf("same tier: got %v, want TierSplit", got)
+	}
+}
+
+func TestTierForWidthWithHysteresis_InvalidPrevTier(t *testing.T) {
+	t.Parallel()
+
+	// Invalid previous tier returns the plain TierForWidth result
+	if got := TierForWidthWithHysteresis(150, Tier(-1)); got != TierSplit {
+		t.Errorf("invalid prev tier: got %v, want TierSplit", got)
+	}
+	if got := TierForWidthWithHysteresis(150, Tier(99)); got != TierSplit {
+		t.Errorf("too-large prev tier: got %v, want TierSplit", got)
+	}
+}
+
+func TestTierForWidthWithHysteresis_NarrowSticky(t *testing.T) {
+	t.Parallel()
+
+	// Was narrow, now at 120 (exactly split threshold) — within hysteresis margin, stays narrow
+	if got := TierForWidthWithHysteresis(120, TierNarrow); got != TierNarrow {
+		t.Errorf("narrow sticky at 120: got %v, want TierNarrow", got)
+	}
+	// At 124 (split threshold + margin - 1), still stays narrow
+	if got := TierForWidthWithHysteresis(124, TierNarrow); got != TierNarrow {
+		t.Errorf("narrow sticky at 124: got %v, want TierNarrow", got)
+	}
+	// At 125 (split threshold + margin), transitions to split
+	if got := TierForWidthWithHysteresis(125, TierNarrow); got != TierSplit {
+		t.Errorf("narrow to split at 125: got %v, want TierSplit", got)
+	}
+}
+
+func TestTierForWidthWithHysteresis_SplitSticky(t *testing.T) {
+	t.Parallel()
+
+	// Was split, shrink toward narrow — stays split within margin
+	if got := TierForWidthWithHysteresis(116, TierSplit); got != TierSplit {
+		t.Errorf("split sticky at 116: got %v, want TierSplit", got)
+	}
+	// Below (split - margin), transitions to narrow
+	if got := TierForWidthWithHysteresis(114, TierSplit); got != TierNarrow {
+		t.Errorf("split to narrow at 114: got %v, want TierNarrow", got)
+	}
+
+	// Was split, grow toward wide — stays split within margin
+	if got := TierForWidthWithHysteresis(200, TierSplit); got != TierSplit {
+		t.Errorf("split sticky at 200: got %v, want TierSplit", got)
+	}
+	if got := TierForWidthWithHysteresis(204, TierSplit); got != TierSplit {
+		t.Errorf("split sticky at 204: got %v, want TierSplit", got)
+	}
+	// Past (wide + margin), transitions to wide
+	if got := TierForWidthWithHysteresis(205, TierSplit); got != TierWide {
+		t.Errorf("split to wide at 205: got %v, want TierWide", got)
+	}
+}
+
+func TestTierForWidthWithHysteresis_WideSticky(t *testing.T) {
+	t.Parallel()
+
+	// Was wide, shrink toward split
+	if got := TierForWidthWithHysteresis(196, TierWide); got != TierWide {
+		t.Errorf("wide sticky at 196: got %v, want TierWide", got)
+	}
+	if got := TierForWidthWithHysteresis(194, TierWide); got != TierSplit {
+		t.Errorf("wide to split at 194: got %v, want TierSplit", got)
+	}
+
+	// Was wide, grow toward ultra
+	if got := TierForWidthWithHysteresis(244, TierWide); got != TierWide {
+		t.Errorf("wide sticky at 244: got %v, want TierWide", got)
+	}
+	if got := TierForWidthWithHysteresis(245, TierWide); got != TierUltra {
+		t.Errorf("wide to ultra at 245: got %v, want TierUltra", got)
+	}
+}
+
+func TestTierForWidthWithHysteresis_UltraSticky(t *testing.T) {
+	t.Parallel()
+
+	// Was ultra, shrink toward wide
+	if got := TierForWidthWithHysteresis(236, TierUltra); got != TierUltra {
+		t.Errorf("ultra sticky at 236: got %v, want TierUltra", got)
+	}
+	if got := TierForWidthWithHysteresis(234, TierUltra); got != TierWide {
+		t.Errorf("ultra to wide at 234: got %v, want TierWide", got)
+	}
+
+	// Was ultra, grow toward mega
+	if got := TierForWidthWithHysteresis(324, TierUltra); got != TierUltra {
+		t.Errorf("ultra sticky at 324: got %v, want TierUltra", got)
+	}
+	if got := TierForWidthWithHysteresis(325, TierUltra); got != TierMega {
+		t.Errorf("ultra to mega at 325: got %v, want TierMega", got)
+	}
+}
+
+func TestTierForWidthWithHysteresis_MegaSticky(t *testing.T) {
+	t.Parallel()
+
+	// Was mega, shrink toward ultra
+	if got := TierForWidthWithHysteresis(316, TierMega); got != TierMega {
+		t.Errorf("mega sticky at 316: got %v, want TierMega", got)
+	}
+	if got := TierForWidthWithHysteresis(314, TierMega); got != TierUltra {
+		t.Errorf("mega to ultra at 314: got %v, want TierUltra", got)
+	}
+}
+
+// ============ TruncateWidth tests ============
+
+func TestTruncateWidth(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		s        string
+		maxWidth int
+		suffix   string
+	}{
+		{"fits unchanged", "hello", 10, "..."},
+		{"empty string", "", 10, "..."},
+		{"zero maxWidth", "hello", 0, "..."},
+		{"negative maxWidth", "hello", -1, "..."},
+		{"exact fit", "hi", 2, "..."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := TruncateWidth(tt.s, tt.maxWidth, tt.suffix)
+			if tt.maxWidth <= 0 {
+				if got != "" {
+					t.Errorf("TruncateWidth(%q, %d, %q) = %q, want empty", tt.s, tt.maxWidth, tt.suffix, got)
+				}
+				return
+			}
+			// Result should fit in maxWidth
+			w := lipgloss.Width(got)
+			if w > tt.maxWidth {
+				t.Errorf("TruncateWidth(%q, %d, %q) = %q (width=%d), exceeds max", tt.s, tt.maxWidth, tt.suffix, got, w)
+			}
+		})
+	}
+}
+
+func TestTruncateWidth_Truncation(t *testing.T) {
+	t.Parallel()
+
+	// Long string that needs truncation
+	got := TruncateWidth("hello world this is long", 10, "…")
+	w := lipgloss.Width(got)
+	if w > 10 {
+		t.Errorf("result %q has width %d, want <= 10", got, w)
+	}
+	if got == "" {
+		t.Error("should not return empty for non-empty input with width > 0")
+	}
+}
+
+func TestTruncateWidth_SuffixTooWide(t *testing.T) {
+	t.Parallel()
+
+	// Suffix wider than maxWidth — falls back to hard truncation
+	got := TruncateWidth("hello world", 2, "...")
+	w := lipgloss.Width(got)
+	if w > 2 {
+		t.Errorf("result %q has width %d, want <= 2", got, w)
+	}
+}
+
+func TestTruncateWidthDefault(t *testing.T) {
+	t.Parallel()
+
+	got := TruncateWidthDefault("hello world this is long", 10)
+	w := lipgloss.Width(got)
+	if w > 10 {
+		t.Errorf("result %q has width %d, want <= 10", got, w)
+	}
+
+	// Short string passes through
+	got = TruncateWidthDefault("hi", 10)
+	if got != "hi" {
+		t.Errorf("short string should pass through, got %q", got)
+	}
+}
+
+// ============ TruncateMiddle tests ============
+
+func TestTruncateMiddle(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		s        string
+		maxWidth int
+	}{
+		{"empty string", "", 10},
+		{"zero maxWidth", "hello", 0},
+		{"negative maxWidth", "hello", -1},
+		{"fits unchanged", "hello", 10},
+		{"exact fit", "hello", 5},
+		{"needs truncation", "abcdefghij", 7},
+		{"long string", "destructive_command_guard_cc_16", 20},
+		{"very tight", "abcdefghijklmnop", 4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := TruncateMiddle(tt.s, tt.maxWidth)
+			if tt.maxWidth <= 0 {
+				if got != "" {
+					t.Errorf("TruncateMiddle(%q, %d) = %q, want empty", tt.s, tt.maxWidth, got)
+				}
+				return
+			}
+			w := lipgloss.Width(got)
+			if w > tt.maxWidth {
+				t.Errorf("TruncateMiddle(%q, %d) = %q (width=%d), exceeds max", tt.s, tt.maxWidth, got, w)
+			}
+		})
+	}
+}
+
+func TestTruncateMiddle_PreservesEnds(t *testing.T) {
+	t.Parallel()
+
+	// Should preserve start and end of string
+	got := TruncateMiddle("abcdefghij", 7)
+	// Should contain start chars and end chars with ellipsis
+	if got == "" {
+		t.Fatal("should not be empty")
+	}
+	w := lipgloss.Width(got)
+	if w > 7 {
+		t.Errorf("width %d exceeds max 7: %q", w, got)
+	}
+	// Start should be preserved
+	runes := []rune(got)
+	if runes[0] != 'a' {
+		t.Errorf("first char should be 'a', got '%c'", runes[0])
+	}
+	// End should be preserved
+	last := runes[len(runes)-1]
+	if last != 'j' {
+		t.Errorf("last char should be 'j', got '%c'", last)
+	}
+}
+
+func TestTruncateMiddleWidth(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		s        string
+		maxWidth int
+		ellipsis string
+	}{
+		{"empty string", "", 10, ".."},
+		{"zero maxWidth", "hello", 0, ".."},
+		{"fits unchanged", "hello", 10, ".."},
+		{"needs truncation", "abcdefghij", 7, ".."},
+		{"custom ellipsis", "hello world foo bar", 12, "---"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := TruncateMiddleWidth(tt.s, tt.maxWidth, tt.ellipsis)
+			if tt.maxWidth <= 0 {
+				if got != "" {
+					t.Errorf("TruncateMiddleWidth(%q, %d, %q) = %q, want empty", tt.s, tt.maxWidth, tt.ellipsis, got)
+				}
+				return
+			}
+			w := lipgloss.Width(got)
+			if w > tt.maxWidth {
+				t.Errorf("TruncateMiddleWidth(%q, %d, %q) = %q (width=%d), exceeds max", tt.s, tt.maxWidth, tt.ellipsis, got, w)
+			}
+		})
+	}
+}
+
+func TestTruncateMiddleWidth_CustomEllipsis(t *testing.T) {
+	t.Parallel()
+
+	got := TruncateMiddleWidth("abcdefghijklmnop", 10, "..")
+	w := lipgloss.Width(got)
+	if w > 10 {
+		t.Errorf("width %d exceeds max 10: %q", w, got)
+	}
+	// Should contain the custom ellipsis
+	if len(got) > 0 {
+		runes := []rune(got)
+		if runes[0] != 'a' {
+			t.Errorf("first char should be 'a', got '%c'", runes[0])
+		}
 	}
 }
