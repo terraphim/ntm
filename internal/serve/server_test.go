@@ -1567,3 +1567,264 @@ func TestFormatAge(t *testing.T) {
 		})
 	}
 }
+
+func TestClaimString(t *testing.T) {
+	t.Parallel()
+
+	claims := map[string]interface{}{
+		"iss":    "https://auth.example.com",
+		"number": float64(42),
+		"empty":  "",
+	}
+
+	tests := []struct {
+		name   string
+		key    string
+		wantV  string
+		wantOK bool
+	}{
+		{"present string", "iss", "https://auth.example.com", true},
+		{"missing key", "sub", "", false},
+		{"non-string value", "number", "", false},
+		{"empty string", "empty", "", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			v, ok := claimString(claims, tc.key)
+			if ok != tc.wantOK || v != tc.wantV {
+				t.Errorf("claimString(claims, %q) = (%q, %v), want (%q, %v)", tc.key, v, ok, tc.wantV, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestClaimInt64(t *testing.T) {
+	t.Parallel()
+
+	claims := map[string]interface{}{
+		"exp":    float64(1700000000),
+		"string": "not a number",
+		"number": json.Number("42"),
+	}
+
+	tests := []struct {
+		name   string
+		key    string
+		wantV  int64
+		wantOK bool
+	}{
+		{"float64 value", "exp", 1700000000, true},
+		{"json.Number value", "number", 42, true},
+		{"string value", "string", 0, false},
+		{"missing key", "nbf", 0, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			v, ok := claimInt64(claims, tc.key)
+			if ok != tc.wantOK || v != tc.wantV {
+				t.Errorf("claimInt64(claims, %q) = (%d, %v), want (%d, %v)", tc.key, v, ok, tc.wantV, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestClaimAudienceContains(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		claims   map[string]interface{}
+		expected string
+		want     bool
+	}{
+		{"string aud match", map[string]interface{}{"aud": "my-app"}, "my-app", true},
+		{"string aud mismatch", map[string]interface{}{"aud": "other-app"}, "my-app", false},
+		{"array aud match", map[string]interface{}{"aud": []interface{}{"app1", "my-app"}}, "my-app", true},
+		{"array aud mismatch", map[string]interface{}{"aud": []interface{}{"app1", "app2"}}, "my-app", false},
+		{"missing aud", map[string]interface{}{}, "my-app", false},
+		{"wrong type", map[string]interface{}{"aud": 42}, "my-app", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := claimAudienceContains(tc.claims, tc.expected)
+			if got != tc.want {
+				t.Errorf("claimAudienceContains(%v, %q) = %v, want %v", tc.claims, tc.expected, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestExtractBearerToken(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		auth  string
+		want  string
+	}{
+		{"valid bearer", "Bearer my-token-123", "my-token-123"},
+		{"bearer lowercase", "bearer my-token", "my-token"},
+		{"BEARER uppercase", "BEARER my-token", "my-token"},
+		{"empty header", "", ""},
+		{"no bearer prefix", "Basic dXNlcjpwYXNz", ""},
+		{"just bearer", "Bearer", ""},
+		{"extra parts", "Bearer token extra", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r, _ := http.NewRequest("GET", "/", nil)
+			if tc.auth != "" {
+				r.Header.Set("Authorization", tc.auth)
+			}
+			got := extractBearerToken(r)
+			if got != tc.want {
+				t.Errorf("extractBearerToken(auth=%q) = %q, want %q", tc.auth, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestExtractAPIKey(t *testing.T) {
+	t.Parallel()
+
+	t.Run("from X-API-Key header", func(t *testing.T) {
+		t.Parallel()
+		r, _ := http.NewRequest("GET", "/", nil)
+		r.Header.Set("X-API-Key", "api-key-123")
+		got := extractAPIKey(r)
+		if got != "api-key-123" {
+			t.Errorf("extractAPIKey() = %q, want %q", got, "api-key-123")
+		}
+	})
+
+	t.Run("falls back to bearer token", func(t *testing.T) {
+		t.Parallel()
+		r, _ := http.NewRequest("GET", "/", nil)
+		r.Header.Set("Authorization", "Bearer fallback-token")
+		got := extractAPIKey(r)
+		if got != "fallback-token" {
+			t.Errorf("extractAPIKey() = %q, want %q", got, "fallback-token")
+		}
+	})
+
+	t.Run("X-API-Key takes priority", func(t *testing.T) {
+		t.Parallel()
+		r, _ := http.NewRequest("GET", "/", nil)
+		r.Header.Set("X-API-Key", "api-key")
+		r.Header.Set("Authorization", "Bearer bearer-token")
+		got := extractAPIKey(r)
+		if got != "api-key" {
+			t.Errorf("extractAPIKey() = %q, want %q (X-API-Key should take priority)", got, "api-key")
+		}
+	})
+
+	t.Run("no key", func(t *testing.T) {
+		t.Parallel()
+		r, _ := http.NewRequest("GET", "/", nil)
+		got := extractAPIKey(r)
+		if got != "" {
+			t.Errorf("extractAPIKey() = %q, want empty", got)
+		}
+	})
+}
+
+func TestIsWebSocketUpgrade(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		upgrade    string
+		connection string
+		want       bool
+	}{
+		{"valid websocket", "websocket", "Upgrade", true},
+		{"case insensitive upgrade", "WebSocket", "upgrade", true},
+		{"missing upgrade header", "", "Upgrade", false},
+		{"wrong upgrade", "http2", "Upgrade", false},
+		{"missing connection", "websocket", "", false},
+		{"connection without upgrade", "websocket", "keep-alive", false},
+		{"connection with multiple values", "websocket", "keep-alive, Upgrade", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r, _ := http.NewRequest("GET", "/ws", nil)
+			if tc.upgrade != "" {
+				r.Header.Set("Upgrade", tc.upgrade)
+			}
+			if tc.connection != "" {
+				r.Header.Set("Connection", tc.connection)
+			}
+			got := isWebSocketUpgrade(r)
+			if got != tc.want {
+				t.Errorf("isWebSocketUpgrade(upgrade=%q, connection=%q) = %v, want %v", tc.upgrade, tc.connection, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseJWT(t *testing.T) {
+	t.Parallel()
+
+	// Build a valid JWT: header.payload.signature (base64url encoded)
+	headerB64 := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","kid":"key-1"}`))
+	payloadB64 := base64.RawURLEncoding.EncodeToString([]byte(`{"iss":"https://auth.example.com","sub":"user-1"}`))
+	sigB64 := base64.RawURLEncoding.EncodeToString([]byte("fakesig"))
+	validToken := headerB64 + "." + payloadB64 + "." + sigB64
+
+	t.Run("valid JWT", func(t *testing.T) {
+		t.Parallel()
+		header, claims, sigInput, sig, err := parseJWT(validToken)
+		if err != nil {
+			t.Fatalf("parseJWT() error: %v", err)
+		}
+		if header.Alg != "RS256" {
+			t.Errorf("header.Alg = %q, want RS256", header.Alg)
+		}
+		if header.Kid != "key-1" {
+			t.Errorf("header.Kid = %q, want key-1", header.Kid)
+		}
+		if claims["iss"] != "https://auth.example.com" {
+			t.Errorf("claims[iss] = %v, want https://auth.example.com", claims["iss"])
+		}
+		if sigInput != headerB64+"."+payloadB64 {
+			t.Error("signing input mismatch")
+		}
+		if len(sig) == 0 {
+			t.Error("signature should not be empty")
+		}
+	})
+
+	t.Run("invalid format", func(t *testing.T) {
+		t.Parallel()
+		_, _, _, _, err := parseJWT("not.a.jwt.token")
+		if err == nil {
+			t.Error("expected error for invalid JWT format")
+		}
+	})
+
+	t.Run("only two parts", func(t *testing.T) {
+		t.Parallel()
+		_, _, _, _, err := parseJWT("two.parts")
+		if err == nil {
+			t.Error("expected error for two-part token")
+		}
+	})
+
+	t.Run("invalid base64 header", func(t *testing.T) {
+		t.Parallel()
+		_, _, _, _, err := parseJWT("!!!invalid." + payloadB64 + "." + sigB64)
+		if err == nil {
+			t.Error("expected error for invalid base64 header")
+		}
+	})
+}
