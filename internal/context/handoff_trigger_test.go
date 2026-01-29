@@ -234,16 +234,18 @@ func TestUpdateFromTranscript(t *testing.T) {
 		t.Fatalf("UpdateFromTranscript() error = %v", err)
 	}
 
-	// 4000 bytes / 4 = 1000 tokens
-	if tokens != 1000 {
-		t.Errorf("tokens = %d, want 1000", tokens)
+	// 4000 bytes / 3.5 ≈ 1142 tokens (conservative estimate)
+	fileSize := float64(4000)
+	expectedTokens := int64(fileSize / 3.5)
+	if tokens != expectedTokens {
+		t.Errorf("tokens = %d, want %d", tokens, expectedTokens)
 	}
 
 	// Verify state was updated
 	state := monitor.GetState("agent-1")
-	if state.cumulativeInputTokens+state.cumulativeOutputTokens != 1000 {
-		t.Errorf("state tokens = %d, want 1000",
-			state.cumulativeInputTokens+state.cumulativeOutputTokens)
+	if state.cumulativeInputTokens+state.cumulativeOutputTokens != expectedTokens {
+		t.Errorf("state tokens = %d, want %d",
+			state.cumulativeInputTokens+state.cumulativeOutputTokens, expectedTokens)
 	}
 }
 

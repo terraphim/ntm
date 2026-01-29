@@ -23,93 +23,97 @@ case "$MODE" in
         ;;
 esac
 
+# Normalize: strip leading dashes so both -robot-triage and --robot-triage match
+ARG="${1#-}"
+ARG="${ARG#-}"
+
 # Normal mode - check arguments
-case "$1" in
-    --version)
+case "$ARG" in
+    -version|version)
         echo "bv 0.31.0 (fake)"
         exit 0
         ;;
-    --robot-triage)
+    robot-triage)
         cat "$FIXTURES_DIR/bv_triage.json" 2>/dev/null || echo '{"generated_at": "2026-01-01T00:00:00Z", "data_hash": "test", "triage": {"meta": {"version": "1.0.0"}, "quick_ref": {"open_count": 10, "actionable_count": 5}}}'
         exit 0
         ;;
-    --robot-triage-by-label)
+    robot-triage-by-label)
         echo '{"generated_at":"2026-01-01T00:00:00Z","triage_by_label":[{"label":"backend","top_pick":{"id":"bd-1","title":"Test"}}]}'
         exit 0
         ;;
-    --robot-triage-by-track)
+    robot-triage-by-track)
         echo '{"generated_at":"2026-01-01T00:00:00Z","triage_by_track":[{"track":"main","top_pick":{"id":"bd-1","title":"Test"}}]}'
         exit 0
         ;;
-    --robot-plan)
+    robot-plan)
         cat "$FIXTURES_DIR/bv_plan.json" 2>/dev/null || echo '{"generated_at": "2026-01-01T00:00:00Z", "plan": {"tracks": []}}'
         exit 0
         ;;
-    --robot-insights)
+    robot-insights)
         cat "$FIXTURES_DIR/bv_insights.json" 2>/dev/null || echo '{"generated_at": "2026-01-01T00:00:00Z", "insights": {}}'
         exit 0
         ;;
-    --robot-next)
+    robot-next)
         cat "$FIXTURES_DIR/bv_next.json" 2>/dev/null || echo '{"id": "test-1", "title": "Test issue", "command": "bd update test-1 --status in_progress"}'
         exit 0
         ;;
-    --robot-alerts)
+    robot-alerts)
         echo '{"alerts":[{"type":"stale","severity":"warning","message":"Stale issue","issue_id":"bd-1","labels":["backend"]}]}'
         exit 0
         ;;
-    --robot-graph)
+    robot-graph)
         echo '{"graph":{"nodes":[],"edges":[]},"format":"json"}'
         exit 0
         ;;
-    --robot-history)
+    robot-history)
         echo '{"stats":{"total_beads":1,"total_commits":0,"correlated_count":0},"histories":[{"id":"bd-1","title":"Test","events":[]}]}'
         exit 0
         ;;
-    --robot-burndown)
+    robot-burndown)
         echo '{"sprint":"s1","progress":{"total_points":10,"completed_points":4,"percent_complete":40,"days_remaining":3},"scope_changes":[],"at_risk":[]}'
         exit 0
         ;;
-    --robot-forecast)
+    robot-forecast)
         echo '{"forecasts":[{"id":"bd-1","title":"Test issue","estimated_eta":"2026-02-01T00:00:00Z","confidence_level":0.8,"dependency_count":2,"critical_path":true,"blocking_factors":["blocked"]}]}'
         exit 0
         ;;
-    --robot-suggest)
+    robot-suggest)
         echo '{"suggestions":[{"type":"duplicate","description":"Check duplicates","items":["bd-1"]}]}'
         exit 0
         ;;
-    --robot-impact)
+    robot-impact)
         echo '{"impact_score":0.75,"affected_beads":["bd-1","bd-2"]}'
         exit 0
         ;;
-    --robot-search)
+    robot-search)
         echo '{"results":[{"id":"bd-1","title":"Test issue","score":0.9}]}'
         exit 0
         ;;
-    --robot-label-attention)
+    robot-label-attention)
         echo '{"labels":[{"name":"backend","score":0.7}]}'
         exit 0
         ;;
-    --robot-label-flow)
+    robot-label-flow)
         echo '{"flow_matrix":{"backend":{"frontend":2}},"dependencies":[{"from":"backend","to":"frontend","count":2,"weight":0.5}],"bottleneck_labels":["backend"]}'
         exit 0
         ;;
-    --robot-label-health)
+    robot-label-health)
         echo '{"results":{"labels":[{"label":"backend","health_level":"warning","velocity_score":0.5,"staleness":1.2,"blocked_count":3}]}}'
         exit 0
         ;;
-    --robot-file-beads)
+    robot-file-beads)
         echo '{"files":[{"path":"internal/foo.go","beads":["bd-1"]}]}'
         exit 0
         ;;
-    --robot-file-hotspots)
+    robot-file-hotspots)
         echo '{"hotspots":[{"path":"internal/foo.go","score":5}]}'
         exit 0
         ;;
-    --robot-file-relations)
+    robot-file-relations)
         echo '{"relations":[{"source":"a.go","target":"b.go","weight":0.8}]}'
         exit 0
         ;;
-    --help|-h)
+    help|h)
         echo "bv - Beads Viewer (fake for testing)"
         echo "Usage: bv [options]"
         echo "  --version          Show version"
