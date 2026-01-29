@@ -88,13 +88,14 @@ func run(dir string, args ...string) (string, error) {
 
 	err := cmd.Run()
 	if err != nil {
-		// Check for specific error conditions
+		// Check context timeout first since it's more fundamental
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("bv timed out after %v", DefaultTimeout)
+		}
+		// Check for specific error conditions in stderr
 		stderrStr := stderr.String()
 		if strings.Contains(stderrStr, "No baseline found") {
 			return "", ErrNoBaseline
-		}
-		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("bv timed out after %v", DefaultTimeout)
 		}
 		return "", fmt.Errorf("bv %s: %w: %s", strings.Join(args, " "), err, stderrStr)
 	}

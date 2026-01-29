@@ -170,7 +170,8 @@ func (c *BVClient) GetInsights() (*Insights, error) {
 		// Fall back to triage data if insights fail
 		triage, triageErr := c.getTriage()
 		if triageErr != nil {
-			return nil, err // Return original error
+			// Return original error with context about fallback failure
+			return nil, fmt.Errorf("%w (fallback also failed: %v)", err, triageErr)
 		}
 
 		// Build insights from triage data
