@@ -273,7 +273,7 @@ func populateAgentHealth(output *HealthOutput) {
 		}
 
 		for _, pane := range panes {
-			paneKey := fmt.Sprintf("%d.%d", 0, pane.Index)
+			paneKey := fmt.Sprintf("%d", pane.Index)
 			agentHealth := getAgentHealth(sess.Name, pane)
 
 			sessHealth.Agents[paneKey] = agentHealth
