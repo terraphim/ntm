@@ -332,6 +332,48 @@ func TestBulkAssignSkipPanesParsing(t *testing.T) {
 	}
 }
 
+func TestParseBulkAssignSkipPanes_EdgeCases(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		input   string
+		want    []int
+		wantErr bool
+	}{
+		{"empty string", "", nil, false},
+		{"whitespace only", "   ", nil, false},
+		{"single value", "5", []int{5}, false},
+		{"with empty parts", "1,,3", []int{1, 3}, false},
+		{"trailing comma", "1,2,", []int{1, 2}, false},
+		{"leading comma", ",1,2", []int{1, 2}, false},
+		{"negative value", "-1,2", []int{-1, 2}, false}, // Negative values are valid pane indices
+		{"non-numeric", "abc", nil, true},
+		{"mixed valid invalid", "1,abc,3", nil, true},
+		{"zero value", "0", []int{0}, false},
+		{"spaces around values", " 1 , 2 , 3 ", []int{1, 2, 3}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseBulkAssignSkipPanes(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("parseBulkAssignSkipPanes(%q) expected error, got nil", tt.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("parseBulkAssignSkipPanes(%q) unexpected error: %v", tt.input, err)
+				return
+			}
+			sort.Ints(got)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("parseBulkAssignSkipPanes(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBulkAssignSkipPanesApplied(t *testing.T) {
 	panes := []tmux.Pane{
 		{Index: 1, Title: "proj__cc_1"},
