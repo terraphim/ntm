@@ -705,6 +705,34 @@ func TestGetNewContent_EdgeCases(t *testing.T) {
 			wantLen:  6, // "\nline2"
 			wantNone: false,
 		},
+		{
+			name:     "content replaced in middle",
+			initial:  "hello world",
+			current:  "hello there friend",
+			wantLen:  12, // "there friend" (from divergence point at index 6)
+			wantNone: false,
+		},
+		{
+			name:     "completely different content",
+			initial:  "original text",
+			current:  "completely new",
+			wantLen:  14, // entire new content (no common prefix)
+			wantNone: false,
+		},
+		{
+			name:     "shorter bytes but more lines returns new lines",
+			initial:  "very long single line content here",
+			current:  "a\nb\nc",
+			wantLen:  3, // "b\nc" - lines after initial line count
+			wantNone: false,
+		},
+		{
+			name:     "different content no common prefix",
+			initial:  "long",
+			current:  "a\nb\nc",
+			wantLen:  5, // entire current (no common prefix)
+			wantNone: false,
+		},
 	}
 
 	for _, tt := range tests {
