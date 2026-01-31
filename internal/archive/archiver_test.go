@@ -921,10 +921,10 @@ func TestFindOverlap_EdgeCases(t *testing.T) {
 			want: 2,
 		},
 		{
-			name: "no overlap different content",
-			prev: []string{"x", "y", "z"},
-			curr: []string{"a", "b", "c"},
-			want: 0, // No overlap - completely different content
+			name: "partial suffix match",
+			prev: []string{"a", "b", "c", "d"},
+			curr: []string{"c", "d", "e"},
+			want: 2, // Last 2 lines of prev match first 2 of curr
 		},
 	}
 

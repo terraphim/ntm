@@ -504,20 +504,34 @@ func TestInstallGitHooks_GitRepo(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	// Initialize a git repo
-	gitDir := filepath.Join(tmpDir, ".git")
-	if err := os.MkdirAll(filepath.Join(gitDir, "hooks"), 0755); err != nil {
-		t.Fatalf("create .git/hooks: %v", err)
-	}
-
-	// Create minimal git config
-	if err := os.WriteFile(filepath.Join(gitDir, "config"), []byte("[core]\n\trepositoryformatversion = 0\n"), 0644); err != nil {
-		t.Fatalf("create git config: %v", err)
+	// Initialize a real git repo using git init
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tmpDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v, output: %s", err, out)
 	}
 
 	installed, warning := installGitHooks(tmpDir, false)
 
-	// Should install hooks (or report they exist)
+	// Should install hooks successfully without warning
+	if warning != "" {
+		t.Errorf("unexpected warning in valid git repo: %s", warning)
+	}
+
+	// Verify hooks were installed (at least pre-commit should be installed)
+	if len(installed) == 0 {
+		t.Error("expected at least one hook to be installed")
+	}
+
+	// Verify hook files exist on disk
+	hooksDir := filepath.Join(tmpDir, ".git", "hooks")
+	for _, hookName := range installed {
+		hookPath := filepath.Join(hooksDir, hookName)
+		if _, err := os.Stat(hookPath); err != nil {
+			t.Errorf("hook %s not found on disk: %v", hookName, err)
+		}
+	}
+
 	t.Logf("TEST: InstallGitHooks_GitRepo | Installed: %v | Warning: %s", installed, warning)
 }
 
@@ -539,16 +553,51 @@ func TestInstallGitHooks_Force(t *testing.T) {
 		t.Fatalf("create git config: %v", err)
 	}
 
-	// Create existing hooks
-	if err := os.WriteFile(filepath.Join(hooksDir, "pre-commit"), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+	existingContent := "#!/bin/sh\nexit 0\n"
+
+	// Create existing hook with known content
+	preCommitPath := filepath.Join(hooksDir, "pre-commit")
+	if err := os.WriteFile(preCommitPath, []byte(existingContent), 0755); err != nil {
 		t.Fatalf("create existing hook: %v", err)
 	}
 
-	// Install without force first
+	// Install without force - should skip existing hook
 	installed1, _ := installGitHooks(tmpDir, false)
 
-	// Install with force
+	// Read content after non-force install - should be unchanged
+	content1, err := os.ReadFile(preCommitPath)
+	if err != nil {
+		t.Fatalf("read hook after non-force: %v", err)
+	}
+	if string(content1) != existingContent {
+		t.Errorf("non-force install should not modify existing hook")
+	}
+
+	// Install with force - should overwrite existing hook
 	installed2, _ := installGitHooks(tmpDir, true)
+
+	// Read content after force install - should be different (our hook content)
+	content2, err := os.ReadFile(preCommitPath)
+	if err != nil {
+		t.Fatalf("read hook after force: %v", err)
+	}
+
+	// With force, pre-commit should be in installed list (overwritten)
+	foundPreCommit := false
+	for _, h := range installed2 {
+		if h == "pre-commit" {
+			foundPreCommit = true
+			break
+		}
+	}
+	if !foundPreCommit {
+		t.Error("force install should include pre-commit in installed list")
+	}
+
+	// Content should have changed from the original
+	if string(content2) == existingContent {
+		t.Error("force install should overwrite existing hook content")
+	}
 
 	t.Logf("TEST: InstallGitHooks_Force | Without force: %v | With force: %v", installed1, installed2)
 }

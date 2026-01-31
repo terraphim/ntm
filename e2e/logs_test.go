@@ -131,13 +131,14 @@ func NewLogsTestSuite(t *testing.T, scenario string) *LogsTestSuite {
 	}
 }
 
-// supportsCommand checks if ntm supports a given subcommand
+// supportsCommand checks if ntm supports a given subcommand by running it with --help
 func (s *LogsTestSuite) supportsCommand(cmd string) bool {
-	out, err := exec.Command(s.ntmPath, "--help").CombinedOutput()
+	out, err := exec.Command(s.ntmPath, cmd, "--help").CombinedOutput()
 	if err != nil {
-		return false
+		// If exit code is non-zero, check if it's "unknown command"
+		return !strings.Contains(string(out), "unknown command")
 	}
-	return strings.Contains(string(out), cmd)
+	return true
 }
 
 // requireLogsCommand skips if logs command is not supported
