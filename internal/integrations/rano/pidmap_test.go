@@ -354,3 +354,221 @@ func trimSpace(s string) string {
 	}
 	return result
 }
+
+func TestGetAllPIDsForPaneUnknown(t *testing.T) {
+	t.Parallel()
+
+	m := NewPIDMap("test")
+
+	// Test with unknown pane
+	pids := m.GetAllPIDsForPane("unknown__pane")
+	if pids != nil {
+		t.Errorf("GetAllPIDsForPane for unknown pane should return nil, got %v", pids)
+	}
+}
+
+func TestGetGlobalPIDMapForSession(t *testing.T) {
+	// Test getting global map for specific session
+	m1 := GetGlobalPIDMapForSession("test-session-1")
+	if m1 == nil {
+		t.Fatal("GetGlobalPIDMapForSession returned nil")
+	}
+	if m1.session != "test-session-1" {
+		t.Errorf("session = %q, want %q", m1.session, "test-session-1")
+	}
+
+	// Getting same session should return same instance
+	m2 := GetGlobalPIDMapForSession("test-session-1")
+	if m1 != m2 {
+		t.Error("GetGlobalPIDMapForSession should return same instance for same session")
+	}
+
+	// Getting different session should create new instance
+	m3 := GetGlobalPIDMapForSession("test-session-2")
+	if m3.session != "test-session-2" {
+		t.Errorf("session = %q, want %q", m3.session, "test-session-2")
+	}
+}
+
+func TestGetStatsEmptyMap(t *testing.T) {
+	t.Parallel()
+
+	m := NewPIDMap("test")
+	stats := m.GetStats()
+
+	if stats.PaneCount != 0 {
+		t.Errorf("PaneCount = %d, want 0", stats.PaneCount)
+	}
+	if stats.TotalPIDCount != 0 {
+		t.Errorf("TotalPIDCount = %d, want 0", stats.TotalPIDCount)
+	}
+	if stats.ShellPIDCount != 0 {
+		t.Errorf("ShellPIDCount = %d, want 0", stats.ShellPIDCount)
+	}
+	if stats.ChildPIDCount != 0 {
+		t.Errorf("ChildPIDCount = %d, want 0", stats.ChildPIDCount)
+	}
+	if stats.Session != "test" {
+		t.Errorf("Session = %q, want %q", stats.Session, "test")
+	}
+	if len(stats.ByAgentType) != 0 {
+		t.Errorf("ByAgentType = %v, want empty map", stats.ByAgentType)
+	}
+	if !stats.LastRefresh.IsZero() {
+		t.Errorf("LastRefresh should be zero for new map, got %v", stats.LastRefresh)
+	}
+}
+
+func TestGetPIDLabelsEmpty(t *testing.T) {
+	t.Parallel()
+
+	m := NewPIDMap("test")
+	labels := m.GetPIDLabels()
+
+	if len(labels) != 0 {
+		t.Errorf("GetPIDLabels for empty map should return empty map, got %v", labels)
+	}
+}
+
+func TestLastRefreshEmpty(t *testing.T) {
+	t.Parallel()
+
+	m := NewPIDMap("test")
+	lastRefresh := m.LastRefresh()
+
+	if !lastRefresh.IsZero() {
+		t.Errorf("LastRefresh for new map should be zero, got %v", lastRefresh)
+	}
+}
+
+func TestGetStatsWithMixedAgentTypes(t *testing.T) {
+	t.Parallel()
+
+	m := NewPIDMap("test")
+
+	// Populate with multiple agent types
+	m.mu.Lock()
+	m.pidToPane[1000] = &PaneIdentity{AgentType: tmux.AgentClaude}
+	m.pidToPane[1001] = &PaneIdentity{AgentType: tmux.AgentClaude}
+	m.pidToPane[1002] = &PaneIdentity{AgentType: tmux.AgentCodex}
+	m.pidToPane[1003] = &PaneIdentity{AgentType: tmux.AgentGemini}
+	m.pidToPane[1004] = &PaneIdentity{AgentType: ""} // no agent type
+	m.mu.Unlock()
+
+	stats := m.GetStats()
+
+	if stats.TotalPIDCount != 5 {
+		t.Errorf("TotalPIDCount = %d, want 5", stats.TotalPIDCount)
+	}
+	if stats.ByAgentType["cc"] != 2 {
+		t.Errorf("ByAgentType[cc] = %d, want 2", stats.ByAgentType["cc"])
+	}
+	if stats.ByAgentType["cod"] != 1 {
+		t.Errorf("ByAgentType[cod] = %d, want 1", stats.ByAgentType["cod"])
+	}
+	if stats.ByAgentType["gmi"] != 1 {
+		t.Errorf("ByAgentType[gmi] = %d, want 1", stats.ByAgentType["gmi"])
+	}
+	// Empty agent type should not be counted
+	if _, exists := stats.ByAgentType[""]; exists {
+		t.Error("empty agent type should not be in ByAgentType")
+	}
+}
+
+func TestGetChildPIDsWithKnownParent(t *testing.T) {
+	// Test with PID 1 which always exists on Linux
+	if _, err := os.Stat("/proc/1"); os.IsNotExist(err) {
+		t.Skip("Skipping: /proc/1 not available")
+	}
+
+	children, err := getChildPIDs(1)
+	if err != nil {
+		t.Logf("getChildPIDs(1) returned error: %v", err)
+		// This is fine, PID 1 may have restricted access
+		return
+	}
+
+	// PID 1 (init/systemd) should have many children
+	t.Logf("PID 1 has %d child processes", len(children))
+	// We don't assert a specific count since it varies by system
+}
+
+func TestGetChildPIDsNonexistent(t *testing.T) {
+	if _, err := os.Stat("/proc"); os.IsNotExist(err) {
+		t.Skip("Skipping: /proc filesystem not available")
+	}
+
+	// Use a very high PID that's unlikely to exist
+	children, err := getChildPIDs(999999999)
+	if err != nil {
+		// Expected - PID doesn't exist
+		t.Logf("getChildPIDs(999999999) returned expected error: %v", err)
+		return
+	}
+
+	// Should return empty list
+	if len(children) != 0 {
+		t.Errorf("expected empty children list for nonexistent PID, got %d", len(children))
+	}
+}
+
+func TestGetParentPIDNonexistent(t *testing.T) {
+	if _, err := os.Stat("/proc"); os.IsNotExist(err) {
+		t.Skip("Skipping: /proc filesystem not available")
+	}
+
+	// Use a very high PID that's unlikely to exist
+	_, err := getParentPID(999999999)
+	if err == nil {
+		t.Error("getParentPID for nonexistent PID should return error")
+	}
+}
+
+func TestPaneIdentityStringVariants(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		identity PaneIdentity
+		want     string
+	}{
+		{
+			name: "full identity with title",
+			identity: PaneIdentity{
+				Session:   "project",
+				PaneIndex: 3,
+				PaneTitle: "project__cc_2_opus",
+				AgentType: tmux.AgentClaude,
+				NTMIndex:  2,
+			},
+			want: "project__cc_2_opus",
+		},
+		{
+			name: "no title falls back to session:index",
+			identity: PaneIdentity{
+				Session:   "myproject",
+				PaneIndex: 5,
+				PaneTitle: "",
+			},
+			want: "myproject:5",
+		},
+		{
+			name: "zero index with title",
+			identity: PaneIdentity{
+				Session:   "project",
+				PaneIndex: 0,
+				PaneTitle: "project__cod_1",
+			},
+			want: "project__cod_1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.identity.String()
+			if got != tt.want {
+				t.Errorf("PaneIdentity.String() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
