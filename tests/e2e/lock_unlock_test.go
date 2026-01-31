@@ -70,10 +70,10 @@ func TestE2ELockUnlockFileReservations(t *testing.T) {
 	}
 
 	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-	infoB, err := client.RegisterSessionAgent(ctx, sessionB, projectDir)
+	infoB, errB := client.RegisterSessionAgent(ctx, sessionB, projectDir)
 	cancel()
-	if err != nil {
-		t.Fatalf("register session B agent: %v", err)
+	if errB != nil {
+		t.Fatalf("register session B agent: %v", errB)
 	}
 	if infoB == nil || infoB.AgentName == "" {
 		t.Fatalf("register session B agent: missing agent name")
@@ -255,8 +255,8 @@ func TestE2ELockRejectsTTLBelowOneMinute(t *testing.T) {
 		t.Fatalf("register session agent: missing agent name")
 	}
 
-	out, err := runCmdAllowFail(t, projectDir, "ntm", "lock", session, "file.txt", "--ttl", "30s")
-	if err == nil {
+	out, cmdErr := runCmdAllowFail(t, projectDir, "ntm", "lock", session, "file.txt", "--ttl", "30s")
+	if cmdErr == nil {
 		t.Fatalf("expected ntm lock to fail for TTL < 1m, got success; out=%s", string(out))
 	}
 	if !strings.Contains(string(out), "TTL must be at least 1 minute") {
