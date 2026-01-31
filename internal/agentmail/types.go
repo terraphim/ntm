@@ -4,6 +4,7 @@
 package agentmail
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -198,6 +199,12 @@ func (c *ReservationConflict) UnmarshalJSON(data []byte) error {
 
 	c.Path = raw.Path
 	c.Holders = nil
+
+	trimmed := bytes.TrimSpace(raw.Holders)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		c.Holders = []string{}
+		return nil
+	}
 
 	// Legacy format: holders is a list of agent names.
 	var names []string

@@ -138,7 +138,7 @@ func (m *AgentMonitor) GetReservationsForAgent(ctx context.Context, agentMailNam
 		return nil, nil
 	}
 
-	reservations, err := m.mailClient.ListReservations(ctx, m.projectKey, agentMailName, true)
+	reservations, err := m.mailClient.ListReservations(ctx, m.projectKey, agentMailName, false)
 	if err != nil {
 		return nil, err
 	}

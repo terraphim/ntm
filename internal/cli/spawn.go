@@ -994,7 +994,12 @@ func spawnSessionLogic(opts SpawnOptions) error {
 	existingPanes := len(panes)
 	paneInitDelay := time.Duration(cfg.Tmux.PaneInitDelayMs) * time.Millisecond
 	if flag.Lookup("test.v") != nil {
-		paneInitDelay = 0
+		// Under `go test`, avoid the full init delay but keep a small floor to reduce
+		// flakiness on busy tmux servers (pane IDs can transiently fail).
+		const testPaneInitDelay = 50 * time.Millisecond
+		if paneInitDelay > testPaneInitDelay {
+			paneInitDelay = testPaneInitDelay
+		}
 	}
 	panesAdded := 0
 

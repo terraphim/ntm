@@ -101,7 +101,11 @@ func runProjectInit(opts initOptions) error {
 	}
 
 	ntmDir := filepath.Join(absTarget, ".ntm")
-	if fileExists(ntmDir) && !opts.Force {
+	// Treat the project as "initialized" only once the project config exists.
+	// This allows recovering from partial/failed initialization where `.ntm/` exists
+	// but `config.toml` (or other scaffolding) is missing.
+	projectConfigPath := filepath.Join(ntmDir, "config.toml")
+	if fileExists(projectConfigPath) && !opts.Force {
 		return fmt.Errorf("ntm already initialized at %s (use --force to reinitialize)", ntmDir)
 	}
 

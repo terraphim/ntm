@@ -506,6 +506,7 @@ func (c *Client) ListReservations(ctx context.Context, projectKey, agentName str
 	var raw []struct {
 		ID          int       `json:"id"`
 		Agent       string    `json:"agent"`
+		AgentName   string    `json:"agent_name"`
 		PathPattern string    `json:"path_pattern"`
 		Exclusive   bool      `json:"exclusive"`
 		Reason      string    `json:"reason"`
@@ -520,10 +521,14 @@ func (c *Client) ListReservations(ctx context.Context, projectKey, agentName str
 
 	reservations := make([]FileReservation, 0, len(raw))
 	for _, r := range raw {
+		name := r.Agent
+		if name == "" {
+			name = r.AgentName
+		}
 		reservations = append(reservations, FileReservation{
 			ID:          r.ID,
 			PathPattern: r.PathPattern,
-			AgentName:   r.Agent,
+			AgentName:   name,
 			Exclusive:   r.Exclusive,
 			Reason:      r.Reason,
 			CreatedTS:   r.CreatedTS,

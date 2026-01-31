@@ -47,14 +47,19 @@ func TestE2ELockUnlockFileReservations(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	projectDir := t.TempDir()
-	lockPath := filepath.Join(projectDir, "internal", "cli", "send.go")
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
+	conflictPath := filepath.Join(projectDir, "internal", "cli", "send.go")
+	if err := os.MkdirAll(filepath.Dir(conflictPath), 0755); err != nil {
 		t.Fatalf("mkdir lock path dir: %v", err)
 	}
-	if err := os.WriteFile(lockPath, []byte("package cli\n"), 0644); err != nil {
+	if err := os.WriteFile(conflictPath, []byte("package cli\n"), 0644); err != nil {
 		t.Fatalf("write lock path: %v", err)
 	}
-	pattern := filepath.ToSlash("internal/cli/send.go")
+	otherPath := filepath.Join(projectDir, "internal", "cli", "other.go")
+	if err := os.WriteFile(otherPath, []byte("package cli\n"), 0644); err != nil {
+		t.Fatalf("write other path: %v", err)
+	}
+	patternConflict := filepath.ToSlash("internal/cli/send.go")
+	patternOther := filepath.ToSlash("internal/cli/other.go")
 
 	sessionA := "lock_unlock_a"
 	sessionB := "lock_unlock_b"
@@ -89,7 +94,7 @@ func TestE2ELockUnlockFileReservations(t *testing.T) {
 	})
 
 	logger.LogSection("lock session A")
-	out := runCmd(t, projectDir, "ntm", "--json", "lock", sessionA, pattern, "--ttl", "1h", "--reason", "e2e lock/unlock")
+	out := runCmd(t, projectDir, "ntm", "--json", "lock", sessionA, patternConflict, "--ttl", "1h", "--reason", "e2e lock/unlock")
 	logger.Log("expected: lock succeeds for sessionA")
 	logger.Log("actual: %s", strings.TrimSpace(string(out)))
 
@@ -109,14 +114,14 @@ func TestE2ELockUnlockFileReservations(t *testing.T) {
 
 	logger.LogSection("verify reservation exists")
 	reservations := listReservations(t, client, projectDir)
-	logger.Log("expected: reservation present for %s", pattern)
+	logger.Log("expected: reservation present for %s", patternConflict)
 	logger.Log("actual: count=%d", len(reservations))
-	if !hasReservation(reservations, pattern) {
-		t.Fatalf("expected reservation for %s to exist", pattern)
+	if !hasReservation(reservations, patternConflict) {
+		t.Fatalf("expected reservation for %s to exist", patternConflict)
 	}
 
 	logger.LogSection("lock session B (conflict expected)")
-	out = runCmd(t, projectDir, "ntm", "--json", "lock", sessionB, pattern, "--ttl", "1h", "--reason", "e2e conflict")
+	out = runCmd(t, projectDir, "ntm", "--json", "lock", sessionB, patternConflict, "--ttl", "1h", "--reason", "e2e conflict")
 	logger.Log("expected: lock conflicts for sessionB; holders include %s", infoA.AgentName)
 	logger.Log("actual: %s", strings.TrimSpace(string(out)))
 
@@ -133,7 +138,7 @@ func TestE2ELockUnlockFileReservations(t *testing.T) {
 	conflictFound := false
 	holderFound := false
 	for _, c := range lockB.Conflicts {
-		if c.Path == pattern {
+		if c.Path == patternConflict {
 			conflictFound = true
 			for _, holder := range c.Holders {
 				if holder == infoA.AgentName {
@@ -143,38 +148,60 @@ func TestE2ELockUnlockFileReservations(t *testing.T) {
 		}
 	}
 	if !conflictFound {
-		t.Fatalf("expected conflict entry for %s, got %+v", pattern, lockB.Conflicts)
+		t.Fatalf("expected conflict entry for %s, got %+v", patternConflict, lockB.Conflicts)
 	}
 	if !holderFound {
 		t.Fatalf("expected conflict holders to include %q, got %+v", infoA.AgentName, lockB.Conflicts)
 	}
 
-	logger.LogSection("verify both reservations exist")
+	logger.LogSection("lock session B (non-conflicting path)")
+	out = runCmd(t, projectDir, "ntm", "--json", "lock", sessionB, patternOther, "--ttl", "1h", "--reason", "e2e non-conflict")
+	logger.Log("expected: lock succeeds for sessionB on %s", patternOther)
+	logger.Log("actual: %s", strings.TrimSpace(string(out)))
+
+	var lockBOther lockResult
+	if err := json.Unmarshal(out, &lockBOther); err != nil {
+		t.Fatalf("unmarshal lockBOther: %v\nout=%s", err, string(out))
+	}
+	if !lockBOther.Success {
+		t.Fatalf("expected lockBOther.success=true, got false (error=%q)", lockBOther.Error)
+	}
+	if lockBOther.Agent != infoB.AgentName {
+		t.Fatalf("expected lockBOther.agent=%q, got %q", infoB.AgentName, lockBOther.Agent)
+	}
+
+	logger.LogSection("verify reservations exist")
 	reservations = listReservations(t, client, projectDir)
-	logger.Log("expected: 2 active reservations for %s (agentA + agentB)", pattern)
+	logger.Log("expected: agentA holds %s; agentB holds %s", patternConflict, patternOther)
 	logger.Log("actual: count=%d", len(reservations))
 
-	activeCount := 0
-	hasA := false
-	hasB := false
+	hasAConflict := false
+	hasBConflict := false
+	hasBOther := false
 	for _, r := range reservations {
-		if r.PathPattern != pattern || r.ReleasedTS != nil {
+		if r.ReleasedTS != nil {
 			continue
 		}
-		activeCount++
-		if r.AgentName == infoA.AgentName {
-			hasA = true
-		}
-		if r.AgentName == infoB.AgentName {
-			hasB = true
+		switch r.PathPattern {
+		case patternConflict:
+			if r.AgentName == infoA.AgentName {
+				hasAConflict = true
+			}
+			if r.AgentName == infoB.AgentName {
+				hasBConflict = true
+			}
+		case patternOther:
+			if r.AgentName == infoB.AgentName {
+				hasBOther = true
+			}
 		}
 	}
-	if activeCount != 2 || !hasA || !hasB {
-		t.Fatalf("expected active reservations for both agents (count=%d hasA=%v hasB=%v)", activeCount, hasA, hasB)
+	if !hasAConflict || !hasBOther {
+		t.Fatalf("expected agentA to hold %s and agentB to hold %s (hasAConflict=%v hasBOther=%v)", patternConflict, patternOther, hasAConflict, hasBOther)
 	}
 
 	logger.LogSection("unlock session A")
-	out = runCmd(t, projectDir, "ntm", "--json", "unlock", sessionA, pattern)
+	out = runCmd(t, projectDir, "ntm", "--json", "unlock", sessionA, patternConflict)
 	logger.Log("expected: unlock succeeds for sessionA")
 	logger.Log("actual: %s", strings.TrimSpace(string(out)))
 
@@ -194,26 +221,38 @@ func TestE2ELockUnlockFileReservations(t *testing.T) {
 
 	logger.LogSection("verify reservation released")
 	reservations = listReservations(t, client, projectDir)
-	logger.Log("expected: reservation held only by agentB for %s", pattern)
+	logger.Log("expected: agentA no longer holds %s; agentB still holds %s", patternConflict, patternOther)
 	logger.Log("actual: count=%d", len(reservations))
 
-	activeCount = 0
-	hasA = false
-	hasB = false
+	hasAConflict = false
+	hasBConflictAfter := false
+	hasBOther = false
 	for _, r := range reservations {
-		if r.PathPattern != pattern || r.ReleasedTS != nil {
+		if r.ReleasedTS != nil {
 			continue
 		}
-		activeCount++
-		if r.AgentName == infoA.AgentName {
-			hasA = true
-		}
-		if r.AgentName == infoB.AgentName {
-			hasB = true
+		switch r.PathPattern {
+		case patternConflict:
+			if r.AgentName == infoA.AgentName {
+				hasAConflict = true
+			}
+			if r.AgentName == infoB.AgentName {
+				hasBConflictAfter = true
+			}
+		case patternOther:
+			if r.AgentName == infoB.AgentName {
+				hasBOther = true
+			}
 		}
 	}
-	if activeCount != 1 || hasA || !hasB {
-		t.Fatalf("expected active reservation only for agentB (count=%d hasA=%v hasB=%v)", activeCount, hasA, hasB)
+	if hasAConflict {
+		t.Fatalf("expected agentA conflict reservation to be released for %s", patternConflict)
+	}
+	if !hasBOther {
+		t.Fatalf("expected agentB to still hold %s", patternOther)
+	}
+	if hasBConflict && !hasBConflictAfter {
+		t.Fatalf("expected agentB conflict reservation (if granted) to remain for %s", patternConflict)
 	}
 
 	logger.LogSection("unlock session B (cleanup)")
