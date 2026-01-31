@@ -17,6 +17,34 @@ type KeyHint struct {
 	Desc string // Brief description, e.g., "navigate", "select", "quit"
 }
 
+type DashboardHelpVerbosity string
+
+const (
+	DashboardHelpVerbosityMinimal DashboardHelpVerbosity = "minimal"
+	DashboardHelpVerbosityFull    DashboardHelpVerbosity = "full"
+)
+
+type DashboardHelpOptions struct {
+	Verbosity DashboardHelpVerbosity
+	Debug     bool
+}
+
+func DashboardHelpOptionsFrom(verbosity string, debug bool) DashboardHelpOptions {
+	v := strings.ToLower(strings.TrimSpace(verbosity))
+	opts := DashboardHelpOptions{
+		Verbosity: DashboardHelpVerbosityFull,
+		Debug:     debug,
+	}
+	if v == string(DashboardHelpVerbosityMinimal) {
+		opts.Verbosity = DashboardHelpVerbosityMinimal
+	}
+	// Debug mode is an opt-in superset of full help.
+	if opts.Debug {
+		opts.Verbosity = DashboardHelpVerbosityFull
+	}
+	return opts
+}
+
 // HelpBarOptions configures HelpBar rendering.
 type HelpBarOptions struct {
 	Hints     []KeyHint // Key hints to display
@@ -269,16 +297,40 @@ func DefaultPaletteHints() []KeyHint {
 // DefaultDashboardHints returns the standard dashboard key hints.
 // Order matters: most important hints first (quit, help) so they remain visible at narrow widths.
 func DefaultDashboardHints() []KeyHint {
-	return []KeyHint{
-		{Key: "↑↓", Desc: "navigate"},
-		{Key: "1-9", Desc: "select"},
-		{Key: "z", Desc: "zoom"},
-		{Key: "c", Desc: "context"},
-		{Key: "m", Desc: "mail"},
-		{Key: "r", Desc: "refresh"},
-		{Key: "d", Desc: "diag"},
-		{Key: "?", Desc: "help"},
-		{Key: "q", Desc: "quit"},
+	return DashboardHelpBarHints(DashboardHelpOptions{Verbosity: DashboardHelpVerbosityFull})
+}
+
+// DashboardHelpBarHints returns key hints for the dashboard footer help bar.
+// Order matters: RenderHelpBar truncates from right-to-left, so the most important hints
+// must come first.
+func DashboardHelpBarHints(opts DashboardHelpOptions) []KeyHint {
+	switch opts.Verbosity {
+	case DashboardHelpVerbosityMinimal:
+		return []KeyHint{
+			{Key: "q", Desc: "quit"},
+			{Key: "?", Desc: "help"},
+			{Key: "↑↓", Desc: "navigate"},
+			{Key: "1-9", Desc: "select"},
+		}
+	default:
+		hints := []KeyHint{
+			{Key: "q", Desc: "quit"},
+			{Key: "?", Desc: "help"},
+			{Key: "↑↓", Desc: "navigate"},
+			{Key: "Tab", Desc: "panels"},
+			{Key: "1-9", Desc: "select"},
+			{Key: "z", Desc: "zoom"},
+			{Key: "s", Desc: "send"},
+			{Key: "r", Desc: "refresh"},
+		}
+		if opts.Debug {
+			hints = append(hints,
+				KeyHint{Key: "d", Desc: "diag"},
+				KeyHint{Key: "u", Desc: "scan"},
+				KeyHint{Key: "ctrl+k", Desc: "checkpoint"},
+			)
+		}
+		return hints
 	}
 }
 
@@ -315,8 +367,29 @@ func PaletteHelpSections() []HelpSection {
 }
 
 // DashboardHelpSections returns help sections for the dashboard overlay.
-func DashboardHelpSections() []HelpSection {
-	return []HelpSection{
+func DashboardHelpSections(opts DashboardHelpOptions) []HelpSection {
+	if opts.Verbosity == DashboardHelpVerbosityMinimal {
+		return []HelpSection{
+			{
+				Title: "Navigation",
+				Hints: []KeyHint{
+					{Key: "↑ / k", Desc: "Move up"},
+					{Key: "↓ / j", Desc: "Move down"},
+					{Key: "1-9", Desc: "Quick select pane"},
+				},
+			},
+			{
+				Title: "General",
+				Hints: []KeyHint{
+					{Key: "?", Desc: "Toggle help"},
+					{Key: "q / Esc", Desc: "Quit dashboard"},
+					{Key: "Ctrl+C", Desc: "Force quit"},
+				},
+			},
+		}
+	}
+
+	sections := []HelpSection{
 		{
 			Title: "Navigation",
 			Hints: []KeyHint{
@@ -329,18 +402,26 @@ func DashboardHelpSections() []HelpSection {
 			},
 		},
 		{
-			Title: "Pane Actions",
+			Title: "Actions",
 			Hints: []KeyHint{
 				{Key: "z / Enter", Desc: "Zoom to pane"},
-				{Key: "c", Desc: "Show context"},
-				{Key: "m", Desc: "Agent mail"},
+				{Key: "s", Desc: "Send prompt"},
+				{Key: "p", Desc: "Pause refresh"},
+			},
+		},
+		{
+			Title: "Data",
+			Hints: []KeyHint{
+				{Key: "c", Desc: "Refresh context"},
+				{Key: "m", Desc: "Refresh mail"},
+				{Key: "i", Desc: "Inbox details"},
+				{Key: "Ctrl+S", Desc: "CASS search"},
 			},
 		},
 		{
 			Title: "View Controls",
 			Hints: []KeyHint{
 				{Key: "r", Desc: "Refresh data"},
-				{Key: "d", Desc: "Toggle diagnostics"},
 				{Key: "?", Desc: "Toggle help"},
 			},
 		},
@@ -352,4 +433,17 @@ func DashboardHelpSections() []HelpSection {
 			},
 		},
 	}
+
+	if opts.Debug {
+		sections = append(sections, HelpSection{
+			Title: "Debug",
+			Hints: []KeyHint{
+				{Key: "d", Desc: "Toggle diagnostics"},
+				{Key: "u", Desc: "Toggle UBS scan"},
+				{Key: "Ctrl+K", Desc: "Create checkpoint"},
+			},
+		})
+	}
+
+	return sections
 }

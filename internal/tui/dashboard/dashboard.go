@@ -432,6 +432,9 @@ type Model struct {
 	// Help overlay
 	showHelp bool
 
+	// Help verbosity (minimal/full), sourced from config (help_verbosity)
+	helpVerbosity string
+
 	// Panels
 	beadsPanel           *panels.BeadsPanel
 	alertsPanel          *panels.AlertsPanel
@@ -676,13 +679,14 @@ func New(session, projectDir string) Model {
 		renderedOutputCache:        make(map[string]string),
 		healthStatus:               "unknown",
 		healthMessage:              "",
-		agentMailInbox:             make(map[string][]agentmail.InboxMessage),
-		agentMailInboxErrors:       make(map[string]error),
-		agentMailAgents:            make(map[string]string),
-		cassSearch: components.NewCassSearch(func(hit cass.SearchHit) tea.Cmd {
-			return func() tea.Msg {
-				return CassSelectMsg{Hit: hit}
-			}
+			agentMailInbox:             make(map[string][]agentmail.InboxMessage),
+			agentMailInboxErrors:       make(map[string]error),
+			agentMailAgents:            make(map[string]string),
+			helpVerbosity:              "full",
+			cassSearch: components.NewCassSearch(func(hit cass.SearchHit) tea.Cmd {
+				return func() tea.Msg {
+					return CassSelectMsg{Hit: hit}
+				}
 		}),
 		beadsPanel:           panels.NewBeadsPanel(),
 		alertsPanel:          panels.NewAlertsPanel(),
@@ -2457,6 +2461,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ConfigReloadMsg:
 		if msg.Config != nil {
 			m.cfg = msg.Config
+			m.helpVerbosity = normalizedHelpVerbosity(msg.Config.HelpVerbosity)
 			// Update theme
 			m.theme = theme.FromName(msg.Config.Theme)
 			// Reload icons (if dependent on config in future, pass cfg)
@@ -2469,6 +2474,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				contentWidth = 20
 			}
 			m.initRenderer(contentWidth)
+
+			// If help verbosity changed, ensure focused panel remains valid.
+			m.cycleFocus(0)
 		}
 		return m, m.subscribeToConfig()
 
@@ -2868,27 +2876,12 @@ func (m *Model) selectByNumber(n int) {
 	}
 }
 
-func (m *Model) cycleFocus(dir int) {
-	var visiblePanes []PanelID
-	switch {
-	case m.tier >= layout.TierMega:
-		// Use PanelConflicts instead of PanelAlerts when conflicts are present
-		if m.conflictsPanel.HasConflicts() {
-			visiblePanes = []PanelID{PanelPaneList, PanelDetail, PanelBeads, PanelConflicts, PanelSidebar}
-		} else {
-			visiblePanes = []PanelID{PanelPaneList, PanelDetail, PanelBeads, PanelAlerts, PanelSidebar}
-		}
-	case m.tier >= layout.TierUltra:
-		visiblePanes = []PanelID{PanelPaneList, PanelDetail, PanelSidebar}
-	case m.tier >= layout.TierSplit:
-		visiblePanes = []PanelID{PanelPaneList, PanelDetail}
-	default:
-		visiblePanes = []PanelID{PanelPaneList}
-	}
+	func (m *Model) cycleFocus(dir int) {
+		visiblePanes := m.visiblePanelsForHelpVerbosity()
 
-	// Find current index in visiblePanes
-	currIdx := -1
-	for i, p := range visiblePanes {
+		// Find current index in visiblePanes
+		currIdx := -1
+		for i, p := range visiblePanes {
 		if p == m.focusedPanel {
 			currIdx = i
 			break
@@ -2995,9 +2988,10 @@ func (m *Model) updateTickerData() {
 // View implements tea.Model
 func (m Model) View() string {
 	if m.showHelp {
+		helpOpts := m.dashboardHelpOptions()
 		helpOverlay := components.HelpOverlay(components.HelpOverlayOptions{
 			Title:    "Dashboard Shortcuts",
-			Sections: components.DashboardHelpSections(),
+			Sections: components.DashboardHelpSections(helpOpts),
 			MaxWidth: 60,
 		})
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, helpOverlay)
@@ -3119,22 +3113,31 @@ func (m Model) renderMainContentSection() string {
 				Centered:    true,
 			}) + "\n")
 		}
-	} else {
-		if m.err != nil {
-			b.WriteString(components.ErrorState(m.err.Error(), hintForSessionFetchError(m.err), stateWidth) + "\n\n")
+		} else {
+			if m.err != nil {
+				b.WriteString(components.ErrorState(m.err.Error(), hintForSessionFetchError(m.err), stateWidth) + "\n\n")
+			}
+			// Responsive layout selection, gated by help verbosity.
+			// Minimal mode shows only core panels (activity/status) even on wide terminals.
+			if m.dashboardHelpOptions().Verbosity == components.DashboardHelpVerbosityMinimal {
+				if m.tier >= layout.TierSplit {
+					b.WriteString(m.renderSplitView() + "\n")
+				} else {
+					b.WriteString(m.renderPaneGrid() + "\n")
+				}
+			} else {
+				switch {
+				case m.tier >= layout.TierMega:
+					b.WriteString(m.renderMegaLayout() + "\n")
+				case m.tier >= layout.TierUltra:
+					b.WriteString(m.renderUltraLayout() + "\n")
+				case m.tier >= layout.TierSplit:
+					b.WriteString(m.renderSplitView() + "\n")
+				default:
+					b.WriteString(m.renderPaneGrid() + "\n")
+				}
+			}
 		}
-		// Responsive layout selection
-		switch {
-		case m.tier >= layout.TierMega:
-			b.WriteString(m.renderMegaLayout() + "\n")
-		case m.tier >= layout.TierUltra:
-			b.WriteString(m.renderUltraLayout() + "\n")
-		case m.tier >= layout.TierSplit:
-			b.WriteString(m.renderSplitView() + "\n")
-		default:
-			b.WriteString(m.renderPaneGrid() + "\n")
-		}
-	}
 
 	return b.String()
 }
@@ -3173,6 +3176,15 @@ func (m Model) renderStatsBar() string {
 	ic := m.icons
 
 	var parts []string
+
+	// Help verbosity indicator (minimal/full)
+	helpLabel := "Help: " + normalizedHelpVerbosity(m.helpVerbosity)
+	helpBadge := lipgloss.NewStyle().
+		Background(t.Surface0).
+		Foreground(t.Subtext).
+		Padding(0, 1).
+		Render(helpLabel)
+	parts = append(parts, helpBadge)
 
 	// Health badge (bv drift status)
 	healthBadge := m.renderHealthBadge()
@@ -3774,28 +3786,31 @@ func (m Model) renderQuickActions() string {
 }
 
 func (m Model) renderHelpBar() string {
-	// Build hints: global navigation first
-	hints := []components.KeyHint{
-		{Key: "↑↓", Desc: "navigate"},
-		{Key: "1-9", Desc: "select"},
-		{Key: "z", Desc: "zoom"},
-	}
+	opts := m.dashboardHelpOptions()
 
-	// Add panel-specific hints (max 3 to avoid overwhelming)
-	panelHints := m.getFocusedPanelHints()
-	for i, hint := range panelHints {
-		if i >= 3 {
-			break
+	// Base hints (no debug extras); debug extras are appended last so they truncate first.
+	baseOpts := opts
+	baseOpts.Debug = false
+	hints := components.DashboardHelpBarHints(baseOpts)
+
+	// Add panel-specific hints (max 3 to avoid overwhelming) in full mode only.
+	if opts.Verbosity != components.DashboardHelpVerbosityMinimal {
+		panelHints := m.getFocusedPanelHints()
+		for i, hint := range panelHints {
+			if i >= 3 {
+				break
+			}
+			hints = append(hints, hint)
 		}
-		hints = append(hints, hint)
 	}
 
-	// Always end with essential global hints
-	hints = append(hints,
-		components.KeyHint{Key: "r", Desc: "refresh"},
-		components.KeyHint{Key: "?", Desc: "help"},
-		components.KeyHint{Key: "q", Desc: "quit"},
-	)
+	if opts.Debug {
+		hints = append(hints,
+			components.KeyHint{Key: "d", Desc: "diag"},
+			components.KeyHint{Key: "u", Desc: "scan"},
+			components.KeyHint{Key: "ctrl+k", Desc: "checkpoint"},
+		)
+	}
 
 	// Use the reusable RenderHelpBar component with width-aware truncation.
 	// Hints are progressively hidden from right-to-left when they don’t fit.
@@ -4369,8 +4384,8 @@ func dashboardDebugEnabled(m *Model) bool {
 	if m != nil && m.showDiagnostics {
 		return true
 	}
-	// Check NTM_TUI_DEBUG (preferred) or NTM_DASH_DEBUG (legacy alias)
-	for _, envVar := range []string{"NTM_TUI_DEBUG", "NTM_DASH_DEBUG"} {
+	// Check NTM_TUI_DEBUG (preferred), NTM_DEBUG (global), or NTM_DASH_DEBUG (legacy alias)
+	for _, envVar := range []string{"NTM_TUI_DEBUG", "NTM_DEBUG", "NTM_DASH_DEBUG"} {
 		value := strings.TrimSpace(os.Getenv(envVar))
 		if value == "" {
 			continue
@@ -4381,6 +4396,46 @@ func dashboardDebugEnabled(m *Model) bool {
 		}
 	}
 	return false
+}
+
+func (m Model) dashboardHelpOptions() components.DashboardHelpOptions {
+	return components.DashboardHelpOptionsFrom(m.helpVerbosity, dashboardDebugEnabled(&m))
+}
+
+func (m *Model) visiblePanelsForHelpVerbosity() []PanelID {
+	opts := m.dashboardHelpOptions()
+	if opts.Verbosity == components.DashboardHelpVerbosityMinimal {
+		// Minimal: core panels only (activity/status).
+		if m.tier >= layout.TierSplit {
+			return []PanelID{PanelPaneList, PanelDetail}
+		}
+		return []PanelID{PanelPaneList}
+	}
+
+	// Full/debug: responsive panel set based on tier.
+	switch {
+	case m.tier >= layout.TierMega:
+		// Use PanelConflicts instead of PanelAlerts when conflicts are present.
+		if m.conflictsPanel.HasConflicts() {
+			return []PanelID{PanelPaneList, PanelDetail, PanelBeads, PanelConflicts, PanelSidebar}
+		}
+		return []PanelID{PanelPaneList, PanelDetail, PanelBeads, PanelAlerts, PanelSidebar}
+	case m.tier >= layout.TierUltra:
+		return []PanelID{PanelPaneList, PanelDetail, PanelSidebar}
+	case m.tier >= layout.TierSplit:
+		return []PanelID{PanelPaneList, PanelDetail}
+	default:
+		return []PanelID{PanelPaneList}
+	}
+}
+
+func normalizedHelpVerbosity(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "minimal":
+		return "minimal"
+	default:
+		return "full"
+	}
 }
 
 type sizedPanel interface {

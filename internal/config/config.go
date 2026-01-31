@@ -55,6 +55,7 @@ func validateSynthesisStrategy(name string) error {
 type Config struct {
 	ProjectsBase       string                `toml:"projects_base"`
 	Theme              string                `toml:"theme"`               // UI Theme (mocha, macchiato, nord, latte, auto)
+	HelpVerbosity      string                `toml:"help_verbosity"`      // Help verbosity: minimal or full (default: full)
 	PaletteFile        string                `toml:"palette_file"`        // Path to command_palette.md (optional)
 	SuggestionsEnabled bool                  `toml:"suggestions_enabled"` // Show contextual CLI suggestions
 	Agents             AgentConfig           `toml:"agents"`
@@ -1905,6 +1906,14 @@ func Print(cfg *Config, w io.Writer) error {
 	}
 	fmt.Fprintln(w)
 
+	fmt.Fprintln(w, "# Help verbosity (minimal, full)")
+	if cfg.HelpVerbosity != "" {
+		fmt.Fprintf(w, "help_verbosity = %q\n", cfg.HelpVerbosity)
+	} else {
+		fmt.Fprintln(w, "# help_verbosity = \"full\"")
+	}
+	fmt.Fprintln(w)
+
 	fmt.Fprintln(w, "# Path to command palette markdown file (optional)")
 	fmt.Fprintln(w, "# If set, loads palette commands from this file instead of [[palette]] entries below")
 	fmt.Fprintln(w, "# Searched automatically: ~/.config/ntm/command_palette.md, ./command_palette.md")
@@ -2940,6 +2949,15 @@ func Validate(cfg *Config) []error {
 		expanded := ExpandHome(cfg.ProjectsBase)
 		if !filepath.IsAbs(expanded) {
 			errs = append(errs, fmt.Errorf("projects_base: must be an absolute path, got %q", cfg.ProjectsBase))
+		}
+	}
+
+	if cfg.HelpVerbosity != "" {
+		switch strings.ToLower(strings.TrimSpace(cfg.HelpVerbosity)) {
+		case "minimal", "full":
+			// ok
+		default:
+			errs = append(errs, fmt.Errorf("help_verbosity: must be \"minimal\" or \"full\", got %q", cfg.HelpVerbosity))
 		}
 	}
 
