@@ -149,6 +149,30 @@ func TestE2ELockUnlockFileReservations(t *testing.T) {
 		t.Fatalf("expected conflict holders to include %q, got %+v", infoA.AgentName, lockB.Conflicts)
 	}
 
+	logger.LogSection("verify both reservations exist")
+	reservations = listReservations(t, client, projectDir)
+	logger.Log("expected: 2 active reservations for %s (agentA + agentB)", pattern)
+	logger.Log("actual: count=%d", len(reservations))
+
+	activeCount := 0
+	hasA := false
+	hasB := false
+	for _, r := range reservations {
+		if r.PathPattern != pattern || r.ReleasedTS != nil {
+			continue
+		}
+		activeCount++
+		if r.AgentName == infoA.AgentName {
+			hasA = true
+		}
+		if r.AgentName == infoB.AgentName {
+			hasB = true
+		}
+	}
+	if activeCount != 2 || !hasA || !hasB {
+		t.Fatalf("expected active reservations for both agents (count=%d hasA=%v hasB=%v)", activeCount, hasA, hasB)
+	}
+
 	logger.LogSection("unlock session A")
 	out = runCmd(t, projectDir, "ntm", "--json", "unlock", sessionA, pattern)
 	logger.Log("expected: unlock succeeds for sessionA")
@@ -170,26 +194,39 @@ func TestE2ELockUnlockFileReservations(t *testing.T) {
 
 	logger.LogSection("verify reservation released")
 	reservations = listReservations(t, client, projectDir)
-	logger.Log("expected: reservation absent for %s", pattern)
+	logger.Log("expected: reservation held only by agentB for %s", pattern)
 	logger.Log("actual: count=%d", len(reservations))
-	if hasReservation(reservations, pattern) {
-		t.Fatalf("expected reservation for %s to be released", pattern)
+
+	activeCount = 0
+	hasA = false
+	hasB = false
+	for _, r := range reservations {
+		if r.PathPattern != pattern || r.ReleasedTS != nil {
+			continue
+		}
+		activeCount++
+		if r.AgentName == infoA.AgentName {
+			hasA = true
+		}
+		if r.AgentName == infoB.AgentName {
+			hasB = true
+		}
+	}
+	if activeCount != 1 || hasA || !hasB {
+		t.Fatalf("expected active reservation only for agentB (count=%d hasA=%v hasB=%v)", activeCount, hasA, hasB)
 	}
 
-	logger.LogSection("lock session B after release")
-	out = runCmd(t, projectDir, "ntm", "--json", "lock", sessionB, pattern, "--ttl", "1h")
-	logger.Log("expected: lock succeeds for sessionB after release")
+	logger.LogSection("unlock session B (cleanup)")
+	out = runCmd(t, projectDir, "ntm", "--json", "unlock", sessionB, "--all")
+	logger.Log("expected: unlock succeeds for sessionB")
 	logger.Log("actual: %s", strings.TrimSpace(string(out)))
 
-	var lockBAfter lockResult
-	if err := json.Unmarshal(out, &lockBAfter); err != nil {
-		t.Fatalf("unmarshal lockBAfter: %v\nout=%s", err, string(out))
+	var unlockB unlockResult
+	if err := json.Unmarshal(out, &unlockB); err != nil {
+		t.Fatalf("unmarshal unlockB: %v\nout=%s", err, string(out))
 	}
-	if !lockBAfter.Success {
-		t.Fatalf("expected lockBAfter.success=true, got false (error=%q)", lockBAfter.Error)
-	}
-	if lockBAfter.Agent != infoB.AgentName {
-		t.Fatalf("expected lockBAfter.agent=%q, got %q", infoB.AgentName, lockBAfter.Agent)
+	if !unlockB.Success {
+		t.Fatalf("expected unlockB.success=true, got false (error=%q)", unlockB.Error)
 	}
 }
 
