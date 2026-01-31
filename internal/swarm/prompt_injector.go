@@ -386,7 +386,7 @@ func (p *PromptInjector) InjectSwarmWithContext(ctx context.Context, plan *Swarm
 	for _, sessionSpec := range plan.Sessions {
 		for _, paneSpec := range sessionSpec.Panes {
 			target := InjectionTarget{
-				SessionPane: fmt.Sprintf("%s:%d", sessionSpec.Name, paneSpec.Index),
+				SessionPane: formatPaneTarget(sessionSpec.Name, paneSpec.Index),
 				AgentType:   paneSpec.AgentType,
 			}
 			targets = append(targets, target)

@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Dicklesworthstone/ntm/internal/output"
 	"github.com/Dicklesworthstone/ntm/internal/swarm"
+	"github.com/Dicklesworthstone/ntm/internal/tmux"
 )
 
 func newSwarmCmd() *cobra.Command {
@@ -25,6 +27,8 @@ func newSwarmCmd() *cobra.Command {
 		panesPerSession int
 		outputPath      string
 		autoRotate      bool
+		initialPrompt   string
+		promptFile      string
 	)
 
 	cmd := &cobra.Command{
@@ -54,6 +58,8 @@ Examples:
 				PanesPerSession: panesPerSession,
 				OutputPath:      outputPath,
 				AutoRotate:      autoRotate,
+				InitialPrompt:   initialPrompt,
+				PromptFile:      promptFile,
 			})
 		},
 	}
@@ -80,6 +86,8 @@ Examples:
 	cmd.Flags().IntVar(&sessionsPerType, "sessions-per-type", defaultSessionsPerType, "Number of tmux sessions per agent type (default: 3)")
 	cmd.Flags().IntVar(&panesPerSession, "panes-per-session", 0, "Max panes per session (0 = auto-calculate from total agents)")
 	cmd.Flags().StringVar(&outputPath, "output", "", "Write swarm plan to JSON file (optional)")
+	cmd.Flags().StringVar(&initialPrompt, "prompt", "", "Initial prompt to inject into all agents after launch")
+	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "File containing initial prompt (mutually exclusive with --prompt)")
 	cmd.PersistentFlags().BoolVar(&autoRotate, "auto-rotate-accounts", defaultAutoRotate, "Automatically rotate accounts on usage limit hit (requires caam)")
 
 	// Add subcommands
@@ -100,6 +108,8 @@ type swarmOptions struct {
 	PanesPerSession int
 	OutputPath      string
 	AutoRotate      bool
+	InitialPrompt   string
+	PromptFile      string
 }
 
 // SwarmPlanOutput is the JSON output format for swarm plan
@@ -143,6 +153,23 @@ type PaneOutput struct {
 
 func runSwarm(opts swarmOptions) error {
 	logger := slog.Default()
+
+	initialPrompt, promptSource, promptPath, err := resolveSwarmInitialPrompt(opts.InitialPrompt, opts.PromptFile)
+	if err != nil {
+		return err
+	}
+	if promptSource == "file" {
+		logger.Info("loaded initial prompt from file", "path", promptPath, "length", len(initialPrompt))
+	}
+	if initialPrompt != "" {
+		logger.Info("initial prompt configured",
+			"source", promptSource,
+			"length", len(initialPrompt),
+			"preview", truncate(initialPrompt, 50),
+		)
+	} else {
+		logger.Debug("no initial prompt configured")
+	}
 
 	// Get swarm config
 	swarmCfg := cfg.Swarm
@@ -235,6 +262,12 @@ func runSwarm(opts swarmOptions) error {
 		return fmt.Errorf("failed to create sessions: %w", err)
 	}
 
+	// Derive a concrete tmux client for follow-up actions.
+	tmuxClient := orch.TmuxClient
+	if tmuxClient == nil {
+		tmuxClient = tmux.DefaultClient
+	}
+
 	// Report results
 	output.PrintSuccessf("Created %d sessions with %d/%d panes",
 		len(result.Sessions), result.SuccessfulPanes, result.TotalPanes)
@@ -246,7 +279,106 @@ func runSwarm(opts swarmOptions) error {
 		}
 	}
 
+	if initialPrompt != "" {
+		// Launch agents in each successfully created pane, then inject the prompt.
+		// This is best-effort: failures are logged and summarized but do not abort the command.
+		logger.Info("launching swarm agents before prompt injection",
+			"total_sessions", len(result.Sessions),
+			"total_panes", result.SuccessfulPanes,
+		)
+
+		launchFailed := 0
+		launchSucceeded := 0
+		const launchDelay = 200 * time.Millisecond
+
+		for _, sess := range result.Sessions {
+			for i, paneID := range sess.PaneIDs {
+				if i >= len(sess.SessionSpec.Panes) {
+					break
+				}
+				paneSpec := sess.SessionSpec.Panes[i]
+				launchCmd := paneSpec.LaunchCmd
+				if launchCmd == "" {
+					launchCmd = paneSpec.AgentType
+				}
+
+				if err := tmuxClient.SendKeysWithDelay(paneID, launchCmd, true, tmux.ShellEnterDelay); err != nil {
+					launchFailed++
+					logger.Error("failed to launch agent in pane",
+						"session", sess.SessionName,
+						"pane_id", paneID,
+						"pane_index", paneSpec.Index,
+						"agent_type", paneSpec.AgentType,
+						"launch_cmd", launchCmd,
+						"error", err,
+					)
+				} else {
+					launchSucceeded++
+					logger.Info("agent launched in pane",
+						"session", sess.SessionName,
+						"pane_id", paneID,
+						"pane_index", paneSpec.Index,
+						"agent_type", paneSpec.AgentType,
+					)
+				}
+
+				time.Sleep(launchDelay)
+			}
+		}
+
+		output.PrintSuccessf("Launched agents: %d succeeded, %d failed", launchSucceeded, launchFailed)
+		if launchFailed > 0 {
+			output.PrintWarningf("%d agents failed to launch (see logs)", launchFailed)
+		}
+
+		// Give agent CLIs a moment to initialize before sending the prompt.
+		time.Sleep(500 * time.Millisecond)
+
+		injector := swarm.NewPromptInjectorWithClient(tmuxClient).WithLogger(logger)
+		targets := make([]swarm.InjectionTarget, 0, result.SuccessfulPanes)
+
+		for _, sess := range result.Sessions {
+			for i, paneID := range sess.PaneIDs {
+				if i >= len(sess.SessionSpec.Panes) {
+					break
+				}
+				paneSpec := sess.SessionSpec.Panes[i]
+				targets = append(targets, swarm.InjectionTarget{
+					SessionPane: paneID,
+					AgentType:   paneSpec.AgentType,
+				})
+			}
+		}
+
+		injectRes, err := injector.InjectBatchWithContext(context.Background(), targets, initialPrompt)
+		if err != nil {
+			return fmt.Errorf("inject initial prompt: %w", err)
+		}
+
+		output.PrintSuccessf("Injected initial prompt: %d succeeded, %d failed", injectRes.Successful, injectRes.Failed)
+		if injectRes.Failed > 0 {
+			output.PrintWarningf("%d panes failed prompt injection (see logs)", injectRes.Failed)
+		}
+	}
+
 	return nil
+}
+
+func resolveSwarmInitialPrompt(prompt, promptFile string) (resolved string, source string, path string, err error) {
+	if prompt != "" && promptFile != "" {
+		return "", "", "", fmt.Errorf("--prompt and --prompt-file are mutually exclusive")
+	}
+	if promptFile != "" {
+		data, readErr := os.ReadFile(promptFile)
+		if readErr != nil {
+			return "", "", "", fmt.Errorf("read prompt file %q: %w", promptFile, readErr)
+		}
+		return string(data), "file", promptFile, nil
+	}
+	if prompt != "" {
+		return prompt, "flag", "", nil
+	}
+	return "", "", "", nil
 }
 
 // discoverProjects finds projects with bead counts using BeadScanner

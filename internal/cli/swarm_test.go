@@ -87,3 +87,65 @@ func TestSwarmCmd_AutoRotateAccountsFlag_DefaultFromConfig(t *testing.T) {
 		t.Errorf("auto-rotate-accounts default = %v, want true", got)
 	}
 }
+
+func TestSwarmCmd_PromptFlagsExist(t *testing.T) {
+	cmd := newSwarmCmd()
+	if cmd.Flags().Lookup("prompt") == nil {
+		t.Fatal("expected --prompt flag to exist")
+	}
+	if cmd.Flags().Lookup("prompt-file") == nil {
+		t.Fatal("expected --prompt-file flag to exist")
+	}
+}
+
+func TestResolveSwarmInitialPrompt_MutuallyExclusive(t *testing.T) {
+	_, _, _, err := resolveSwarmInitialPrompt("hi", "/tmp/prompt.txt")
+	if err == nil {
+		t.Fatal("expected error for mutually exclusive flags, got nil")
+	}
+}
+
+func TestResolveSwarmInitialPrompt_PromptFlag(t *testing.T) {
+	got, source, path, err := resolveSwarmInitialPrompt("hello", "")
+	if err != nil {
+		t.Fatalf("resolveSwarmInitialPrompt error: %v", err)
+	}
+	if got != "hello" {
+		t.Errorf("prompt=%q, want %q", got, "hello")
+	}
+	if source != "flag" {
+		t.Errorf("source=%q, want %q", source, "flag")
+	}
+	if path != "" {
+		t.Errorf("path=%q, want empty", path)
+	}
+}
+
+func TestResolveSwarmInitialPrompt_PromptFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "prompt.txt")
+	if err := os.WriteFile(path, []byte("from-file"), 0644); err != nil {
+		t.Fatalf("WriteFile error: %v", err)
+	}
+
+	got, source, gotPath, err := resolveSwarmInitialPrompt("", path)
+	if err != nil {
+		t.Fatalf("resolveSwarmInitialPrompt error: %v", err)
+	}
+	if got != "from-file" {
+		t.Errorf("prompt=%q, want %q", got, "from-file")
+	}
+	if source != "file" {
+		t.Errorf("source=%q, want %q", source, "file")
+	}
+	if gotPath != path {
+		t.Errorf("path=%q, want %q", gotPath, path)
+	}
+}
+
+func TestResolveSwarmInitialPrompt_PromptFileReadError(t *testing.T) {
+	_, _, _, err := resolveSwarmInitialPrompt("", "/definitely/does/not/exist.txt")
+	if err == nil {
+		t.Fatal("expected error for missing prompt file, got nil")
+	}
+}

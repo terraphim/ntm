@@ -1094,6 +1094,12 @@ func TestParseAgentFromTitleEdgeCases(t *testing.T) {
 			}
 			if len(gotTags) != len(tt.wantTags) {
 				t.Errorf("parseAgentFromTitle(%q) tags = %v, want %v", tt.title, gotTags, tt.wantTags)
+			} else {
+				for i := range gotTags {
+					if gotTags[i] != tt.wantTags[i] {
+						t.Errorf("parseAgentFromTitle(%q) tags[%d] = %q, want %q", tt.title, i, gotTags[i], tt.wantTags[i])
+					}
+				}
 			}
 		})
 	}
