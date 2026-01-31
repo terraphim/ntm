@@ -761,6 +761,26 @@ func TestKeyboardNavigationPanelCycling(t *testing.T) {
 			t.Fatalf("expected focused panel to move back to alerts after shift+tab, got %v", m.focusedPanel)
 		}
 	})
+
+	t.Run("tab_cycles_minimal_core_panels_only", func(t *testing.T) {
+		t.Parallel()
+
+		m := newTestModel(layout.MegaWideViewThreshold)
+		m.helpVerbosity = "minimal"
+		m.focusedPanel = PanelPaneList
+
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m = updated.(Model)
+		if m.focusedPanel != PanelDetail {
+			t.Fatalf("expected focused panel to move to detail after tab (minimal), got %v", m.focusedPanel)
+		}
+
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m = updated.(Model)
+		if m.focusedPanel != PanelPaneList {
+			t.Fatalf("expected focused panel to wrap back to pane list after tab (minimal), got %v", m.focusedPanel)
+		}
+	})
 }
 
 func TestHelpBarIncludesHelpHint(t *testing.T) {
@@ -774,6 +794,29 @@ func TestHelpBarIncludesHelpHint(t *testing.T) {
 	}
 	if !strings.Contains(helpBar, "help") {
 		t.Error("help bar should include 'help' description")
+	}
+}
+
+func TestHelpVerbosityMinimalUsesCoreLayout(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModel(layout.MegaWideViewThreshold)
+	m.helpVerbosity = "minimal"
+
+	content := status.StripANSI(m.renderMainContentSection())
+	if count := strings.Count(content, "╭"); count != 2 {
+		t.Fatalf("expected minimal layout to render split view (2 panels), got %d panels", count)
+	}
+}
+
+func TestStatsBarShowsHelpVerbosity(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModel(140)
+	m.helpVerbosity = "minimal"
+	plain := status.StripANSI(m.View())
+	if !strings.Contains(plain, "Help: minimal") {
+		t.Fatalf("expected view to include help verbosity badge, got %q", plain)
 	}
 }
 
