@@ -669,3 +669,179 @@ func TestWriterFilePermissions(t *testing.T) {
 		t.Errorf("expected permissions 0644, got %o", perm)
 	}
 }
+
+// =============================================================================
+// Pure-function tests for coverage improvement
+// =============================================================================
+
+func TestSingleLine(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"simple", "hello", "hello"},
+		{"with spaces", "hello  world", "hello world"},
+		{"with newlines", "hello\nworld", "hello world"},
+		{"with tabs", "hello\t\tworld", "hello world"},
+		{"empty", "", ""},
+		{"only whitespace", "   \n\t  ", ""},
+		{"leading trailing", "  hello  ", "hello"},
+		{"mixed whitespace", "  hello \n world  ", "hello world"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := singleLine(tc.input)
+			if got != tc.expected {
+				t.Errorf("singleLine(%q) = %q, want %q", tc.input, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestCompactList(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		items    []string
+		maxItems int
+		expected string
+	}{
+		{"empty list", []string{}, 5, ""},
+		{"single item", []string{"item1"}, 5, "item1"},
+		{"multiple items", []string{"a", "b", "c"}, 5, "a, b, c"},
+		{"limited items", []string{"a", "b", "c", "d", "e"}, 3, "a, b, c +2 more"},
+		{"max zero uses all", []string{"a", "b"}, 0, "a, b"},
+		{"max negative uses all", []string{"a", "b"}, -1, "a, b"},
+		{"empty strings filtered", []string{"a", "", "b"}, 5, "a, b"},
+		{"whitespace only filtered", []string{"a", "   ", "b"}, 5, "a, b"},
+		{"newlines collapsed", []string{"hello\nworld", "foo"}, 5, "hello world, foo"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := compactList(tc.items, tc.maxItems)
+			if got != tc.expected {
+				t.Errorf("compactList(%v, %d) = %q, want %q", tc.items, tc.maxItems, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestMarshalYAML(t *testing.T) {
+	t.Parallel()
+
+	h := New("test-session").
+		WithGoalAndNow("Test goal", "Test now").
+		WithStatus(StatusComplete, OutcomeSucceeded)
+
+	data, err := MarshalYAML(h)
+	if err != nil {
+		t.Fatalf("MarshalYAML failed: %v", err)
+	}
+
+	if len(data) == 0 {
+		t.Error("MarshalYAML returned empty data")
+	}
+
+	// Verify it's valid YAML by unmarshaling
+	var parsed Handoff
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("MarshalYAML output is invalid YAML: %v", err)
+	}
+
+	if parsed.Goal != "Test goal" {
+		t.Errorf("Goal mismatch: got %q", parsed.Goal)
+	}
+	if parsed.Now != "Test now" {
+		t.Errorf("Now mismatch: got %q", parsed.Now)
+	}
+
+	t.Logf("HANDOFF_TEST: MarshalYAML | Session=%s | YAMLSize=%d", h.Session, len(data))
+}
+
+func TestWriteToPath(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	w := NewWriter(tmpDir)
+
+	h := New("test").
+		WithGoalAndNow("Test goal", "Test now").
+		WithStatus(StatusPartial, OutcomePartialPlus)
+
+	targetPath := filepath.Join(tmpDir, "custom-handoff.yaml")
+
+	err := w.WriteToPath(h, targetPath)
+	if err != nil {
+		t.Fatalf("WriteToPath failed: %v", err)
+	}
+
+	// Verify file exists
+	if _, err := os.Stat(targetPath); err != nil {
+		t.Fatalf("file not created at target path: %v", err)
+	}
+
+	// Verify content is valid
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("failed to read file: %v", err)
+	}
+
+	var parsed Handoff
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("invalid YAML in file: %v", err)
+	}
+
+	if parsed.Goal != "Test goal" {
+		t.Errorf("Goal mismatch: got %q", parsed.Goal)
+	}
+
+	t.Logf("HANDOFF_TEST: WriteToPath | Path=%s | FileSize=%d", targetPath, len(data))
+}
+
+func TestWriteToPath_ValidationError(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	w := NewWriter(tmpDir)
+
+	// Invalid handoff (missing required fields)
+	h := &Handoff{Session: "test"}
+
+	targetPath := filepath.Join(tmpDir, "invalid.yaml")
+
+	err := w.WriteToPath(h, targetPath)
+	if err == nil {
+		t.Error("expected validation error for invalid handoff")
+	}
+	if !strings.Contains(err.Error(), "validation failed") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestWriteToPath_CreatesParentDirs(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	w := NewWriter(tmpDir)
+
+	h := New("test").WithGoalAndNow("Goal", "Now")
+
+	// WriteToPath should create parent directories
+	targetPath := filepath.Join(tmpDir, "nested", "subdir", "handoff.yaml")
+
+	err := w.WriteToPath(h, targetPath)
+	if err != nil {
+		t.Fatalf("WriteToPath should create parent dirs: %v", err)
+	}
+
+	// Verify file exists
+	if _, err := os.Stat(targetPath); err != nil {
+		t.Errorf("file should exist at nested path: %v", err)
+	}
+}
