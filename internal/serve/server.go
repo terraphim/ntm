@@ -1356,6 +1356,19 @@ func writeError(w http.ResponseWriter, status int, message string) {
 
 // writeErrorResponse writes a structured error response matching robot mode format.
 func writeErrorResponse(w http.ResponseWriter, status int, code, message string, details map[string]interface{}, requestID string) {
+	var hint string
+	if details != nil {
+		if v, ok := details["hint"]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				hint = s
+			}
+			delete(details, "hint")
+			if len(details) == 0 {
+				details = nil
+			}
+		}
+	}
+
 	resp := APIError{
 		APIResponse: APIResponse{
 			Success:   false,
@@ -1365,6 +1378,7 @@ func writeErrorResponse(w http.ResponseWriter, status int, code, message string,
 		Error:     message,
 		ErrorCode: code,
 		Details:   details,
+		Hint:      hint,
 	}
 	writeJSON(w, status, resp)
 }
