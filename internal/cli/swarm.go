@@ -674,14 +674,6 @@ Examples:
 				output.PrintInfof("  - %s", sess)
 			}
 
-			// Confirm unless force is set
-			if !force {
-				output.PrintWarning("This will gracefully stop all agents and destroy the sessions.")
-				output.PrintInfo("Use --force to skip this confirmation.")
-				// In a real implementation, you'd prompt for confirmation here
-				// For now, we proceed (CLI typically uses --force for automation)
-			}
-
 			// Configure shutdown
 			cfg := swarm.DefaultShutdownConfig()
 			cfg.ForceKill = force

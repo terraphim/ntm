@@ -783,13 +783,6 @@ type ShutdownResult struct {
 	Errors            []error       `json:"-"`
 }
 
-// swarmSessionDestroyer is the interface for destroying sessions.
-type swarmSessionDestroyer interface {
-	DestroySession(sessionName string) error
-	SessionExists(sessionName string) bool
-	GetSessionPanes(sessionName string) ([]tmux.Pane, error)
-}
-
 // GracefulShutdown stops all agents and destroys all sessions in a swarm.
 // It first attempts to gracefully exit agents, then force-kills if needed,
 // and finally destroys all tmux sessions.
@@ -821,7 +814,26 @@ func (o *SwarmOrchestrator) GracefulShutdown(ctx context.Context, sessionNames [
 	client := sessOrch.tmuxClient()
 
 	// Phase 1: Send graceful exit signals to all agents (unless force kill)
-	if !cfg.ForceKill {
+	if cfg.ForceKill {
+		// Count panes that will be force-killed (for stats)
+		for _, sessionName := range sessionNames {
+			if !sessOrch.SessionExists(sessionName) {
+				continue
+			}
+			panes, err := sessOrch.GetSessionPanes(sessionName)
+			if err != nil {
+				continue
+			}
+			for _, pane := range panes {
+				// Skip control panes (same logic as graceful path)
+				if pane.Index == 1 {
+					continue
+				}
+				result.ForceKills++
+				result.PanesKilled++
+			}
+		}
+	} else {
 		for _, sessionName := range sessionNames {
 			if err := ctx.Err(); err != nil {
 				result.Duration = time.Since(start)
@@ -904,6 +916,7 @@ func (o *SwarmOrchestrator) GracefulShutdown(ctx context.Context, sessionNames [
 		"sessions_destroyed", result.SessionsDestroyed,
 		"panes_killed", result.PanesKilled,
 		"graceful_exits", result.GracefulExits,
+		"force_kills", result.ForceKills,
 		"duration", result.Duration)
 
 	return result, nil
