@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
@@ -283,7 +284,7 @@ func (g *Generator) checkDependencyCycles() *Alert {
 	insights, err := bv.GetInsights(wd)
 	if err != nil {
 		if !strings.Contains(err.Error(), "executable file not found") {
-			fmt.Fprintf(os.Stderr, "Warning: failed to check dependency cycles (bv): %v\n", err)
+			slog.Warn("failed to check dependency cycles", "tool", "bv", "error", err)
 		}
 		return nil
 	}

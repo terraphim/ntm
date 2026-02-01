@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -190,12 +191,12 @@ func (c *Capturer) captureScrollbackEnhanced(cp *Checkpoint, config ScrollbackCo
 		capture, err := CaptureScrollback(cp.SessionName, fmt.Sprintf("%d", pane.Index), config)
 		if err != nil {
 			// Log error but continue with other panes
-			fmt.Fprintf(os.Stderr, "Warning: failed to capture scrollback for pane %d: %v\n", pane.Index, err)
+			slog.Warn("failed to capture scrollback", "pane", pane.Index, "error", err)
 			continue
 		}
 
 		if capture.Skipped {
-			fmt.Fprintf(os.Stderr, "Warning: skipped scrollback for pane %d: %s\n", pane.Index, capture.SkipReason)
+			slog.Warn("skipped scrollback", "pane", pane.Index, "reason", capture.SkipReason)
 			continue
 		}
 
@@ -210,7 +211,7 @@ func (c *Capturer) captureScrollbackEnhanced(cp *Checkpoint, config ScrollbackCo
 		}
 
 		if saveErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to save scrollback for pane %d: %v\n", pane.Index, saveErr)
+			slog.Warn("failed to save scrollback", "pane", pane.Index, "error", saveErr)
 			continue
 		}
 
