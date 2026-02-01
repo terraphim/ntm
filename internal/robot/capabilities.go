@@ -913,6 +913,24 @@ func buildCommandRegistry() []RobotCommandInfo {
 			Examples: []string{"ntm --robot-ms-show=commit-and-release"},
 		},
 		{
+			Name:        "dcg-status",
+			Flag:        "--robot-dcg-status",
+			Category:    "utility",
+			Description: "Show DCG status and configuration.",
+			Parameters:  []RobotParameter{},
+			Examples:    []string{"ntm --robot-dcg-status"},
+		},
+		{
+			Name:        "dcg-check",
+			Flag:        "--robot-dcg-check",
+			Category:    "utility",
+			Description: "Preflight a shell command via DCG (no execution). Aliases: --robot-guard, --cmd.",
+			Parameters: []RobotParameter{
+				{Name: "command", Flag: "--command", Type: "string", Required: true, Description: "Shell command to preflight"},
+			},
+			Examples: []string{"ntm --robot-dcg-check --command='rm -rf /tmp'"},
+		},
+		{
 			Name:        "ru-sync",
 			Flag:        "--robot-ru-sync",
 			Category:    "utility",

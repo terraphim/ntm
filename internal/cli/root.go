@@ -1480,6 +1480,14 @@ Shell Integration:
 			}
 			return
 		}
+		// Robot-dcg-check / robot-guard handler for DCG command preflight
+		if robotDCGCheck {
+			if err := robot.PrintDCGCheck(robotDCGCmd); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 
 		// Robot-quota-status handler for caut quota status
 		if robotQuotaStatus {
@@ -2025,7 +2033,9 @@ var (
 	robotEnv string // --robot-env flag (session name or "global")
 
 	// Robot-dcg-status flag for DCG status
-	robotDCGStatus bool // --robot-dcg-status flag
+	robotDCGStatus bool   // --robot-dcg-status flag
+	robotDCGCheck  bool   // --robot-dcg-check / --robot-guard flag
+	robotDCGCmd    string // --command / --cmd flag (required with --robot-dcg-check / --robot-guard)
 
 	// Robot-ru-sync flag for RU
 	robotRUSync bool // --robot-ru-sync flag
@@ -2438,6 +2448,10 @@ func init() {
 
 	// Robot-dcg-status flag for DCG
 	rootCmd.Flags().BoolVar(&robotDCGStatus, "robot-dcg-status", false, "Show DCG status and configuration. JSON output. Example: ntm --robot-dcg-status")
+	rootCmd.Flags().BoolVar(&robotDCGCheck, "robot-dcg-check", false, "Preflight a shell command via dcg (no execution). JSON output. Requires --command.")
+	rootCmd.Flags().BoolVar(&robotDCGCheck, "robot-guard", false, "DEPRECATED: use --robot-dcg-check")
+	rootCmd.Flags().StringVar(&robotDCGCmd, "command", "", "Command to preflight with --robot-dcg-check / --robot-guard (no execution). Example: --command='rm -rf /tmp'")
+	rootCmd.Flags().StringVar(&robotDCGCmd, "cmd", "", "DEPRECATED: use --command")
 
 	// Robot-ru-sync flag for RU
 	rootCmd.Flags().BoolVar(&robotRUSync, "robot-ru-sync", false, "Run ru sync with JSON output. Optional with --dry-run. Example: ntm --robot-ru-sync")

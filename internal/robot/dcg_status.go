@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Dicklesworthstone/ntm/internal/integrations/dcg"
@@ -110,6 +113,117 @@ func GetDCGStatus() (*DCGStatusOutput, error) {
 // This is a thin wrapper around GetDCGStatus() for CLI output.
 func PrintDCGStatus() error {
 	output, err := GetDCGStatus()
+	if err != nil {
+		return err
+	}
+	return outputJSON(output)
+}
+
+// DCGCheckOutput represents the response from --robot-dcg-check / --robot-guard.
+type DCGCheckOutput struct {
+	RobotResponse
+	Command    string `json:"command"`
+	Allowed    bool   `json:"allowed"`
+	Reason     string `json:"reason,omitempty"`
+	DCGVersion string `json:"dcg_version,omitempty"`
+	BinaryPath string `json:"binary_path,omitempty"`
+}
+
+// GetDCGCheck preflights an arbitrary shell command via DCG (no execution).
+func GetDCGCheck(command string) (*DCGCheckOutput, error) {
+	meta, finish := StartResponseMeta("robot-dcg-check")
+	defer finish()
+
+	command = strings.TrimSpace(command)
+	if command == "" {
+		output := &DCGCheckOutput{
+			RobotResponse: NewErrorResponse(
+				nil,
+				ErrCodeInvalidFlag,
+				"Provide a command to check: ntm --robot-dcg-check --command='rm -rf /tmp'",
+			),
+			Command: command,
+			Allowed: false,
+		}
+		output.RobotResponse.Meta = meta.WithExitCode(1)
+		return output, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	adapter := tools.NewDCGAdapter()
+	availability, err := adapter.GetAvailability(ctx)
+	if err != nil {
+		output := &DCGCheckOutput{
+			RobotResponse: NewErrorResponse(err, ErrCodeInternalError, "Failed to check DCG availability"),
+			Command:       command,
+			Allowed:       false,
+		}
+		output.RobotResponse.Meta = meta.WithExitCode(1)
+		return output, nil
+	}
+
+	if availability == nil || !availability.Available || !availability.Compatible {
+		err := fmt.Errorf("dcg not installed or incompatible")
+		hint := "Install dcg to enable command preflight. Run: ntm --robot-dcg-status"
+		if availability != nil && availability.Available && !availability.Compatible {
+			hint = "Upgrade dcg to a compatible version. Run: ntm --robot-dcg-status"
+		}
+
+		output := &DCGCheckOutput{
+			RobotResponse: NewErrorResponse(err, ErrCodeDependencyMissing, hint),
+			Command:       command,
+			Allowed:       false,
+			BinaryPath:    "",
+		}
+		output.RobotResponse.Meta = meta.WithExitCode(2)
+		if availability != nil {
+			output.BinaryPath = availability.Path
+			if availability.Version.Major > 0 || availability.Version.Minor > 0 || availability.Version.Patch > 0 {
+				output.DCGVersion = availability.Version.String()
+			}
+		}
+		return output, nil
+	}
+
+	output := &DCGCheckOutput{
+		RobotResponse: NewRobotResponseWithMeta(true, meta.WithExitCode(0)),
+		Command:       command,
+		Allowed:       false,
+		BinaryPath:    availability.Path,
+	}
+	if availability.Version.Major > 0 || availability.Version.Minor > 0 || availability.Version.Patch > 0 {
+		output.DCGVersion = availability.Version.String()
+	}
+
+	blocked, err := adapter.CheckCommand(ctx, command)
+	if err != nil {
+		errCode := ErrCodeInternalError
+		hint := "Check dcg installation and try again"
+		if errors.Is(err, tools.ErrTimeout) || errors.Is(err, context.DeadlineExceeded) {
+			errCode = ErrCodeTimeout
+			hint = "Try again later or reduce dcg timeout"
+		}
+		output.RobotResponse = NewErrorResponse(err, errCode, hint)
+		output.RobotResponse.Meta = meta.WithExitCode(1)
+		return output, nil
+	}
+
+	if blocked != nil {
+		output.Allowed = false
+		output.Reason = blocked.Reason
+		return output, nil
+	}
+
+	output.Allowed = true
+	output.Reason = "allowed"
+	return output, nil
+}
+
+// PrintDCGCheck handles the --robot-dcg-check / --robot-guard command.
+func PrintDCGCheck(command string) error {
+	output, err := GetDCGCheck(command)
 	if err != nil {
 		return err
 	}
