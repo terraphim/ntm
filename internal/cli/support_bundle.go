@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Dicklesworthstone/ntm/internal/bundle"
+	"github.com/Dicklesworthstone/ntm/internal/privacy"
 	"github.com/Dicklesworthstone/ntm/internal/redaction"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 	"github.com/Dicklesworthstone/ntm/internal/tui/theme"
@@ -26,6 +27,7 @@ func newSupportBundleCmd() *cobra.Command {
 		noRedact     bool
 		includeAll   bool
 		sessionName  string
+		allowPersist bool // Override privacy mode restrictions
 	)
 
 	cmd := &cobra.Command{
@@ -104,16 +106,26 @@ Examples:
 			// Create generator and collect content
 			gen := bundle.NewGenerator(genConfig)
 
+			// Track privacy mode status
+			var privacySessions []string
+			var contentSuppressed bool
+
 			// Collect session data
 			if sessionName != "" {
-				if err := collectSessionData(gen, sessionName, lines); err != nil {
+				suppressed, err := collectSessionDataWithPrivacy(gen, sessionName, lines, allowPersist)
+				if err != nil {
 					return fmt.Errorf("collecting session data: %w", err)
+				}
+				if suppressed {
+					contentSuppressed = true
+					privacySessions = append(privacySessions, sessionName)
 				}
 			} else if includeAll {
 				sessions, err := tmux.ListSessions()
 				if err == nil {
 					for _, s := range sessions {
-						if err := collectSessionData(gen, s.Name, lines); err != nil {
+						suppressed, err := collectSessionDataWithPrivacy(gen, s.Name, lines, allowPersist)
+						if err != nil {
 							// Record error but continue
 							gen.AddFile(
 								fmt.Sprintf("errors/%s.txt", s.Name),
@@ -121,6 +133,10 @@ Examples:
 								bundle.ContentTypeLogs,
 								time.Now(),
 							)
+						}
+						if suppressed {
+							contentSuppressed = true
+							privacySessions = append(privacySessions, s.Name)
 						}
 					}
 				}
@@ -146,14 +162,17 @@ Examples:
 			// Output result
 			if jsonOutput {
 				return json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
-					"success":           true,
-					"path":              result.Path,
-					"format":            result.Format,
-					"file_count":        result.FileCount,
-					"total_size":        result.TotalSize,
-					"redaction_summary": result.RedactionSummary,
-					"errors":            result.Errors,
-					"warnings":          result.Warnings,
+					"success":            true,
+					"path":               result.Path,
+					"format":             result.Format,
+					"file_count":         result.FileCount,
+					"total_size":         result.TotalSize,
+					"redaction_summary":  result.RedactionSummary,
+					"errors":             result.Errors,
+					"warnings":           result.Warnings,
+					"privacy_mode":       contentSuppressed,
+					"privacy_sessions":   privacySessions,
+					"content_suppressed": contentSuppressed,
 				})
 			}
 
@@ -167,6 +186,13 @@ Examples:
 				fmt.Printf("  Redacted: %d findings in %d files\n",
 					result.RedactionSummary.TotalFindings,
 					result.RedactionSummary.FilesRedacted)
+			}
+
+			// Privacy mode notification
+			if contentSuppressed {
+				fmt.Printf("%s⚠%s Privacy mode: scrollback content suppressed for %d session(s)\n",
+					colorize(t.Warning), "\033[0m", len(privacySessions))
+				fmt.Printf("  Use --allow-persist to include private content\n")
 			}
 
 			if len(result.Errors) > 0 {
@@ -185,32 +211,65 @@ Examples:
 	cmd.Flags().StringVar(&redactMode, "redact", "redact", "redaction mode: warn, redact, block")
 	cmd.Flags().BoolVar(&noRedact, "no-redact", false, "disable redaction (use with caution)")
 	cmd.Flags().BoolVar(&includeAll, "all", false, "include all sessions when no session specified")
+	cmd.Flags().BoolVar(&allowPersist, "allow-persist", false, "include private content even in privacy mode (use with caution)")
 
 	return cmd
 }
 
-// collectSessionData adds session data to the bundle.
-func collectSessionData(gen *bundle.Generator, session string, lines int) error {
+// collectSessionDataWithPrivacy adds session data to the bundle, respecting privacy mode.
+// Returns true if content was suppressed due to privacy mode.
+func collectSessionDataWithPrivacy(gen *bundle.Generator, session string, lines int, allowPersist bool) (bool, error) {
 	if !tmux.SessionExists(session) {
-		return fmt.Errorf("session %q does not exist", session)
+		return false, fmt.Errorf("session %q does not exist", session)
 	}
+
+	// Check privacy mode for this session
+	privacyMgr := privacy.GetDefaultManager()
+	privacyEnabled := privacyMgr.IsPrivacyEnabled(session)
+	contentSuppressed := false
 
 	// Get panes
 	panes, err := tmux.GetPanes(session)
 	if err != nil {
-		return fmt.Errorf("listing panes: %w", err)
+		return false, fmt.Errorf("listing panes: %w", err)
 	}
 
-	// Add session metadata
-	metadata := fmt.Sprintf("Session: %s\nPanes: %d\nCaptured: %s\n",
-		session, len(panes), time.Now().Format(time.RFC3339))
+	// Add session metadata (safe to include even in privacy mode)
+	privacyStatus := "disabled"
+	if privacyEnabled {
+		privacyStatus = "enabled"
+	}
+	metadata := fmt.Sprintf("Session: %s\nPanes: %d\nCaptured: %s\nPrivacy Mode: %s\n",
+		session, len(panes), time.Now().Format(time.RFC3339), privacyStatus)
 	if err := gen.AddFile(
 		filepath.Join("sessions", session, "metadata.txt"),
 		[]byte(metadata),
 		bundle.ContentTypeMetadata,
 		time.Now(),
 	); err != nil {
-		return err
+		return false, err
+	}
+
+	// If privacy mode is enabled and no override, skip scrollback capture
+	if privacyEnabled && !allowPersist {
+		contentSuppressed = true
+		// Add a placeholder file explaining why content was suppressed
+		suppressedMsg := fmt.Sprintf(`Scrollback content suppressed due to privacy mode.
+
+Session: %s
+Privacy Mode: enabled
+Time: %s
+
+To include private content, use: ntm support-bundle %s --allow-persist
+`,
+			session, time.Now().Format(time.RFC3339), session)
+		gen.AddFile(
+			filepath.Join("sessions", session, "PRIVACY_SUPPRESSED.txt"),
+			[]byte(suppressedMsg),
+			bundle.ContentTypeMetadata,
+			time.Now(),
+		)
+		return contentSuppressed, nil
 	}
 
 	// Capture scrollback for each pane
@@ -243,7 +302,13 @@ func collectSessionData(gen *bundle.Generator, session string, lines int) error 
 		}
 	}
 
-	return nil
+	return contentSuppressed, nil
+}
+
+// collectSessionData adds session data to the bundle (legacy, no privacy check).
+func collectSessionData(gen *bundle.Generator, session string, lines int) error {
+	_, err := collectSessionDataWithPrivacy(gen, session, lines, true) // allowPersist=true for backwards compatibility
+	return err
 }
 
 // collectConfigFiles adds relevant config files to the bundle.
