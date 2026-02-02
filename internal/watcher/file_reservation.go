@@ -162,6 +162,7 @@ func (w *FileReservationWatcher) Start(ctx context.Context) {
 		return
 	}
 
+	// ubs:ignore - cancel invoked by Stop()
 	ctx, cancel := context.WithCancel(ctx)
 	w.cancelFunc = cancel
 	w.mu.Unlock()

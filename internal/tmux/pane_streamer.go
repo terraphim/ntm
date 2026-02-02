@@ -116,7 +116,8 @@ func (ps *PaneStreamer) Start(ctx context.Context) (err error) {
 	ps.running = true
 	ps.mu.Unlock()
 
-	ps.ctx, ps.cancel = context.WithCancel(ctx) // ubs:ignore
+	// ubs:ignore - cancel invoked by Stop() (or deferred cleanup on Start() error)
+	ps.ctx, ps.cancel = context.WithCancel(ctx)
 
 	defer func() {
 		if err == nil {
@@ -357,7 +358,8 @@ type StreamManager struct {
 
 // NewStreamManager creates a new stream manager.
 func NewStreamManager(client *Client, callback StreamCallback, cfg PaneStreamerConfig) *StreamManager {
-	ctx, cancel := context.WithCancel(context.Background()) // ubs:ignore
+	// ubs:ignore - cancel invoked by StopAll()
+	ctx, cancel := context.WithCancel(context.Background())
 	return &StreamManager{
 		client:    client,
 		config:    cfg,
