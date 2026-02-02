@@ -639,34 +639,10 @@ Examples:
 				}
 			}
 
-			// Handle local/Ollama agents.
-			// --ollama is an alias for --local (both spawn the same "ollama" agent type).
-			if localCount < 0 {
-				return fmt.Errorf("--local must be >= 0, got %d", localCount)
-			}
-			if ollamaCount < 0 {
-				return fmt.Errorf("--ollama must be >= 0, got %d", ollamaCount)
-			}
-			if localCount > 0 && ollamaCount > 0 {
-				return fmt.Errorf("cannot use both --local and --ollama; pick one")
-			}
-			ollamaTotal := localCount
-			if ollamaTotal == 0 {
-				ollamaTotal = ollamaCount
-			}
-			if ollamaTotal > 0 {
-				localModel = strings.TrimSpace(localModel)
-				if localModel == "" {
-					localModel = "codellama:latest"
-				}
-				if !modelPattern.MatchString(localModel) {
-					return fmt.Errorf("invalid characters in --local-model %q; allowed: letters, numbers, . _ / @ : + -", localModel)
-				}
-				agentSpecs = append(agentSpecs, AgentSpec{
-					Type:  AgentTypeOllama,
-					Count: ollamaTotal,
-					Model: localModel,
-				})
+			var err error
+			localModel, err = appendOllamaAgentSpecs(&agentSpecs, localCount, ollamaCount, localModel)
+			if err != nil {
+				return err
 			}
 
 			// Extract simple counts
@@ -1938,6 +1914,42 @@ func spawnSessionLogic(opts SpawnOptions) error {
 	}
 
 	return nil
+}
+
+func appendOllamaAgentSpecs(agentSpecs *AgentSpecs, localCount, ollamaCount int, localModel string) (string, error) {
+	// --ollama is an alias for --local (both spawn the same "ollama" agent type).
+	if localCount < 0 {
+		return "", fmt.Errorf("--local must be >= 0, got %d", localCount)
+	}
+	if ollamaCount < 0 {
+		return "", fmt.Errorf("--ollama must be >= 0, got %d", ollamaCount)
+	}
+	if localCount > 0 && ollamaCount > 0 {
+		return "", fmt.Errorf("cannot use both --local and --ollama; pick one")
+	}
+
+	total := localCount
+	if total == 0 {
+		total = ollamaCount
+	}
+
+	model := strings.TrimSpace(localModel)
+	if model == "" {
+		model = "codellama:latest"
+	}
+
+	if total > 0 {
+		if !modelPattern.MatchString(model) {
+			return "", fmt.Errorf("invalid characters in --local-model %q; allowed: letters, numbers, . _ / @ : + -", model)
+		}
+		*agentSpecs = append(*agentSpecs, AgentSpec{
+			Type:  AgentTypeOllama,
+			Count: total,
+			Model: model,
+		})
+	}
+
+	return model, nil
 }
 
 func preflightOllamaSpawn(opts SpawnOptions) (string, error) {

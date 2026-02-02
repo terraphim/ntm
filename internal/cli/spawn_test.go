@@ -121,6 +121,72 @@ func TestSpawnSessionLogic(t *testing.T) {
 	}
 }
 
+func TestAppendOllamaAgentSpecs(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no_agents_noop", func(t *testing.T) {
+		var specs AgentSpecs
+		model, err := appendOllamaAgentSpecs(&specs, 0, 0, "  codellama:latest  ")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if model != "codellama:latest" {
+			t.Fatalf("model=%q, want %q", model, "codellama:latest")
+		}
+		if len(specs) != 0 {
+			t.Fatalf("specs len=%d, want 0", len(specs))
+		}
+	})
+
+	t.Run("local_count_appends_ollama_spec", func(t *testing.T) {
+		var specs AgentSpecs
+		model, err := appendOllamaAgentSpecs(&specs, 2, 0, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if model != "codellama:latest" {
+			t.Fatalf("model=%q, want %q", model, "codellama:latest")
+		}
+		if len(specs) != 1 {
+			t.Fatalf("specs len=%d, want 1", len(specs))
+		}
+		if specs[0].Type != AgentTypeOllama || specs[0].Count != 2 || specs[0].Model != "codellama:latest" {
+			t.Fatalf("spec=%+v, want type=%q count=2 model=%q", specs[0], AgentTypeOllama, "codellama:latest")
+		}
+	})
+
+	t.Run("ollama_alias_appends_ollama_spec", func(t *testing.T) {
+		var specs AgentSpecs
+		model, err := appendOllamaAgentSpecs(&specs, 0, 3, "deepseek-coder:33b")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if model != "deepseek-coder:33b" {
+			t.Fatalf("model=%q, want %q", model, "deepseek-coder:33b")
+		}
+		if len(specs) != 1 {
+			t.Fatalf("specs len=%d, want 1", len(specs))
+		}
+		if specs[0].Type != AgentTypeOllama || specs[0].Count != 3 || specs[0].Model != "deepseek-coder:33b" {
+			t.Fatalf("spec=%+v, want type=%q count=3 model=%q", specs[0], AgentTypeOllama, "deepseek-coder:33b")
+		}
+	})
+
+	t.Run("cannot_use_local_and_ollama_together", func(t *testing.T) {
+		var specs AgentSpecs
+		if _, err := appendOllamaAgentSpecs(&specs, 1, 1, "codellama:latest"); err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+
+	t.Run("invalid_model_rejected", func(t *testing.T) {
+		var specs AgentSpecs
+		if _, err := appendOllamaAgentSpecs(&specs, 1, 0, "bad model!"); err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+}
+
 func TestSpawnSessionLogic_Ollama(t *testing.T) {
 	testutil.RequireTmuxThrottled(t)
 
