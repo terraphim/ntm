@@ -51,6 +51,19 @@ func (d *UnifiedDetector) Analyze(paneID, paneName, agentType string, output str
 	status.State = state
 	status.ErrorType = errType
 
+	// Extract metrics using agent parser
+	if isKnownAgentType(agentType) {
+		parser := agent.NewParser()
+		if parsed, err := parser.ParseWithHint(output, agent.AgentType(agentType)); err == nil {
+			if parsed.ContextRemaining != nil {
+				status.ContextUsage = *parsed.ContextRemaining
+			}
+			if parsed.TokensUsed != nil {
+				status.TokensUsed = *parsed.TokensUsed
+			}
+		}
+	}
+
 	return status
 }
 
@@ -245,6 +258,19 @@ func (d *UnifiedDetector) Detect(paneID string) (AgentStatus, error) {
 	status.State = state
 	status.ErrorType = errType
 
+	// Extract metrics using agent parser
+	if isKnownAgentType(status.AgentType) {
+		parser := agent.NewParser()
+		if parsed, err := parser.ParseWithHint(output, agent.AgentType(status.AgentType)); err == nil {
+			if parsed.ContextRemaining != nil {
+				status.ContextUsage = *parsed.ContextRemaining
+			}
+			if parsed.TokensUsed != nil {
+				status.TokensUsed = *parsed.TokensUsed
+			}
+		}
+	}
+
 	return status, nil
 }
 
@@ -297,6 +323,19 @@ func (d *UnifiedDetector) DetectAllContext(ctx context.Context, session string) 
 		state, errType := d.determineState(output, status.AgentType, status.LastActive)
 		status.State = state
 		status.ErrorType = errType
+
+		// Extract metrics using agent parser
+		if isKnownAgentType(status.AgentType) {
+			parser := agent.NewParser()
+			if parsed, err := parser.ParseWithHint(output, agent.AgentType(status.AgentType)); err == nil {
+				if parsed.ContextRemaining != nil {
+					status.ContextUsage = *parsed.ContextRemaining
+				}
+				if parsed.TokensUsed != nil {
+					status.TokensUsed = *parsed.TokensUsed
+				}
+			}
+		}
 
 		statuses = append(statuses, status)
 	}

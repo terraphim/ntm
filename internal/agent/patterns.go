@@ -325,10 +325,14 @@ func collectMatches(text string, patterns []string) []string {
 	return matches
 }
 
-// extractFloat extracts the first float value from a regex match group.
+// extractFloat extracts the last float value from a regex match group.
 // Returns nil if no match or parse error.
 func extractFloat(pattern *regexp.Regexp, text string) *float64 {
-	match := pattern.FindStringSubmatch(text)
+	matches := pattern.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	match := matches[len(matches)-1]
 	if len(match) < 2 {
 		return nil
 	}
@@ -341,10 +345,14 @@ func extractFloat(pattern *regexp.Regexp, text string) *float64 {
 	return &val
 }
 
-// extractInt extracts the first integer value from a regex match group.
+// extractInt extracts the last integer value from a regex match group.
 // Returns nil if no match or parse error.
 func extractInt(pattern *regexp.Regexp, text string) *int64 {
-	match := pattern.FindStringSubmatch(text)
+	matches := pattern.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	match := matches[len(matches)-1]
 	if len(match) < 2 {
 		return nil
 	}

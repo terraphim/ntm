@@ -61,6 +61,7 @@ func (m *AgentMonitor) GetAgentStatus(paneID, agentType string) AgentStatusResul
 	result.Status = mapStatusToRobotState(agentStatus.State)
 	result.LastActivity = agentStatus.LastActive
 	result.Healthy = agentStatus.State != status.StateError
+	result.ContextUsage = agentStatus.ContextUsage
 
 	// Use activity monitor for velocity
 	classifier := m.activityMon.GetOrCreate(paneID)
