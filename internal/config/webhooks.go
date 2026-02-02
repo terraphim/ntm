@@ -335,14 +335,21 @@ func expandEnvPlaceholders(in []byte) ([]byte, error) {
 func isRecognizedWebhookEvent(ev string) bool {
 	switch strings.ToLower(strings.TrimSpace(ev)) {
 	case "agent.error",
+		"agent.started",
+		"agent.stopped",
 		"agent.crashed",
 		"agent.restarted",
 		"agent.idle",
+		"agent.busy",
 		"agent.rate_limit",
 		"agent.completed",
 		"rotation.needed",
 		"session.created",
 		"session.killed",
+		"session.ended",
+		"bead.assigned",
+		"bead.completed",
+		"bead.failed",
 		"health.degraded":
 		return true
 	default:

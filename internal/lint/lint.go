@@ -3,6 +3,7 @@ package lint
 import (
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Dicklesworthstone/ntm/internal/redaction"
@@ -216,7 +217,10 @@ func (l *Linter) computeStats(prompt string) Stats {
 }
 
 // patternCache caches compiled regex patterns.
-var patternCache = make(map[string]*compiledPattern)
+var (
+	patternCacheMu sync.RWMutex
+	patternCache   = make(map[string]*compiledPattern)
+)
 
 type compiledPattern struct {
 	re  *regexp.Regexp
@@ -225,10 +229,18 @@ type compiledPattern struct {
 
 // compilePattern compiles a pattern with caching.
 func compilePattern(pattern string) (*regexp.Regexp, error) {
-	if cached, ok := patternCache[pattern]; ok {
+	patternCacheMu.RLock()
+	cached, ok := patternCache[pattern]
+	patternCacheMu.RUnlock()
+	if ok {
 		return cached.re, cached.err
 	}
+
 	re, err := regexp.Compile(pattern)
+
+	patternCacheMu.Lock()
 	patternCache[pattern] = &compiledPattern{re: re, err: err}
+	patternCacheMu.Unlock()
+
 	return re, err
 }

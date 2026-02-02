@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -35,6 +36,7 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/resilience"
 	"github.com/Dicklesworthstone/ntm/internal/state"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
+	"github.com/Dicklesworthstone/ntm/internal/webhook"
 	"github.com/Dicklesworthstone/ntm/internal/workflow"
 	"github.com/Dicklesworthstone/ntm/internal/worktrees"
 )
@@ -1668,6 +1670,64 @@ func spawnSessionLogic(opts SpawnOptions) error {
 	// Get final pane list for output
 	finalPanes, _ := tmux.GetPanes(opts.Session)
 
+	// Enable project webhooks (if configured) for this session and emit
+	// webhook-compatible lifecycle events (always, regardless of JSON mode).
+	//
+	// Note: This is best-effort and should never fail the spawn command.
+	if cfg != nil {
+		redactCfg := cfg.Redaction.ToRedactionLibConfig()
+		bridge, err := webhook.StartBridgeFromProjectConfig(dir, opts.Session, events.DefaultBus, &redactCfg)
+		if err != nil {
+			slog.Default().Debug("webhook bridge init failed", "session", opts.Session, "error", err)
+		} else if bridge != nil {
+			defer bridge.Close()
+		}
+	}
+
+	events.DefaultEmitter().Emit(events.NewWebhookEvent(
+		events.WebhookSessionCreated,
+		opts.Session,
+		"",
+		"",
+		fmt.Sprintf("Session %s created", opts.Session),
+		map[string]string{
+			"project_dir": dir,
+			"recipe":      opts.RecipeName,
+			"agent_count": fmt.Sprintf("%d", opts.CCCount+opts.CodCount+opts.GmiCount),
+			"agent_cc":    fmt.Sprintf("%d", opts.CCCount),
+			"agent_cod":   fmt.Sprintf("%d", opts.CodCount),
+			"agent_gmi":   fmt.Sprintf("%d", opts.GmiCount),
+		},
+	))
+
+	for _, agent := range launchedAgents {
+		events.DefaultEmitter().Emit(events.NewWebhookEvent(
+			events.WebhookAgentStarted,
+			opts.Session,
+			agent.paneID,
+			agent.agentType,
+			fmt.Sprintf("Agent started (%s)", agent.agentType),
+			map[string]string{
+				"project_dir":    dir,
+				"pane_index":     fmt.Sprintf("%d", agent.paneIndex),
+				"pane_title":     agent.paneTitle,
+				"model":          agent.model,
+				"resolved_model": agent.resolvedModel,
+			},
+		))
+	}
+
+	// Emit analytics events (JSONL) for session creation and agent spawns.
+	events.EmitSessionCreate(opts.Session, opts.CCCount, opts.CodCount, opts.GmiCount, dir, opts.RecipeName)
+	for _, agent := range launchedAgents {
+		events.Emit(events.EventAgentSpawn, opts.Session, events.AgentSpawnData{
+			AgentType: agent.agentType,
+			Model:     agent.resolvedModel,
+			Variant:   agent.model,
+			PaneIndex: agent.paneIndex,
+		})
+	}
+
 	// JSON output mode
 	if IsJSONOutput() {
 		// Build map of pane index -> stagger delay for lookup
@@ -1795,19 +1855,6 @@ func spawnSessionLogic(opts SpawnOptions) error {
 
 	// Print "What's next?" suggestions
 	output.SuccessFooter(output.SpawnSuggestions(opts.Session)...)
-
-	// Emit session_create event
-	events.EmitSessionCreate(opts.Session, opts.CCCount, opts.CodCount, opts.GmiCount, dir, opts.RecipeName)
-
-	// Emit agent_spawn events for each agent
-	for _, agent := range launchedAgents {
-		events.Emit(events.EventAgentSpawn, opts.Session, events.AgentSpawnData{
-			AgentType: agent.agentType,
-			Model:     agent.resolvedModel,
-			Variant:   agent.model,
-			PaneIndex: agent.paneIndex,
-		})
-	}
 
 	// Register spawned agents with Agent Mail (non-JSON mode)
 	if len(launchedAgents) > 0 {

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Dicklesworthstone/ntm/internal/kernel"
 	"github.com/Dicklesworthstone/ntm/internal/lint"
+	"github.com/Dicklesworthstone/ntm/internal/redaction"
 	"github.com/Dicklesworthstone/ntm/internal/robot"
 	"github.com/Dicklesworthstone/ntm/internal/tools"
 )
@@ -120,6 +122,8 @@ func handlePreflight(ctx context.Context, input any) (any, error) {
 
 // runPreflight performs the preflight check on a prompt.
 func runPreflight(prompt string, strict bool) (*PreflightResult, error) {
+	outputPrompt := prompt
+
 	// Set up lint rules
 	var ruleSet *lint.RuleSet
 	if strict {
@@ -128,27 +132,42 @@ func runPreflight(prompt string, strict bool) (*PreflightResult, error) {
 		ruleSet = lint.DefaultRuleSet()
 	}
 
+	var (
+		linterOpts []lint.Option
+	)
+	linterOpts = append(linterOpts, lint.WithRuleSet(ruleSet))
+
 	// Configure from app config if available
-	if cfg != nil && cfg.Redaction.Mode != "" {
+	if cfg != nil {
 		redactCfg := cfg.Redaction.ToRedactionLibConfig()
-		// Update secret detection severity based on redaction mode
-		switch cfg.Redaction.Mode {
-		case "block":
-			ruleSet.SetSeverity(lint.RuleSecretDetected, lint.SeverityError)
-		case "warn":
+
+		switch redactCfg.Mode {
+		case redaction.ModeOff:
+			// Redaction mode off explicitly disables scanning; keep lint in sync.
+			ruleSet.Disable(lint.RuleSecretDetected)
+		case redaction.ModeWarn, redaction.ModeRedact:
+			// Warn + redact modes should not block sends on secrets.
 			ruleSet.SetSeverity(lint.RuleSecretDetected, lint.SeverityWarning)
+		case redaction.ModeBlock:
+			ruleSet.SetSeverity(lint.RuleSecretDetected, lint.SeverityError)
 		}
-		// Create linter with redaction config
-		l := lint.New(
-			lint.WithRuleSet(ruleSet),
-			lint.WithRedactionConfig(&redactCfg),
-		)
-		return buildPreflightResult(l.Lint(prompt), prompt)
+
+		// Avoid leaking raw secrets in preflight output when redaction is active.
+		// In redact mode, this matches what will actually be sent.
+		// In block mode, this matches the safe preview behavior used elsewhere (e.g. send.go).
+		if redactCfg.Mode == redaction.ModeRedact || redactCfg.Mode == redaction.ModeBlock {
+			previewCfg := redactCfg
+			previewCfg.Mode = redaction.ModeRedact
+			outputPrompt = redaction.ScanAndRedact(prompt, previewCfg).Output
+		}
+
+		if rule, ok := ruleSet.Rules[lint.RuleSecretDetected]; ok && rule.Enabled {
+			linterOpts = append(linterOpts, lint.WithRedactionConfig(&redactCfg))
+		}
 	}
 
-	// Create linter with default config
-	l := lint.New(lint.WithRuleSet(ruleSet))
-	return buildPreflightResult(l.Lint(prompt), prompt)
+	l := lint.New(linterOpts...)
+	return buildPreflightResult(l.Lint(prompt), outputPrompt)
 }
 
 // buildPreflightResult converts lint.Result to PreflightResult.
@@ -264,7 +283,7 @@ Examples:
 				prompt = args[0]
 			} else {
 				// Read from stdin
-				data, err := os.ReadFile("/dev/stdin")
+				data, err := io.ReadAll(cmd.InOrStdin())
 				if err != nil {
 					return fmt.Errorf("failed to read from stdin: %w", err)
 				}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strconv"
@@ -23,9 +24,11 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/bv"
 	"github.com/Dicklesworthstone/ntm/internal/completion"
 	"github.com/Dicklesworthstone/ntm/internal/config"
+	"github.com/Dicklesworthstone/ntm/internal/events"
 	"github.com/Dicklesworthstone/ntm/internal/robot"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 	"github.com/Dicklesworthstone/ntm/internal/tui/theme"
+	"github.com/Dicklesworthstone/ntm/internal/webhook"
 )
 
 var (
@@ -247,6 +250,24 @@ func runAssign(cmd *cobra.Command, args []string) error {
 	}
 	res.ExplainIfInferred(cmd.ErrOrStderr())
 	session = res.Session
+
+	// Enable project webhooks (if configured) so assignment lifecycle events
+	// can fan out while this command runs (including watch mode).
+	projectDir := ""
+	if cfg != nil {
+		projectDir = cfg.GetProjectDir(session)
+	} else if wd, err := os.Getwd(); err == nil {
+		projectDir = wd
+	}
+	if cfg != nil && projectDir != "" {
+		redactCfg := cfg.Redaction.ToRedactionLibConfig()
+		bridge, err := webhook.StartBridgeFromProjectConfig(projectDir, session, events.DefaultBus, &redactCfg)
+		if err != nil {
+			slog.Default().Debug("webhook bridge init failed", "session", session, "error", err)
+		} else if bridge != nil {
+			defer bridge.Close()
+		}
+	}
 
 	// Apply config default for strategy if not explicitly set via flag
 	if !cmd.Flags().Changed("strategy") {
@@ -792,7 +813,7 @@ func detectModelFromTitle(agentType, title string) string {
 func determineAgentState(scrollback, agentTypeStr string) string {
 	// Use the robust agent parser
 	parser := agent.NewParser()
-	
+
 	// Map string type to AgentType hint
 	var hint agent.AgentType
 	switch strings.ToLower(agentTypeStr) {
@@ -805,7 +826,7 @@ func determineAgentState(scrollback, agentTypeStr string) string {
 	default:
 		hint = agent.AgentTypeUnknown
 	}
-	
+
 	state, err := parser.ParseWithHint(scrollback, hint)
 	if err != nil {
 		return "unknown"
@@ -817,7 +838,7 @@ func determineAgentState(scrollback, agentTypeStr string) string {
 	if state.IsWorking {
 		return "working"
 	}
-	
+
 	return "unknown"
 }
 

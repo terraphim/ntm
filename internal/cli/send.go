@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -37,6 +38,7 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 	"github.com/Dicklesworthstone/ntm/internal/tools"
 	"github.com/Dicklesworthstone/ntm/internal/tui/theme"
+	"github.com/Dicklesworthstone/ntm/internal/webhook"
 )
 
 // SendResult is the JSON output for the send command.
@@ -1762,7 +1764,34 @@ func buildKillResponse(session string, force bool, tags []string, noHooks bool, 
 		return nil, fmt.Errorf("session '%s' not found", session)
 	}
 
-	dir := cfg.GetProjectDir(session)
+	dir := ""
+	if cfg != nil {
+		dir = cfg.GetProjectDir(session)
+	}
+	if strings.TrimSpace(dir) == "" {
+		// Best-effort fallback for webhook config resolution and hooks context.
+		if wd, err := os.Getwd(); err == nil {
+			dir = wd
+		}
+	}
+
+	// Enable project webhooks (if configured) for this session so kill events can fan out.
+	// Best-effort: failures should not block the kill operation.
+	var (
+		bridge *webhook.BusBridge
+		err    error
+	)
+	if cfg != nil {
+		redactCfg := cfg.Redaction.ToRedactionLibConfig()
+		bridge, err = webhook.StartBridgeFromProjectConfig(dir, session, events.DefaultBus, &redactCfg)
+	} else {
+		bridge, err = webhook.StartBridgeFromProjectConfig(dir, session, events.DefaultBus, nil)
+	}
+	if err != nil {
+		slog.Default().Debug("webhook bridge init failed", "session", session, "error", err)
+	} else if bridge != nil {
+		defer bridge.Close()
+	}
 
 	// Initialize hook executor
 	var hookExec *hooks.Executor
@@ -1838,6 +1867,19 @@ func buildKillResponse(session string, force bool, tags []string, noHooks bool, 
 			if err := tmux.KillPane(p.ID); err != nil {
 				return nil, fmt.Errorf("killing pane %s: %w", p.ID, err)
 			}
+			events.DefaultEmitter().Emit(events.NewWebhookEvent(
+				events.WebhookAgentStopped,
+				session,
+				p.ID,
+				agentTypeToString(p.Type),
+				"Agent stopped",
+				map[string]string{
+					"project_dir": dir,
+					"pane_index":  fmt.Sprintf("%d", p.Index),
+					"pane_title":  p.Title,
+					"kill_tags":   strings.Join(tags, ","),
+				},
+			))
 		}
 		addTimelineStopMarkers(session, toKill)
 		message = fmt.Sprintf("Killed %d pane(s) matching tags", len(toKill))
@@ -1854,6 +1896,30 @@ func buildKillResponse(session string, force bool, tags []string, noHooks bool, 
 			return nil, err
 		}
 		message = fmt.Sprintf("Killed session '%s'", session)
+
+		events.DefaultEmitter().Emit(events.NewWebhookEvent(
+			events.WebhookSessionKilled,
+			session,
+			"",
+			"",
+			message,
+			map[string]string{
+				"project_dir": dir,
+				"force":       boolToStr(force),
+			},
+		))
+		// Alternate/legacy naming used by some configs/docs.
+		events.DefaultEmitter().Emit(events.NewWebhookEvent(
+			events.WebhookSessionEnded,
+			session,
+			"",
+			"",
+			message,
+			map[string]string{
+				"project_dir": dir,
+				"force":       boolToStr(force),
+			},
+		))
 	}
 
 	// Post-kill hooks

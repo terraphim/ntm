@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/plugins"
 	"github.com/Dicklesworthstone/ntm/internal/ratelimit"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
+	"github.com/Dicklesworthstone/ntm/internal/webhook"
 )
 
 // AddOptions configures agent addition
@@ -194,6 +196,18 @@ func runAdd(opts AddOptions) error {
 	}
 
 	dir := cfg.GetProjectDir(session)
+
+	// Enable project webhooks (if configured) so add lifecycle events can fan out.
+	// Best-effort: failures should not block add.
+	if cfg != nil {
+		redactCfg := cfg.Redaction.ToRedactionLibConfig()
+		bridge, err := webhook.StartBridgeFromProjectConfig(dir, session, events.DefaultBus, &redactCfg)
+		if err != nil {
+			slog.Default().Debug("webhook bridge init failed", "session", session, "error", err)
+		} else if bridge != nil {
+			defer bridge.Close()
+		}
+	}
 
 	// Initialize hook executor
 	hookExec, err := hooks.NewExecutorFromConfig()
@@ -529,6 +543,21 @@ func runAdd(opts AddOptions) error {
 			Variant:   agent.Model,
 			PaneIndex: num,
 		})
+
+		events.DefaultEmitter().Emit(events.NewWebhookEvent(
+			events.WebhookAgentStarted,
+			session,
+			paneID,
+			agentTypeStr,
+			fmt.Sprintf("Agent started (%s)", agentTypeStr),
+			map[string]string{
+				"project_dir":    dir,
+				"pane_index":     fmt.Sprintf("%d", num),
+				"pane_title":     title,
+				"model":          agent.Model,
+				"resolved_model": resolvedModel,
+			},
+		))
 
 		// Track for JSON output
 		newPanes = append(newPanes, output.PaneResponse{

@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/Dicklesworthstone/ntm/internal/events"
 	"github.com/Dicklesworthstone/ntm/internal/util"
 )
 
@@ -242,6 +244,22 @@ func (s *AssignmentStore) Assign(beadID, beadTitle string, pane int, agentType, 
 		slog.Warn("failed to persist assignment store", "error", err)
 	}
 
+	events.DefaultEmitter().Emit(events.NewWebhookEvent(
+		events.WebhookBeadAssigned,
+		s.SessionName,
+		fmt.Sprintf("%d", pane),
+		agentType,
+		fmt.Sprintf("Bead assigned: %s", beadID),
+		map[string]string{
+			"bead_id":     beadID,
+			"bead_title":  beadTitle,
+			"pane_index":  fmt.Sprintf("%d", pane),
+			"agent_type":  agentType,
+			"agent_name":  agentName,
+			"retry_count": fmt.Sprintf("%d", assignment.RetryCount),
+		},
+	))
+
 	return assignment, nil
 }
 
@@ -352,10 +370,12 @@ func (s *AssignmentStore) UpdateStatus(beadID string, newStatus AssignmentStatus
 		return fmt.Errorf("[ASSIGN] Assignment not found: %s", beadID)
 	}
 
-	if !isValidTransition(assignment.Status, newStatus) {
+	prevStatus := assignment.Status
+
+	if !isValidTransition(prevStatus, newStatus) {
 		return &InvalidTransitionError{
 			BeadID: beadID,
-			From:   assignment.Status,
+			From:   prevStatus,
 			To:     newStatus,
 		}
 	}
@@ -377,6 +397,9 @@ func (s *AssignmentStore) UpdateStatus(beadID string, newStatus AssignmentStatus
 	if err := s.saveLocked(); err != nil {
 		slog.Warn("failed to persist assignment store", "error", err)
 	}
+
+	emitAssignmentStatusEvent(s.SessionName, assignment, newStatus, "")
+	s.maybeEmitAgentIdleLocked(assignment, prevStatus, newStatus)
 
 	return nil
 }
@@ -401,10 +424,12 @@ func (s *AssignmentStore) MarkFailed(beadID, reason string) error {
 		return fmt.Errorf("[ASSIGN] Assignment not found: %s", beadID)
 	}
 
-	if !isValidTransition(assignment.Status, StatusFailed) {
+	prevStatus := assignment.Status
+
+	if !isValidTransition(prevStatus, StatusFailed) {
 		return &InvalidTransitionError{
 			BeadID: beadID,
-			From:   assignment.Status,
+			From:   prevStatus,
 			To:     StatusFailed,
 		}
 	}
@@ -417,6 +442,9 @@ func (s *AssignmentStore) MarkFailed(beadID, reason string) error {
 	if err := s.saveLocked(); err != nil {
 		slog.Warn("failed to persist assignment store", "error", err)
 	}
+
+	emitAssignmentStatusEvent(s.SessionName, assignment, StatusFailed, reason)
+	s.maybeEmitAgentIdleLocked(assignment, prevStatus, StatusFailed)
 
 	return nil
 }
@@ -520,4 +548,117 @@ type AssignmentStats struct {
 	Completed  int `json:"completed"`
 	Failed     int `json:"failed"`
 	Reassigned int `json:"reassigned"`
+}
+
+func emitAssignmentStatusEvent(session string, a *Assignment, newStatus AssignmentStatus, failReason string) {
+	if a == nil {
+		return
+	}
+
+	baseDetails := map[string]string{
+		"bead_id":    a.BeadID,
+		"bead_title": a.BeadTitle,
+		"pane_index": fmt.Sprintf("%d", a.Pane),
+		"agent_type": a.AgentType,
+		"agent_name": a.AgentName,
+		"status":     string(newStatus),
+	}
+
+	switch newStatus {
+	case StatusWorking:
+		events.DefaultEmitter().Emit(events.NewWebhookEvent(
+			events.WebhookAgentBusy,
+			session,
+			fmt.Sprintf("%d", a.Pane),
+			a.AgentType,
+			fmt.Sprintf("Agent busy on %s", a.BeadID),
+			baseDetails,
+		))
+	case StatusCompleted:
+		events.DefaultEmitter().Emit(events.NewWebhookEvent(
+			events.WebhookBeadCompleted,
+			session,
+			fmt.Sprintf("%d", a.Pane),
+			a.AgentType,
+			fmt.Sprintf("Bead completed: %s", a.BeadID),
+			baseDetails,
+		))
+		events.DefaultEmitter().Emit(events.NewWebhookEvent(
+			events.WebhookAgentCompleted,
+			session,
+			fmt.Sprintf("%d", a.Pane),
+			a.AgentType,
+			fmt.Sprintf("Agent completed bead %s", a.BeadID),
+			baseDetails,
+		))
+	case StatusFailed:
+		details := baseDetails
+		if strings.TrimSpace(failReason) != "" {
+			// Clone to avoid mutating base map used by other emissions.
+			details = make(map[string]string, len(baseDetails)+1)
+			for k, v := range baseDetails {
+				details[k] = v
+			}
+			details["fail_reason"] = failReason
+		}
+		msg := fmt.Sprintf("Bead failed: %s", a.BeadID)
+		if strings.TrimSpace(failReason) != "" {
+			msg = fmt.Sprintf("%s (%s)", msg, strings.TrimSpace(failReason))
+		}
+		events.DefaultEmitter().Emit(events.NewWebhookEvent(
+			events.WebhookBeadFailed,
+			session,
+			fmt.Sprintf("%d", a.Pane),
+			a.AgentType,
+			msg,
+			details,
+		))
+		events.DefaultEmitter().Emit(events.NewWebhookEvent(
+			events.WebhookAgentError,
+			session,
+			fmt.Sprintf("%d", a.Pane),
+			a.AgentType,
+			msg,
+			details,
+		))
+	}
+}
+
+func (s *AssignmentStore) maybeEmitAgentIdleLocked(a *Assignment, prevStatus, newStatus AssignmentStatus) {
+	if a == nil {
+		return
+	}
+	if prevStatus != StatusWorking {
+		return
+	}
+	if newStatus != StatusCompleted && newStatus != StatusFailed {
+		return
+	}
+
+	// Only emit idle when there are no remaining "working" assignments for this pane.
+	for _, other := range s.Assignments {
+		if other == nil {
+			continue
+		}
+		if other.Pane == a.Pane && other.Status == StatusWorking {
+			return
+		}
+	}
+
+	events.DefaultEmitter().Emit(events.NewWebhookEvent(
+		events.WebhookAgentIdle,
+		s.SessionName,
+		fmt.Sprintf("%d", a.Pane),
+		a.AgentType,
+		"Agent idle (no active bead assignments)",
+		map[string]string{
+			"bead_id":     a.BeadID,
+			"bead_title":  a.BeadTitle,
+			"pane_index":  fmt.Sprintf("%d", a.Pane),
+			"agent_type":  a.AgentType,
+			"agent_name":  a.AgentName,
+			"prev_status": string(prevStatus),
+			"new_status":  string(newStatus),
+		},
+	))
 }

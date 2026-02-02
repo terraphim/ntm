@@ -1,7 +1,9 @@
 package lint
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -270,6 +272,31 @@ func TestLintWithRedaction(t *testing.T) {
 	if redacted == "" {
 		t.Error("redacted output should not be empty")
 	}
+}
+
+func TestCompilePattern_Concurrent(t *testing.T) {
+	// This test intentionally runs pattern compilation concurrently to ensure
+	// the internal regex cache is goroutine-safe (important for concurrent REST/robot usage).
+	patternCacheMu.Lock()
+	patternCache = make(map[string]*compiledPattern)
+	patternCacheMu.Unlock()
+
+	const goroutines = 128
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			<-start
+			_, _ = compilePattern(fmt.Sprintf("concurrent_%d", i))
+		}()
+	}
+
+	close(start)
+	wg.Wait()
 }
 
 func truncate(s string, n int) string {

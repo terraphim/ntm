@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Dicklesworthstone/ntm/internal/config"
 	"github.com/Dicklesworthstone/ntm/internal/lint"
 )
 
@@ -428,6 +429,90 @@ func TestLintPackageIntegration(t *testing.T) {
 	}
 	if strictSeverity != "error" {
 		t.Errorf("strict mode should have error severity, got %s", strictSeverity)
+	}
+}
+
+func TestRunPreflight_RespectsRedactionMode_Redact(t *testing.T) {
+	oldCfg := cfg
+	t.Cleanup(func() { cfg = oldCfg })
+
+	cfg = config.Default()
+	cfg.Redaction.Mode = "redact"
+
+	fakeOpenAIKey := "sk-proj-FAKEtestkey1234567890123456789012345678901234"
+	prompt := "Please use this API key: " + fakeOpenAIKey + " for authentication."
+
+	result, err := runPreflight(prompt, false)
+	if err != nil {
+		t.Fatalf("runPreflight failed: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected success=true in redact mode (should warn, not block)")
+	}
+	if result.WarningCount == 0 {
+		t.Fatalf("expected at least 1 warning finding in redact mode")
+	}
+	if !strings.Contains(result.Preview, "[REDACTED:") {
+		t.Fatalf("expected preview to be redacted in redact mode; got %q", result.Preview)
+	}
+	if strings.Contains(result.Preview, fakeOpenAIKey) {
+		t.Fatalf("preview must not contain raw secret in redact mode; got %q", result.Preview)
+	}
+}
+
+func TestRunPreflight_RespectsRedactionMode_Block(t *testing.T) {
+	oldCfg := cfg
+	t.Cleanup(func() { cfg = oldCfg })
+
+	cfg = config.Default()
+	cfg.Redaction.Mode = "block"
+
+	fakeOpenAIKey := "sk-proj-FAKEtestkey1234567890123456789012345678901234"
+	prompt := "Please use this API key: " + fakeOpenAIKey + " for authentication."
+
+	result, err := runPreflight(prompt, false)
+	if err != nil {
+		t.Fatalf("runPreflight failed: %v", err)
+	}
+	if result.Success {
+		t.Fatalf("expected success=false in block mode when secret detected")
+	}
+	if result.ErrorCode != "PREFLIGHT_BLOCKED" {
+		t.Fatalf("expected error_code PREFLIGHT_BLOCKED in block mode; got %q", result.ErrorCode)
+	}
+	if !strings.Contains(result.Preview, "[REDACTED:") {
+		t.Fatalf("expected preview to be redacted in block mode; got %q", result.Preview)
+	}
+	if strings.Contains(result.Preview, fakeOpenAIKey) {
+		t.Fatalf("preview must not contain raw secret in block mode; got %q", result.Preview)
+	}
+}
+
+func TestRunPreflight_RespectsRedactionMode_Off(t *testing.T) {
+	oldCfg := cfg
+	t.Cleanup(func() { cfg = oldCfg })
+
+	cfg = config.Default()
+	cfg.Redaction.Mode = "off"
+
+	fakeOpenAIKey := "sk-proj-FAKEtestkey1234567890123456789012345678901234"
+	prompt := "Please use this API key: " + fakeOpenAIKey + " for authentication."
+
+	result, err := runPreflight(prompt, false)
+	if err != nil {
+		t.Fatalf("runPreflight failed: %v", err)
+	}
+
+	for _, f := range result.Findings {
+		if f.ID == "secret_detected" {
+			t.Fatalf("expected secret detection to be disabled when redaction mode is off")
+		}
+	}
+	if !result.Success {
+		t.Fatalf("expected success=true when redaction mode is off")
+	}
+	if !strings.Contains(result.Preview, fakeOpenAIKey) {
+		t.Fatalf("expected raw preview when redaction mode is off; got %q", result.Preview)
 	}
 }
 
