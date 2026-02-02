@@ -2,10 +2,13 @@ package e2e
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Dicklesworthstone/ntm/tests/testutil"
 )
@@ -19,6 +22,20 @@ func extractJSON(data []byte) []byte {
 		return data
 	}
 	return []byte(s[idx:])
+}
+
+func setupSwarmTestEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+}
+
+func uniqueSwarmSessionName(t *testing.T, prefix string) string {
+	t.Helper()
+	// `ntm swarm status` matches sessions like `cc_agents_123`.
+	suffix := strconv.FormatInt(time.Now().UnixNano()%1_000_000_000, 10)
+	return prefix + suffix
 }
 
 // swarmPlanResponse is the JSON output for ntm swarm plan.
@@ -92,8 +109,9 @@ type swarmStopResponse struct {
 
 func runSwarmPlan(t *testing.T, dir string, args ...string) swarmPlanResponse {
 	t.Helper()
-	// Use swarm --dry-run instead of swarm plan (plan subcommand lacks --sessions-per-type)
-	cmdArgs := []string{"--json", "swarm", "--dry-run"}
+	// Use `swarm --dry-run` instead of `swarm plan` (plan subcommand lacks --sessions-per-type).
+	// NOTE: `swarm` has its own `--json` flag (distinct from root persistent flags).
+	cmdArgs := []string{"swarm", "--dry-run", "--json"}
 	cmdArgs = append(cmdArgs, args...)
 	out := runCmd(t, dir, "ntm", cmdArgs...)
 	jsonData := extractJSON(out)
@@ -106,12 +124,12 @@ func runSwarmPlan(t *testing.T, dir string, args ...string) swarmPlanResponse {
 
 func runSwarmStatus(t *testing.T, dir string) ([]byte, error) {
 	t.Helper()
-	return runCmdAllowFail(t, dir, "ntm", "--json", "swarm", "status")
+	return runCmdAllowFail(t, dir, "ntm", "swarm", "status")
 }
 
 func runSwarmStop(t *testing.T, dir string, args ...string) ([]byte, error) {
 	t.Helper()
-	cmdArgs := []string{"--json", "swarm", "stop"}
+	cmdArgs := []string{"swarm", "stop"}
 	cmdArgs = append(cmdArgs, args...)
 	return runCmdAllowFail(t, dir, "ntm", cmdArgs...)
 }
@@ -122,6 +140,8 @@ func TestE2ESwarmOrchestration_Plan(t *testing.T) {
 	testutil.RequireNTMBinary(t)
 
 	t.Run("plan_with_explicit_projects", func(t *testing.T) {
+		setupSwarmTestEnv(t)
+
 		// Create temp directory with mock project structure
 		tmpDir := t.TempDir()
 
@@ -141,7 +161,7 @@ func TestE2ESwarmOrchestration_Plan(t *testing.T) {
 		}
 
 		// Run swarm plan with explicit projects
-		resp := runSwarmPlan(t, tmpDir, "--projects="+project1+","+project2)
+		resp := runSwarmPlan(t, tmpDir, "--scan-dir="+tmpDir, "--projects="+project1+","+project2)
 
 		// Verify dry run is true for plan command
 		if !resp.DryRun {
@@ -165,10 +185,12 @@ func TestE2ESwarmOrchestration_Plan(t *testing.T) {
 	})
 
 	t.Run("plan_no_projects_found", func(t *testing.T) {
+		setupSwarmTestEnv(t)
+
 		tmpDir := t.TempDir()
 
 		// Run swarm --dry-run with non-existent scan directory
-		out, err := runCmdAllowFail(t, tmpDir, "ntm", "--json", "swarm", "--dry-run", "--scan-dir="+filepath.Join(tmpDir, "nonexistent"))
+		out, err := runCmdAllowFail(t, tmpDir, "ntm", "swarm", "--dry-run", "--json", "--scan-dir="+filepath.Join(tmpDir, "nonexistent"))
 
 		// Should fail or return JSON with error
 		if err == nil {
@@ -184,6 +206,8 @@ func TestE2ESwarmOrchestration_Plan(t *testing.T) {
 	})
 
 	t.Run("plan_with_beads_directory", func(t *testing.T) {
+		setupSwarmTestEnv(t)
+
 		tmpDir := t.TempDir()
 
 		// Create project with .beads directory (scanner recognizes it as a beads project)
@@ -198,7 +222,7 @@ func TestE2ESwarmOrchestration_Plan(t *testing.T) {
 			t.Fatalf("write issues.jsonl: %v", err)
 		}
 
-		resp := runSwarmPlan(t, tmpDir, "--projects="+project)
+		resp := runSwarmPlan(t, tmpDir, "--scan-dir="+tmpDir, "--projects="+project)
 
 		if len(resp.Allocations) != 1 {
 			t.Fatalf("expected 1 allocation, got %d", len(resp.Allocations))
@@ -215,6 +239,8 @@ func TestE2ESwarmOrchestration_Plan(t *testing.T) {
 	})
 
 	t.Run("plan_json_structure", func(t *testing.T) {
+		setupSwarmTestEnv(t)
+
 		tmpDir := t.TempDir()
 
 		// Create minimal project
@@ -227,7 +253,7 @@ func TestE2ESwarmOrchestration_Plan(t *testing.T) {
 			t.Fatalf("write issues.jsonl: %v", err)
 		}
 
-		resp := runSwarmPlan(t, tmpDir, "--projects="+project)
+		resp := runSwarmPlan(t, tmpDir, "--scan-dir="+tmpDir, "--projects="+project)
 
 		// Verify essential JSON fields are populated
 		if resp.SessionsPerType == 0 {
@@ -241,96 +267,97 @@ func TestE2ESwarmOrchestration_Plan(t *testing.T) {
 
 // TestE2ESwarmOrchestration_Status tests swarm status reporting.
 func TestE2ESwarmOrchestration_Status(t *testing.T) {
-	testutil.RequireE2E(t)
-	testutil.RequireNTMBinary(t)
+	testutil.E2ETestPrecheck(t)
 
-	t.Run("status_json_output", func(t *testing.T) {
+	t.Run("status_includes_test_session", func(t *testing.T) {
+		setupSwarmTestEnv(t)
+
 		tmpDir := t.TempDir()
 
-		// Run status - verify it produces valid output
-		out, err := runSwarmStatus(t, tmpDir)
-		outStr := string(out)
-		if err != nil {
-			// May fail if tmux not available
-			if strings.Contains(outStr, "tmux") {
-				t.Skip("tmux not available")
-			}
-			// If it says "No swarm sessions" that's also valid
-			if strings.Contains(outStr, "No swarm sessions") {
-				return
-			}
-		}
+		sessionName := uniqueSwarmSessionName(t, "cc_agents_")
+		runCmd(t, tmpDir, "tmux", "new-session", "-d", "-s", sessionName, "sleep", "3600")
+		t.Cleanup(func() {
+			_, _ = runCmdAllowFail(t, tmpDir, "tmux", "kill-session", "-t", sessionName)
+		})
 
-		// If JSON output, verify structure is valid
-		jsonData := extractJSON(out)
-		var resp swarmStatusResponse
-		if err := json.Unmarshal(jsonData, &resp); err == nil {
-			// Verify required fields exist
-			if resp.CheckedAt == "" {
-				t.Errorf("expected checked_at to be set")
-			}
-			// Sessions list may or may not be empty depending on environment
-			t.Logf("status found %d swarm sessions", len(resp.Sessions))
+		out, err := runSwarmStatus(t, tmpDir)
+		if err != nil {
+			t.Fatalf("status failed: %v\noutput:\n%s", err, string(out))
+		}
+		if !strings.Contains(string(out), sessionName) {
+			t.Fatalf("expected status output to include test session %q\noutput:\n%s", sessionName, string(out))
 		}
 	})
 }
 
 // TestE2ESwarmOrchestration_Stop tests swarm stop functionality.
 func TestE2ESwarmOrchestration_Stop(t *testing.T) {
-	testutil.RequireE2E(t)
-	testutil.RequireNTMBinary(t)
+	testutil.E2ETestPrecheck(t)
 
 	t.Run("stop_no_sessions", func(t *testing.T) {
+		setupSwarmTestEnv(t)
+
 		tmpDir := t.TempDir()
 
-		// Run stop when no sessions exist
-		out, err := runSwarmStop(t, tmpDir)
-		outStr := string(out)
-
-		if err != nil {
-			// May fail if tmux not available
-			if strings.Contains(outStr, "tmux") {
-				t.Skip("tmux not available")
+		// Always pass an exact session name to avoid affecting real swarm sessions on developer machines.
+		sessionName := uniqueSwarmSessionName(t, "cc_agents_")
+		for {
+			_, err := runCmdAllowFail(t, tmpDir, "tmux", "has-session", "-t", sessionName)
+			if err != nil {
+				break
 			}
+			sessionName = uniqueSwarmSessionName(t, "cc_agents_")
 		}
 
-		// Should report no sessions found or 0 destroyed
-		if !strings.Contains(outStr, "No swarm sessions") && !strings.Contains(outStr, "sessions_destroyed") {
-			t.Logf("stop output: %s", outStr)
+		out, err := runSwarmStop(t, tmpDir, sessionName)
+		if err != nil {
+			t.Fatalf("stop failed: %v\noutput:\n%s", err, string(out))
+		}
+		if !strings.Contains(string(out), "No swarm sessions found") {
+			t.Fatalf("expected no sessions found message\noutput:\n%s", string(out))
 		}
 	})
 
 	t.Run("stop_force_flag", func(t *testing.T) {
+		setupSwarmTestEnv(t)
+
 		tmpDir := t.TempDir()
 
-		// Run stop with force flag - should still work with no sessions
-		out, err := runSwarmStop(t, tmpDir, "--force")
-		outStr := string(out)
-
-		if err != nil && strings.Contains(outStr, "tmux") {
-			t.Skip("tmux not available")
+		sessionName := uniqueSwarmSessionName(t, "cc_agents_")
+		for {
+			_, err := runCmdAllowFail(t, tmpDir, "tmux", "has-session", "-t", sessionName)
+			if err != nil {
+				break
+			}
+			sessionName = uniqueSwarmSessionName(t, "cc_agents_")
 		}
 
-		// Force flag accepted - command completes
-		if !strings.Contains(outStr, "No swarm sessions") && !strings.Contains(outStr, "sessions_destroyed") {
-			t.Logf("stop --force output: %s", outStr)
+		out, err := runSwarmStop(t, tmpDir, "--force", sessionName)
+		if err != nil {
+			t.Fatalf("stop --force failed: %v\noutput:\n%s", err, string(out))
+		}
+		if !strings.Contains(string(out), "No swarm sessions found") {
+			t.Fatalf("expected no sessions found message\noutput:\n%s", string(out))
 		}
 	})
 
-	t.Run("stop_with_pattern", func(t *testing.T) {
+	t.Run("stop_exact_session", func(t *testing.T) {
+		setupSwarmTestEnv(t)
+
 		tmpDir := t.TempDir()
 
-		// Run stop with specific pattern
-		out, err := runSwarmStop(t, tmpDir, "cc_agents_*")
-		outStr := string(out)
+		sessionName := uniqueSwarmSessionName(t, "cc_agents_")
+		runCmd(t, tmpDir, "tmux", "new-session", "-d", "-s", sessionName, "sleep", "3600")
 
-		if err != nil && strings.Contains(outStr, "tmux") {
-			t.Skip("tmux not available")
+		out, err := runSwarmStop(t, tmpDir, "--force", sessionName)
+		if err != nil {
+			t.Fatalf("stop failed: %v\noutput:\n%s", err, string(out))
 		}
 
-		// Pattern accepted - command completes
-		if !strings.Contains(outStr, "No swarm sessions") && !strings.Contains(outStr, "sessions_destroyed") {
-			t.Logf("stop pattern output: %s", outStr)
+		// Verify it is gone.
+		_, hasErr := runCmdAllowFail(t, tmpDir, "tmux", "has-session", "-t", sessionName)
+		if hasErr == nil {
+			t.Fatalf("expected session %q to be destroyed", sessionName)
 		}
 	})
 }
@@ -341,6 +368,8 @@ func TestE2ESwarmOrchestration_TierAllocation(t *testing.T) {
 	testutil.RequireNTMBinary(t)
 
 	t.Run("tier_calculation", func(t *testing.T) {
+		setupSwarmTestEnv(t)
+
 		tmpDir := t.TempDir()
 
 		// Create projects with different bead counts to test tier assignment
@@ -357,13 +386,13 @@ func TestE2ESwarmOrchestration_TierAllocation(t *testing.T) {
 		// Create 10 open beads (tier 3)
 		var beads []string
 		for i := 0; i < 10; i++ {
-			beads = append(beads, `{"id":"bd-`+string(rune('a'+i))+`","title":"Task","status":"open"}`)
+			beads = append(beads, fmt.Sprintf(`{"id":"bd-%03d","title":"Task","status":"open"}`, i))
 		}
 		if err := os.WriteFile(filepath.Join(beadsDir, "issues.jsonl"), []byte(strings.Join(beads, "\n")), 0644); err != nil {
 			t.Fatalf("write issues.jsonl: %v", err)
 		}
 
-		resp := runSwarmPlan(t, tmpDir, "--projects="+tier3Project)
+		resp := runSwarmPlan(t, tmpDir, "--scan-dir="+tmpDir, "--projects="+tier3Project)
 
 		if len(resp.Allocations) != 1 {
 			t.Fatalf("expected 1 allocation, got %d", len(resp.Allocations))
@@ -387,6 +416,8 @@ func TestE2ESwarmOrchestration_ConfigOptions(t *testing.T) {
 	testutil.RequireNTMBinary(t)
 
 	t.Run("sessions_per_type", func(t *testing.T) {
+		setupSwarmTestEnv(t)
+
 		tmpDir := t.TempDir()
 
 		// Create minimal project
@@ -400,7 +431,7 @@ func TestE2ESwarmOrchestration_ConfigOptions(t *testing.T) {
 		}
 
 		// Test via main swarm command with dry-run
-		out := runCmd(t, tmpDir, "ntm", "--json", "swarm", "--dry-run", "--sessions-per-type=5", "--projects="+project)
+		out := runCmd(t, tmpDir, "ntm", "swarm", "--dry-run", "--json", "--sessions-per-type=5", "--scan-dir="+tmpDir, "--projects="+project)
 
 		jsonData := extractJSON(out)
 		var resp swarmPlanResponse
