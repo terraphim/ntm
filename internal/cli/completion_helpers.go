@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Dicklesworthstone/ntm/internal/ensemble"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 )
 
@@ -99,6 +100,26 @@ func completeReadyBeadIDs(_ *cobra.Command, _ []string, toComplete string) ([]st
 
 func completeOpenBeadIDs(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	return completeCommaSeparated(listBeadIDsByStatus([]string{"open", "in_progress"}), toComplete), cobra.ShellCompDirectiveNoFileComp
+}
+
+func completeEnsemblePresetNames(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return filterByPrefix(listEnsemblePresetNames(), toComplete), cobra.ShellCompDirectiveNoFileComp
+}
+
+func completeEnsemblePresetArgs(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return filterByPrefix(listEnsemblePresetNames(), toComplete), cobra.ShellCompDirectiveNoFileComp
+}
+
+func completeModeIDsCommaSeparated(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return completeCommaSeparated(listReasoningModeIDs(), toComplete), cobra.ShellCompDirectiveNoFileComp
+}
+
+func completeTierValues(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	tiers := []string{"core", "advanced", "experimental", "all"}
+	return filterByPrefix(tiers, toComplete), cobra.ShellCompDirectiveNoFileComp
 }
 
 func sessionFromArgsOrFlag(cmd *cobra.Command, args []string) string {
@@ -246,6 +267,38 @@ func listBeadIDsFromCommand(args ...string) []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+func listEnsemblePresetNames() []string {
+	registry, err := ensemble.GlobalEnsembleRegistry()
+	if err != nil || registry == nil {
+		return nil
+	}
+	presets := registry.List()
+	out := make([]string, 0, len(presets))
+	for _, p := range presets {
+		if strings.TrimSpace(p.Name) != "" {
+			out = append(out, p.Name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func listReasoningModeIDs() []string {
+	catalog, err := ensemble.GlobalCatalog()
+	if err != nil || catalog == nil {
+		return nil
+	}
+	modes := catalog.ListModes()
+	out := make([]string, 0, len(modes))
+	for _, m := range modes {
+		if strings.TrimSpace(m.ID) != "" {
+			out = append(out, m.ID)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func filterByPrefix(options []string, prefix string) []string {

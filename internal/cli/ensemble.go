@@ -127,6 +127,7 @@ Primary usage:
 	cmd.AddCommand(newEnsembleResumeCmd())
 	cmd.AddCommand(newEnsembleRerunModeCmd())
 	cmd.AddCommand(newEnsembleCleanCheckpointsCmd())
+	cmd.ValidArgsFunction = completeEnsemblePresetArgs
 	return cmd
 }
 

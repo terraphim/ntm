@@ -892,6 +892,9 @@ Shell Integration:
 					AckTimeoutMs: int(ackTimeout.Milliseconds()),
 					AckPollMs:    robotAckPoll,
 				}
+				if cfg != nil {
+					opts.SendOptions.Redaction = cfg.Redaction.ToRedactionLibConfig()
+				}
 				if err := robot.PrintSendAndAck(opts); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 					os.Exit(1)
@@ -909,6 +912,9 @@ Shell Integration:
 				DelayMs:    robotSendDelay,
 				Enter:      enterOverride,
 				DryRun:     robotDryRunEffective,
+			}
+			if cfg != nil {
+				opts.Redaction = cfg.Redaction.ToRedactionLibConfig()
 			}
 			if err := robot.PrintSend(opts); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)

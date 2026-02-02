@@ -512,6 +512,11 @@ func TestGenerateZsh(t *testing.T) {
 		"alias sat='ntm spawn'",
 		"_ntm()",
 		"compdef _ntm ntm",
+		"ensemble:Manage reasoning ensembles",
+		"_ntm_complete_ensemble_presets",
+		"_ntm_complete_mode_ids",
+		"_ntm_complete_tiers",
+		"--robot-ensemble-modes",
 		"bindkey",
 	}
 
@@ -538,6 +543,10 @@ func TestGenerateBash(t *testing.T) {
 		"alias gmi=",
 		"alias cnt='ntm create'",
 		"_ntm_completions()",
+		"_ntm_list_ensemble_presets()",
+		"_ntm_list_mode_ids()",
+		"--robot-ensemble-modes",
+		"ensemble",
 		"complete -F _ntm_completions ntm",
 	}
 
@@ -565,6 +574,10 @@ func TestGenerateFish(t *testing.T) {
 		"abbr -a cnt",
 		"complete -c ntm",
 		"__fish_ntm_sessions",
+		"__fish_ntm_ensemble_presets",
+		"__fish_ntm_mode_ids",
+		"robot-ensemble-modes",
+		"ensemble",
 	}
 
 	for _, check := range checks {
@@ -574,6 +587,35 @@ func TestGenerateFish(t *testing.T) {
 	}
 
 	t.Logf("TEST: GenerateFish | Output length: %d | All checks: passed", len(output))
+}
+
+func TestCompletionSources_EnsemblePresetsAndModesNonEmpty(t *testing.T) {
+	t.Parallel()
+
+	presets := listEnsemblePresetNames()
+	if len(presets) == 0 {
+		t.Fatalf("expected embedded/user ensemble presets to be non-empty")
+	}
+	modes := listReasoningModeIDs()
+	if len(modes) == 0 {
+		t.Fatalf("expected reasoning mode catalog to be non-empty")
+	}
+
+	// Sanity: tier completion must include "core" and "all".
+	values, _ := completeTierValues(nil, nil, "")
+	hasCore := false
+	hasAll := false
+	for _, v := range values {
+		switch v {
+		case "core":
+			hasCore = true
+		case "all":
+			hasAll = true
+		}
+	}
+	if !hasCore || !hasAll {
+		t.Fatalf("expected tier completion to include core+all; got=%v", values)
+	}
 }
 
 // TestRunShellInit_InvalidShell verifies error for unsupported shell

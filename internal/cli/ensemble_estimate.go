@@ -104,6 +104,10 @@ Examples:
 	cmd.Flags().IntVar(&budgetOverride, "budget", 0, "Total token budget override for warnings")
 	cmd.Flags().IntVar(&budgetOverride, "budget-total", 0, "Total token budget override for warnings (alias)")
 
+	cmd.ValidArgsFunction = completeEnsemblePresetArgs
+	_ = cmd.RegisterFlagCompletionFunc("preset", completeEnsemblePresetNames)
+	_ = cmd.RegisterFlagCompletionFunc("modes", completeModeIDsCommaSeparated)
+
 	return cmd
 }
 
