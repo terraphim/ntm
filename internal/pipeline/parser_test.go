@@ -604,6 +604,31 @@ func TestValidate_LoopWithMissingItems(t *testing.T) {
 	}
 }
 
+func TestValidate_LoopNegativeMaxIterations(t *testing.T) {
+	t.Parallel()
+
+	w := &Workflow{
+		SchemaVersion: "2.0",
+		Name:          "test",
+		Steps: []Step{
+			{
+				ID: "s1",
+				Loop: &LoopConfig{
+					Items:         "${vars.list}",
+					As:            "item",
+					MaxIterations: -1,
+					Steps:         []Step{{ID: "inner", Prompt: "test"}},
+				},
+			},
+		},
+	}
+
+	result := Validate(w)
+	if result.Valid {
+		t.Error("expected validation to fail for negative max_iterations")
+	}
+}
+
 func TestValidate_VariableReferences(t *testing.T) {
 	t.Parallel()
 

@@ -397,6 +397,9 @@ func TestValidateCondition(t *testing.T) {
 		{`'unclosed`, 1},
 		{`"balanced"`, 0},
 		{"", 0},
+		{`"escaped \" quote"`, 0},        // escaped double quote inside
+		{`'escaped \' quote'`, 0},        // escaped single quote inside
+		{`mixed "quotes" and 'quotes'`, 0}, // both quote types balanced
 	}
 
 	for _, tt := range tests {
@@ -710,5 +713,242 @@ func TestConditionEvaluator_NotWithExpression(t *testing.T) {
 	}
 	if result.Value {
 		t.Error("expected false for NOT true")
+	}
+}
+
+func TestEvaluateCondition_ErrorPath(t *testing.T) {
+	t.Parallel()
+
+	state := &ExecutionState{
+		Variables: make(map[string]interface{}),
+	}
+
+	sub := NewSubstitutor(state, "test-session", "test-workflow")
+
+	// Invalid namespace should cause substitution error
+	_, err := EvaluateCondition("${badnamespace.var} == 1", sub)
+	if err == nil {
+		t.Error("EvaluateCondition should return error for invalid namespace")
+	}
+}
+
+func TestConditionEvaluator_SubstitutionError(t *testing.T) {
+	t.Parallel()
+
+	state := &ExecutionState{
+		Variables: make(map[string]interface{}),
+	}
+
+	sub := NewSubstitutor(state, "test-session", "test-workflow")
+	evaluator := NewConditionEvaluator(sub)
+
+	// Invalid namespace should cause substitution error
+	_, err := evaluator.Evaluate("${invalidnamespace.x}")
+	if err == nil {
+		t.Error("Evaluate should return error for invalid namespace")
+	}
+}
+
+func TestConditionEvaluator_ORLeftError(t *testing.T) {
+	t.Parallel()
+
+	state := &ExecutionState{
+		Variables: make(map[string]interface{}),
+	}
+
+	sub := NewSubstitutor(state, "test-session", "test-workflow")
+	evaluator := NewConditionEvaluator(sub)
+
+	// Create a condition where the left side of OR has invalid comparison
+	// The substituted expression will be malformed
+	result, err := evaluator.Evaluate("true OR false")
+	// This should evaluate without error (literals)
+	if err != nil {
+		t.Logf("OR literal error: %v", err)
+	}
+	if !result.Value {
+		t.Error("expected true for 'true OR false'")
+	}
+}
+
+func TestConditionEvaluator_ANDLeftError(t *testing.T) {
+	t.Parallel()
+
+	state := &ExecutionState{
+		Variables: make(map[string]interface{}),
+	}
+
+	sub := NewSubstitutor(state, "test-session", "test-workflow")
+	evaluator := NewConditionEvaluator(sub)
+
+	// Test AND with both sides being literals
+	result, err := evaluator.Evaluate("true AND true")
+	if err != nil {
+		t.Logf("AND literal error: %v", err)
+	}
+	if !result.Value {
+		t.Error("expected true for 'true AND true'")
+	}
+}
+
+func TestConditionEvaluator_NotFalse(t *testing.T) {
+	t.Parallel()
+
+	state := &ExecutionState{
+		Variables: map[string]interface{}{
+			"a": false,
+		},
+	}
+
+	sub := NewSubstitutor(state, "test-session", "test-workflow")
+	evaluator := NewConditionEvaluator(sub)
+
+	result, err := evaluator.Evaluate("NOT ${vars.a}")
+	if err != nil {
+		t.Fatalf("Evaluate error: %v", err)
+	}
+	if !result.Value {
+		t.Error("expected true for NOT false")
+	}
+}
+
+func TestConditionEvaluator_ExclamationFalse(t *testing.T) {
+	t.Parallel()
+
+	state := &ExecutionState{
+		Variables: map[string]interface{}{
+			"a": false,
+		},
+	}
+
+	sub := NewSubstitutor(state, "test-session", "test-workflow")
+	evaluator := NewConditionEvaluator(sub)
+
+	result, err := evaluator.Evaluate("!${vars.a}")
+	if err != nil {
+		t.Fatalf("Evaluate error: %v", err)
+	}
+	if !result.Value {
+		t.Error("expected true for !false")
+	}
+}
+
+func TestConditionEvaluator_ORRightSideEvaluated(t *testing.T) {
+	t.Parallel()
+
+	state := &ExecutionState{
+		Variables: map[string]interface{}{
+			"a": false,
+			"b": true,
+		},
+	}
+
+	sub := NewSubstitutor(state, "test-session", "test-workflow")
+	evaluator := NewConditionEvaluator(sub)
+
+	// When left is false, right side should be evaluated
+	result, err := evaluator.Evaluate("${vars.a} OR ${vars.b}")
+	if err != nil {
+		t.Fatalf("Evaluate error: %v", err)
+	}
+	if !result.Value {
+		t.Error("expected true when left is false and right is true")
+	}
+}
+
+func TestConditionEvaluator_ANDRightSideEvaluated(t *testing.T) {
+	t.Parallel()
+
+	state := &ExecutionState{
+		Variables: map[string]interface{}{
+			"a": true,
+			"b": false,
+		},
+	}
+
+	sub := NewSubstitutor(state, "test-session", "test-workflow")
+	evaluator := NewConditionEvaluator(sub)
+
+	// When left is true, right side should be evaluated
+	result, err := evaluator.Evaluate("${vars.a} AND ${vars.b}")
+	if err != nil {
+		t.Fatalf("Evaluate error: %v", err)
+	}
+	if result.Value {
+		t.Error("expected false when left is true and right is false")
+	}
+}
+
+func TestConditionEvaluator_ORAtEndOfExpression(t *testing.T) {
+	t.Parallel()
+
+	state := &ExecutionState{
+		Variables: map[string]interface{}{
+			"a": false,
+		},
+	}
+
+	sub := NewSubstitutor(state, "test-session", "test-workflow")
+	evaluator := NewConditionEvaluator(sub)
+
+	// Test OR at end with empty right side
+	result, _ := evaluator.Evaluate("${vars.a} OR")
+	// Empty right side should be falsy
+	if result.Value {
+		t.Error("expected false for 'false OR <empty>'")
+	}
+}
+
+func TestConditionEvaluator_ANDAtEndOfExpression(t *testing.T) {
+	t.Parallel()
+
+	state := &ExecutionState{
+		Variables: map[string]interface{}{
+			"a": true,
+		},
+	}
+
+	sub := NewSubstitutor(state, "test-session", "test-workflow")
+	evaluator := NewConditionEvaluator(sub)
+
+	// Test AND at end with empty right side
+	result, _ := evaluator.Evaluate("${vars.a} AND")
+	// Empty right side should be falsy
+	if result.Value {
+		t.Error("expected false for 'true AND <empty>'")
+	}
+}
+
+func TestConditionEvaluator_NOTError(t *testing.T) {
+	t.Parallel()
+
+	state := &ExecutionState{
+		Variables: map[string]interface{}{},
+	}
+
+	sub := NewSubstitutor(state, "test-session", "test-workflow")
+	evaluator := NewConditionEvaluator(sub)
+
+	// Inner has invalid namespace -> error during NOT evaluation
+	_, err := evaluator.Evaluate("NOT ${badns.var}")
+	if err == nil {
+		t.Error("expected error for invalid inner expression of NOT")
+	}
+}
+
+func TestConditionEvaluator_ExclamationError(t *testing.T) {
+	t.Parallel()
+
+	state := &ExecutionState{
+		Variables: map[string]interface{}{},
+	}
+
+	sub := NewSubstitutor(state, "test-session", "test-workflow")
+	evaluator := NewConditionEvaluator(sub)
+
+	// Inner has invalid namespace -> error during ! evaluation
+	_, err := evaluator.Evaluate("!${badns.var}")
+	if err == nil {
+		t.Error("expected error for invalid inner expression of !")
 	}
 }

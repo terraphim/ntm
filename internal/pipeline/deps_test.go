@@ -686,6 +686,28 @@ func TestFindUnreachable(t *testing.T) {
 	}
 }
 
+func TestFindUnreachable_AllExist(t *testing.T) {
+	t.Parallel()
+
+	w := &Workflow{
+		Steps: []Step{
+			{ID: "a", Prompt: "step a"},
+			{ID: "b", Prompt: "step b", DependsOn: []string{"a"}},
+			{ID: "c", Prompt: "step c", DependsOn: []string{"a", "b"}},
+		},
+	}
+
+	g := NewDependencyGraph(w)
+	errs := g.Validate()
+
+	// All dependencies exist, so no missing_dep errors
+	for _, e := range errs {
+		if e.Type == "missing_dep" {
+			t.Errorf("unexpected missing_dep error: %v", e)
+		}
+	}
+}
+
 func TestResolve_WithCycle(t *testing.T) {
 	t.Parallel()
 

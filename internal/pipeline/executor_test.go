@@ -881,6 +881,7 @@ func TestExecutor_Cancel(t *testing.T) {
 
 	// Set up a cancel function
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	e.cancelFn = cancel
 
 	// Cancel should call the cancel function
@@ -1674,6 +1675,7 @@ func TestWaitForIdle_ContextCancelled(t *testing.T) {
 
 	// Create already cancelled context
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	cancel()
 
 	err := e.waitForIdle(ctx, "pane-1", 5*time.Second)
@@ -2346,6 +2348,7 @@ func TestExecutor_Run_DryRun_Cancel(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	cancel()
 
 	state, err := e.Run(ctx, workflow, nil, nil)
@@ -2854,6 +2857,93 @@ func TestTruncatePrompt_Various(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("truncatePrompt(%q, %d) = %q, want %q", tt.prompt, tt.max, got, tt.want)
 		}
+	}
+}
+
+// --- EvaluateString tests ---
+
+func TestVariableContext_EvaluateString_UnknownVar(t *testing.T) {
+	t.Parallel()
+
+	vc := &VariableContext{
+		Vars: map[string]interface{}{
+			"name": "Alice",
+		},
+	}
+
+	// Unknown variable should be left unchanged
+	input := "Hello ${vars.unknown}"
+	got := vc.EvaluateString(input)
+	if got != input {
+		t.Errorf("EvaluateString(%q) = %q, want unchanged %q", input, got, input)
+	}
+}
+
+func TestVariableContext_EvaluateString_MultipleVars(t *testing.T) {
+	t.Parallel()
+
+	vc := &VariableContext{
+		Vars: map[string]interface{}{
+			"a": "A",
+			"b": "B",
+		},
+		Session:  "sess",
+		RunID:    "run123",
+		Workflow: "wf",
+	}
+
+	input := "${vars.a} and ${vars.b} in ${session} (${run_id}, ${workflow})"
+	want := "A and B in sess (run123, wf)"
+
+	got := vc.EvaluateString(input)
+	if got != want {
+		t.Errorf("EvaluateString(%q) = %q, want %q", input, got, want)
+	}
+}
+
+func TestVariableContext_EvaluateString_Steps(t *testing.T) {
+	t.Parallel()
+
+	vc := &VariableContext{
+		Steps: map[string]StepResult{
+			"step1": {
+				StepID:   "step1",
+				Status:   StatusCompleted,
+				Output:   "output1",
+				PaneUsed: "pane1",
+			},
+		},
+	}
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"${steps.step1.output}", "output1"},
+		{"${steps.step1.status}", "completed"},
+		{"${steps.step1.pane}", "pane1"},
+	}
+
+	for _, tt := range tests {
+		got := vc.EvaluateString(tt.input)
+		if got != tt.want {
+			t.Errorf("EvaluateString(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestVariableContext_EvaluateString_EnvVar(t *testing.T) {
+	// Can't use t.Parallel() with t.Setenv
+	t.Setenv("TEST_VAR_123", "test_value")
+
+	vc := &VariableContext{}
+
+	input := "${env.TEST_VAR_123}"
+	want := "test_value"
+
+	got := vc.EvaluateString(input)
+	if got != want {
+		t.Errorf("EvaluateString(%q) = %q, want %q", input, got, want)
 	}
 }
 

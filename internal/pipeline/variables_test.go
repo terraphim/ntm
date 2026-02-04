@@ -375,6 +375,15 @@ func TestOutputParser_ParseJSON(t *testing.T) {
 				return ok && m["key"] == "value"
 			},
 		},
+		{
+			name:   "array before object",
+			output: `[1, 2] {"key": "value"}`,
+			check: func(v interface{}) bool {
+				// Should parse the array since it comes first
+				a, ok := v.([]interface{})
+				return ok && len(a) == 2
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1489,5 +1498,62 @@ func TestResolveSteps_DurationZero(t *testing.T) {
 	}
 	if result != "0s" {
 		t.Errorf("expected '0s', got %q", result)
+	}
+}
+
+func TestResolveSteps_UnknownField(t *testing.T) {
+	t.Parallel()
+
+	state := &ExecutionState{
+		Variables: map[string]interface{}{},
+		Steps: map[string]StepResult{
+			"step1": {
+				StepID: "step1",
+				Status: StatusCompleted,
+			},
+		},
+	}
+
+	sub := NewSubstitutor(state, "test-session", "test-workflow")
+
+	_, err := sub.Substitute("${steps.step1.unknownfield}")
+	if err == nil {
+		t.Error("expected error for unknown step field")
+	}
+}
+
+func TestResolveSteps_MissingStepID(t *testing.T) {
+	t.Parallel()
+
+	state := &ExecutionState{
+		Variables: map[string]interface{}{},
+		Steps: map[string]StepResult{
+			"step1": {StepID: "step1"},
+		},
+	}
+
+	sub := NewSubstitutor(state, "test-session", "test-workflow")
+
+	// Only "steps" without step ID and field - should error
+	_, err := sub.Substitute("${steps}")
+	if err == nil {
+		t.Error("expected error for steps with no step ID")
+	}
+}
+
+func TestResolveSteps_NilStepsMap(t *testing.T) {
+	t.Parallel()
+
+	state := &ExecutionState{
+		Variables: map[string]interface{}{},
+		Steps:     nil, // nil Steps map
+	}
+
+	sub := NewSubstitutor(state, "test-session", "test-workflow")
+
+	// Step not in variables, and Steps map is nil
+	_, err := sub.Substitute("${steps.missing.output}")
+	if err == nil {
+		t.Error("expected error for nil Steps map")
 	}
 }
