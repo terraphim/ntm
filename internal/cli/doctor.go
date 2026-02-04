@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -15,6 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
+	"github.com/Dicklesworthstone/ntm/internal/config"
 	"github.com/Dicklesworthstone/ntm/internal/invariants"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 	"github.com/Dicklesworthstone/ntm/internal/tools"
@@ -49,15 +51,27 @@ This command helps diagnose issues before spawning sessions.`,
 
 // DoctorReport contains the full health check report
 type DoctorReport struct {
-	Timestamp     time.Time        `json:"timestamp"`
-	Overall       string           `json:"overall"` // "healthy", "warning", "unhealthy"
-	Tools         []ToolCheck      `json:"tools"`
-	Dependencies  []DepCheck       `json:"dependencies"`
-	Daemons       []DaemonCheck    `json:"daemons"`
-	Configuration []ConfigCheck    `json:"configuration"`
-	Invariants    []InvariantCheck `json:"invariants"`
-	Warnings      int              `json:"warnings"`
-	Errors        int              `json:"errors"`
+	Timestamp      time.Time        `json:"timestamp"`
+	Overall        string           `json:"overall"` // "healthy", "warning", "unhealthy"
+	SafetyDefaults SafetyDefaults   `json:"safety_defaults"`
+	Tools          []ToolCheck      `json:"tools"`
+	Dependencies   []DepCheck       `json:"dependencies"`
+	Daemons        []DaemonCheck    `json:"daemons"`
+	Configuration  []ConfigCheck    `json:"configuration"`
+	Invariants     []InvariantCheck `json:"invariants"`
+	Warnings       int              `json:"warnings"`
+	Errors         int              `json:"errors"`
+}
+
+// SafetyDefaults captures security/privacy defaults derived from config.
+type SafetyDefaults struct {
+	RedactionMode             string `json:"redaction_mode"`
+	RedactionAllowlistEnabled bool   `json:"redaction_allowlist_enabled"`
+	RedactionAllowlistCount   int    `json:"redaction_allowlist_count"`
+	PrivacyDefaultEnabled     bool   `json:"privacy_default_enabled"`
+	EncryptionAtRestEnabled   bool   `json:"encryption_at_rest_enabled"`
+	PreflightDefaultEnabled   bool   `json:"preflight_default_enabled"`
+	PreflightDefaultStrict    bool   `json:"preflight_default_strict"`
 }
 
 // InvariantCheck represents a design invariant check result
@@ -127,6 +141,8 @@ func performDoctorCheck(ctx context.Context) *DoctorReport {
 		Timestamp: time.Now(),
 		Overall:   "healthy",
 	}
+
+	report.SafetyDefaults = buildSafetyDefaults(cfg)
 
 	// Check tools using the adapter framework
 	report.Tools = checkTools(ctx)
@@ -439,6 +455,29 @@ func checkConfiguration() []ConfigCheck {
 	return checks
 }
 
+func buildSafetyDefaults(cfg *config.Config) SafetyDefaults {
+	if cfg == nil {
+		cfg = config.Default()
+	}
+
+	redactionMode := strings.TrimSpace(cfg.Redaction.Mode)
+	if redactionMode == "" {
+		redactionMode = config.DefaultRedactionConfig().Mode
+	}
+
+	allowlistCount := len(cfg.Redaction.Allowlist)
+
+	return SafetyDefaults{
+		RedactionMode:             redactionMode,
+		RedactionAllowlistEnabled: allowlistCount > 0,
+		RedactionAllowlistCount:   allowlistCount,
+		PrivacyDefaultEnabled:     cfg.Privacy.Enabled,
+		EncryptionAtRestEnabled:   false,
+		PreflightDefaultEnabled:   cfg.Preflight.Enabled,
+		PreflightDefaultStrict:    cfg.Preflight.Strict,
+	}
+}
+
 func checkInvariants(ctx context.Context) []InvariantCheck {
 	var checks []InvariantCheck
 
@@ -473,12 +512,20 @@ func checkInvariants(ctx context.Context) []InvariantCheck {
 }
 
 func outputDoctorJSON(report *DoctorReport) error {
-	encoder := json.NewEncoder(os.Stdout)
+	return encodeDoctorJSON(os.Stdout, report)
+}
+
+func encodeDoctorJSON(w io.Writer, report *DoctorReport) error {
+	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(report)
 }
 
 func renderDoctorTUI(report *DoctorReport) error {
+	return renderDoctorTUITo(os.Stdout, report)
+}
+
+func renderDoctorTUITo(w io.Writer, report *DoctorReport) error {
 	// Define styles
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -515,12 +562,12 @@ func renderDoctorTUI(report *DoctorReport) error {
 	}
 
 	// Title
-	fmt.Println()
-	fmt.Println(titleStyle.Render("NTM Doctor"))
-	fmt.Println()
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, titleStyle.Render("NTM Doctor"))
+	fmt.Fprintln(w)
 
 	// Tools section
-	fmt.Println(sectionStyle.Render("Tools:"))
+	fmt.Fprintln(w, sectionStyle.Render("Tools:"))
 	for _, t := range report.Tools {
 		icon := statusIcon(t.Status)
 		if t.Installed {
@@ -528,7 +575,7 @@ func renderDoctorTUI(report *DoctorReport) error {
 			if len(t.Capabilities) > 0 && doctorVerbose {
 				caps = fmt.Sprintf(" (%v)", t.Capabilities)
 			}
-			fmt.Printf("  %s %s %s%s\n", icon, t.Name, mutedStyle.Render(t.Message), caps)
+			fmt.Fprintf(w, "  %s %s %s%s\n", icon, t.Name, mutedStyle.Render(t.Message), caps)
 		} else {
 			msg := t.Message
 			if t.Required {
@@ -536,43 +583,84 @@ func renderDoctorTUI(report *DoctorReport) error {
 			} else {
 				msg = mutedStyle.Render(msg)
 			}
-			fmt.Printf("  %s %s %s\n", icon, t.Name, msg)
+			fmt.Fprintf(w, "  %s %s %s\n", icon, t.Name, msg)
 		}
 	}
 
 	// Dependencies section
-	fmt.Println(sectionStyle.Render("Dependencies:"))
+	fmt.Fprintln(w, sectionStyle.Render("Dependencies:"))
 	for _, d := range report.Dependencies {
 		icon := statusIcon(d.Status)
 		version := ""
 		if d.Version != "" {
 			version = mutedStyle.Render(fmt.Sprintf(" (%s)", d.Version))
 		}
-		fmt.Printf("  %s %s%s\n", icon, d.Name, version)
+		fmt.Fprintf(w, "  %s %s%s\n", icon, d.Name, version)
 	}
 
 	// Daemons section
-	fmt.Println(sectionStyle.Render("Daemons:"))
+	fmt.Fprintln(w, sectionStyle.Render("Daemons:"))
 	for _, d := range report.Daemons {
 		icon := statusIcon(d.Status)
-		fmt.Printf("  %s %s %s\n", icon, d.Name, mutedStyle.Render(d.Message))
+		fmt.Fprintf(w, "  %s %s %s\n", icon, d.Name, mutedStyle.Render(d.Message))
 	}
 
 	// Configuration section
-	fmt.Println(sectionStyle.Render("Configuration:"))
+	fmt.Fprintln(w, sectionStyle.Render("Configuration:"))
 	for _, c := range report.Configuration {
 		icon := statusIcon(c.Status)
-		fmt.Printf("  %s %s %s\n", icon, c.Name, mutedStyle.Render(c.Message))
+		fmt.Fprintf(w, "  %s %s %s\n", icon, c.Name, mutedStyle.Render(c.Message))
 	}
 
+	// Safety defaults section
+	fmt.Fprintln(w, sectionStyle.Render("Safety Defaults:"))
+	redactionStatus := statusIcon("ok")
+	if report.SafetyDefaults.RedactionMode == "off" {
+		redactionStatus = statusIcon("warning")
+	}
+	allowlistSummary := "none"
+	if report.SafetyDefaults.RedactionAllowlistEnabled {
+		allowlistSummary = fmt.Sprintf("%d entries", report.SafetyDefaults.RedactionAllowlistCount)
+	}
+	fmt.Fprintf(w, "  %s Redaction mode: %s (allowlist: %s)\n",
+		redactionStatus,
+		mutedStyle.Render(report.SafetyDefaults.RedactionMode),
+		mutedStyle.Render(allowlistSummary),
+	)
+
+	privacyStatus := statusIcon("ok")
+	privacyLabel := "disabled"
+	if report.SafetyDefaults.PrivacyDefaultEnabled {
+		privacyLabel = "enabled"
+	}
+	fmt.Fprintf(w, "  %s Privacy default: %s\n", privacyStatus, mutedStyle.Render(privacyLabel))
+
+	encryptionStatus := statusIcon("ok")
+	encryptionLabel := "disabled"
+	if report.SafetyDefaults.EncryptionAtRestEnabled {
+		encryptionLabel = "enabled"
+	}
+	fmt.Fprintf(w, "  %s Encryption at rest: %s\n", encryptionStatus, mutedStyle.Render(encryptionLabel))
+
+	preflightStatus := statusIcon("ok")
+	preflightLabel := "disabled"
+	if report.SafetyDefaults.PreflightDefaultEnabled {
+		preflightLabel = "enabled"
+	}
+	strictLabel := "strict=off"
+	if report.SafetyDefaults.PreflightDefaultStrict {
+		strictLabel = "strict=on"
+	}
+	fmt.Fprintf(w, "  %s Prompt preflight: %s (%s)\n", preflightStatus, mutedStyle.Render(preflightLabel), mutedStyle.Render(strictLabel))
+
 	// Invariants section
-	fmt.Println(sectionStyle.Render("Design Invariants:"))
+	fmt.Fprintln(w, sectionStyle.Render("Design Invariants:"))
 	for _, i := range report.Invariants {
 		icon := statusIcon(i.Status)
-		fmt.Printf("  %s %s %s\n", icon, i.Name, mutedStyle.Render(i.Message))
+		fmt.Fprintf(w, "  %s %s %s\n", icon, i.Name, mutedStyle.Render(i.Message))
 		if doctorVerbose && len(i.Details) > 0 {
 			for _, detail := range i.Details {
-				fmt.Printf("      %s\n", mutedStyle.Render(detail))
+				fmt.Fprintf(w, "      %s\n", mutedStyle.Render(detail))
 			}
 		}
 	}
@@ -591,8 +679,8 @@ func renderDoctorTUI(report *DoctorReport) error {
 		statusMsg = fmt.Sprintf("Overall: UNHEALTHY (%d errors, %d warnings)", report.Errors, report.Warnings)
 		statusStyle = errorStyle
 	}
-	fmt.Println(boxStyle.Render(statusStyle.Render(statusMsg)))
-	fmt.Println()
+	fmt.Fprintln(w, boxStyle.Render(statusStyle.Render(statusMsg)))
+	fmt.Fprintln(w)
 
 	// Return error to indicate non-healthy status (Cobra will set appropriate exit code)
 	if report.Overall == "unhealthy" {
