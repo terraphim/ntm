@@ -378,3 +378,56 @@ global_pause_duration_ms = 45000
 		t.Errorf("ValidateSpawnPacingConfig() error = %v", err)
 	}
 }
+
+// =============================================================================
+// AgentPacingConfig duration helpers
+// =============================================================================
+
+func TestAgentPacingConfig_RampUpDelays(t *testing.T) {
+	t.Parallel()
+
+	cfg := &AgentPacingConfig{
+		ClaudeRampUpDelayMs:  5000,
+		CodexRampUpDelayMs:   3000,
+		GeminiRampUpDelayMs:  4000,
+		CooldownOnFailureMs:  10000,
+	}
+
+	tests := []struct {
+		name string
+		got  time.Duration
+		want time.Duration
+	}{
+		{"ClaudeRampUpDelay", cfg.ClaudeRampUpDelay(), 5 * time.Second},
+		{"CodexRampUpDelay", cfg.CodexRampUpDelay(), 3 * time.Second},
+		{"GeminiRampUpDelay", cfg.GeminiRampUpDelay(), 4 * time.Second},
+		{"CooldownOnFailure", cfg.CooldownOnFailure(), 10 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.got != tt.want {
+				t.Errorf("%s = %v, want %v", tt.name, tt.got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAgentPacingConfig_ZeroDelays(t *testing.T) {
+	t.Parallel()
+
+	cfg := &AgentPacingConfig{}
+	if cfg.ClaudeRampUpDelay() != 0 {
+		t.Error("zero ClaudeRampUpDelayMs should yield 0 duration")
+	}
+	if cfg.CodexRampUpDelay() != 0 {
+		t.Error("zero CodexRampUpDelayMs should yield 0 duration")
+	}
+	if cfg.GeminiRampUpDelay() != 0 {
+		t.Error("zero GeminiRampUpDelayMs should yield 0 duration")
+	}
+	if cfg.CooldownOnFailure() != 0 {
+		t.Error("zero CooldownOnFailureMs should yield 0 duration")
+	}
+}

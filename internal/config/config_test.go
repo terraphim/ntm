@@ -3127,3 +3127,359 @@ func TestValidateSafetyConfig(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// Rotation: GetAccountsForProvider / SuggestNextAccount
+// =============================================================================
+
+func TestRotationConfig_GetAccountsForProvider(t *testing.T) {
+	t.Parallel()
+
+	cfg := &RotationConfig{
+		Accounts: []RotationAccount{
+			{Provider: "claude", Email: "a@example.com"},
+			{Provider: "codex", Email: "b@example.com"},
+			{Provider: "claude", Email: "c@example.com"},
+			{Provider: "gemini", Email: "d@example.com"},
+		},
+	}
+
+	tests := []struct {
+		provider string
+		wantLen  int
+	}{
+		{"claude", 2},
+		{"codex", 1},
+		{"gemini", 1},
+		{"unknown", 0},
+		{"", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			t.Parallel()
+			accounts := cfg.GetAccountsForProvider(tt.provider)
+			if len(accounts) != tt.wantLen {
+				t.Errorf("GetAccountsForProvider(%q) returned %d accounts, want %d", tt.provider, len(accounts), tt.wantLen)
+			}
+		})
+	}
+}
+
+func TestRotationConfig_GetAccountsForProvider_Empty(t *testing.T) {
+	t.Parallel()
+	cfg := &RotationConfig{}
+	accounts := cfg.GetAccountsForProvider("claude")
+	if len(accounts) != 0 {
+		t.Errorf("Expected 0 accounts for empty config, got %d", len(accounts))
+	}
+}
+
+func TestRotationConfig_SuggestNextAccount(t *testing.T) {
+	t.Parallel()
+
+	cfg := &RotationConfig{
+		Accounts: []RotationAccount{
+			{Provider: "claude", Email: "a@example.com"},
+			{Provider: "claude", Email: "b@example.com"},
+			{Provider: "codex", Email: "c@example.com"},
+		},
+	}
+
+	tests := []struct {
+		name         string
+		provider     string
+		currentEmail string
+		wantEmail    string
+		wantNil      bool
+	}{
+		{"suggests next claude", "claude", "a@example.com", "b@example.com", false},
+		{"suggests first claude when current is second", "claude", "b@example.com", "a@example.com", false},
+		{"nil when no other accounts", "codex", "c@example.com", "", true},
+		{"nil for unknown provider", "unknown", "a@example.com", "", true},
+		{"nil for empty provider", "", "a@example.com", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := cfg.SuggestNextAccount(tt.provider, tt.currentEmail)
+			if tt.wantNil {
+				if got != nil {
+					t.Errorf("SuggestNextAccount() = %v, want nil", got)
+				}
+			} else {
+				if got == nil {
+					t.Fatal("SuggestNextAccount() = nil, want non-nil")
+				}
+				if got.Email != tt.wantEmail {
+					t.Errorf("SuggestNextAccount().Email = %q, want %q", got.Email, tt.wantEmail)
+				}
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Validation functions
+// =============================================================================
+
+func TestValidateFileReservationConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cfg     FileReservationConfig
+		wantErr bool
+	}{
+		{
+			name:    "valid defaults",
+			cfg:     DefaultFileReservationConfig(),
+			wantErr: false,
+		},
+		{
+			name:    "auto release disabled (0)",
+			cfg:     FileReservationConfig{AutoReleaseIdleMin: 0, DefaultTTLMin: 5, PollIntervalSec: 5, CaptureLinesForDetect: 20},
+			wantErr: false,
+		},
+		{
+			name:    "auto release too low (not 0)",
+			cfg:     FileReservationConfig{AutoReleaseIdleMin: -1, DefaultTTLMin: 5, PollIntervalSec: 5, CaptureLinesForDetect: 20},
+			wantErr: true,
+		},
+		{
+			name:    "TTL too low",
+			cfg:     FileReservationConfig{AutoReleaseIdleMin: 0, DefaultTTLMin: 0, PollIntervalSec: 5, CaptureLinesForDetect: 20},
+			wantErr: true,
+		},
+		{
+			name:    "poll interval too low",
+			cfg:     FileReservationConfig{AutoReleaseIdleMin: 0, DefaultTTLMin: 5, PollIntervalSec: 0, CaptureLinesForDetect: 20},
+			wantErr: true,
+		},
+		{
+			name:    "capture lines too low",
+			cfg:     FileReservationConfig{AutoReleaseIdleMin: 0, DefaultTTLMin: 5, PollIntervalSec: 5, CaptureLinesForDetect: 5},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateFileReservationConfig(&tt.cfg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateFileReservationConfig() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateMemoryConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cfg     MemoryConfig
+		wantErr bool
+	}{
+		{
+			name:    "valid defaults",
+			cfg:     DefaultMemoryConfig(),
+			wantErr: false,
+		},
+		{
+			name:    "max_rules zero is valid",
+			cfg:     MemoryConfig{MaxRules: 0, QueryTimeoutSeconds: 5},
+			wantErr: false,
+		},
+		{
+			name:    "max_rules negative",
+			cfg:     MemoryConfig{MaxRules: -1, QueryTimeoutSeconds: 5},
+			wantErr: true,
+		},
+		{
+			name:    "timeout too low",
+			cfg:     MemoryConfig{MaxRules: 10, QueryTimeoutSeconds: 0},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateMemoryConfig(&tt.cfg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateMemoryConfig() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateActivityIndicatorConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cfg     ActivityIndicatorConfig
+		wantErr bool
+	}{
+		{
+			name:    "valid defaults",
+			cfg:     DefaultActivityIndicatorConfig(),
+			wantErr: false,
+		},
+		{
+			name:    "active_seconds zero",
+			cfg:     ActivityIndicatorConfig{ActiveSeconds: 0, StalledSeconds: 120},
+			wantErr: true,
+		},
+		{
+			name:    "stalled not greater than active",
+			cfg:     ActivityIndicatorConfig{ActiveSeconds: 30, StalledSeconds: 30},
+			wantErr: true,
+		},
+		{
+			name:    "stalled less than active",
+			cfg:     ActivityIndicatorConfig{ActiveSeconds: 30, StalledSeconds: 10},
+			wantErr: true,
+		},
+		{
+			name:    "minimal valid",
+			cfg:     ActivityIndicatorConfig{ActiveSeconds: 1, StalledSeconds: 2},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateActivityIndicatorConfig(&tt.cfg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateActivityIndicatorConfig() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateRanoConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cfg     *RanoConfig
+		wantErr bool
+	}{
+		{
+			name:    "nil config",
+			cfg:     nil,
+			wantErr: false,
+		},
+		{
+			name:    "unconfigured zero-value",
+			cfg:     &RanoConfig{},
+			wantErr: false,
+		},
+		{
+			name:    "valid with providers",
+			cfg:     &RanoConfig{Enabled: true, PollIntervalMs: 1000, Providers: []string{"anthropic"}, HistoryDays: 7},
+			wantErr: false,
+		},
+		{
+			name:    "poll interval too low",
+			cfg:     &RanoConfig{Enabled: true, PollIntervalMs: 50, Providers: []string{"anthropic"}},
+			wantErr: true,
+		},
+		{
+			name:    "negative history days",
+			cfg:     &RanoConfig{Enabled: true, PollIntervalMs: 1000, Providers: []string{"anthropic"}, HistoryDays: -1},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateRanoConfig(tt.cfg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateRanoConfig() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// validateSynthesisStrategy
+// =============================================================================
+
+func TestValidateSynthesisStrategy(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid strategies", func(t *testing.T) {
+		t.Parallel()
+		valid := []string{"consensus", "creative", "analytical", "deliberative", "prioritized", "dialectical", "meta-reasoning", "voting", "argumentation"}
+		for _, s := range valid {
+			if err := validateSynthesisStrategy(s); err != nil {
+				t.Errorf("validateSynthesisStrategy(%q) = %v, want nil", s, err)
+			}
+		}
+	})
+
+	t.Run("deprecated strategies", func(t *testing.T) {
+		t.Parallel()
+		deprecated := map[string]string{
+			"debate":     "dialectical",
+			"weighted":   "prioritized",
+			"sequential": "manual",
+			"best-of":    "prioritized",
+		}
+		for old, replacement := range deprecated {
+			err := validateSynthesisStrategy(old)
+			if err == nil {
+				t.Errorf("validateSynthesisStrategy(%q) = nil, want error", old)
+				continue
+			}
+			if !strings.Contains(err.Error(), replacement) {
+				t.Errorf("validateSynthesisStrategy(%q) error should mention %q, got: %v", old, replacement, err)
+			}
+		}
+	})
+
+	t.Run("unknown strategy", func(t *testing.T) {
+		t.Parallel()
+		err := validateSynthesisStrategy("nonexistent")
+		if err == nil {
+			t.Error("validateSynthesisStrategy(\"nonexistent\") = nil, want error")
+		}
+		if !strings.Contains(err.Error(), "unknown") {
+			t.Errorf("error should mention 'unknown', got: %v", err)
+		}
+	})
+}
+
+// =============================================================================
+// dirWritable
+// =============================================================================
+
+func TestDirWritable(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil info", func(t *testing.T) {
+		t.Parallel()
+		if dirWritable(nil) {
+			t.Error("dirWritable(nil) = true, want false")
+		}
+	})
+
+	t.Run("writable directory", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("Stat failed: %v", err)
+		}
+		if !dirWritable(info) {
+			t.Error("dirWritable should return true for writable temp dir")
+		}
+	})
+}
