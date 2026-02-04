@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/reflow/wordwrap"
@@ -124,12 +125,21 @@ type Model struct {
 
 	// Layout tier (narrow/split/wide/ultra)
 	tier layout.Tier
+
+	// Viewport for scrollable command list
+	listViewport viewport.Model
 }
 
 // KeyMap defines the keybindings
 type KeyMap struct {
 	Up             key.Binding
 	Down           key.Binding
+	PageUp         key.Binding
+	PageDown       key.Binding
+	HalfPageUp     key.Binding
+	HalfPageDown   key.Binding
+	Home           key.Binding
+	End            key.Binding
 	Select         key.Binding
 	Back           key.Binding
 	Quit           key.Binding
@@ -159,6 +169,30 @@ var keys = KeyMap{
 	Down: key.NewBinding(
 		key.WithKeys("down", "j"),
 		key.WithHelp("↓/j", "down"),
+	),
+	PageUp: key.NewBinding(
+		key.WithKeys("pgup"),
+		key.WithHelp("pgup", "page up"),
+	),
+	PageDown: key.NewBinding(
+		key.WithKeys("pgdown"),
+		key.WithHelp("pgdn", "page down"),
+	),
+	HalfPageUp: key.NewBinding(
+		key.WithKeys("ctrl+u"),
+		key.WithHelp("ctrl+u", "half page up"),
+	),
+	HalfPageDown: key.NewBinding(
+		key.WithKeys("ctrl+d"),
+		key.WithHelp("ctrl+d", "half page down"),
+	),
+	Home: key.NewBinding(
+		key.WithKeys("home", "g"),
+		key.WithHelp("home/g", "top"),
+	),
+	End: key.NewBinding(
+		key.WithKeys("end", "G"),
+		key.WithHelp("end/G", "bottom"),
 	),
 	Select: key.NewBinding(
 		key.WithKeys("enter"),
@@ -228,19 +262,24 @@ func NewWithOptions(session string, commands []config.PaletteCmd, opts Options) 
 	s := theme.NewStyles(t)
 	ic := icons.Current()
 
+	// Initialize viewport for scrollable command list
+	vp := viewport.New(80, 10) // Will be resized on WindowSizeMsg
+	vp.Style = lipgloss.NewStyle()
+
 	m := Model{
-		session:     session,
-		commands:    commands,
-		filtered:    commands,
-		filter:      ti,
-		phase:       PhaseCommand,
-		width:       80,
-		height:      24,
-		showPreview: true,
-		theme:       t,
-		styles:      s,
-		icons:       ic,
-		tier:        layout.TierForWidth(80),
+		session:      session,
+		commands:     commands,
+		filtered:     commands,
+		filter:       ti,
+		phase:        PhaseCommand,
+		width:        80,
+		height:       24,
+		showPreview:  true,
+		theme:        t,
+		styles:       s,
+		icons:        ic,
+		tier:         layout.TierForWidth(80),
+		listViewport: vp,
 		headerGradient: []string{
 			string(t.Blue),
 			string(t.Lavender),
@@ -390,6 +429,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.filter.Width < 20 {
 			m.filter.Width = 20
 		}
+		// Update viewport dimensions (list height minus chrome)
+		// Account for header (~4 lines), filter (~3 lines), help bar (~2 lines), borders (~4 lines)
+		listHeight := m.height - 14
+		if listHeight < 5 {
+			listHeight = 5
+		}
+		m.listViewport.Width = m.width - 8
+		m.listViewport.Height = listHeight
 		return m, nil
 
 	case AnimationTickMsg:
@@ -424,6 +471,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateFiltered()
 		}
 		return m, nil
+
+	case tea.MouseMsg:
+		// Handle mouse wheel scrolling in command phase
+		if m.phase == PhaseCommand && !m.showHelp {
+			var cmd tea.Cmd
+			m.listViewport, cmd = m.listViewport.Update(msg)
+			return m, cmd
+		}
 
 	case tea.KeyMsg:
 		// Help overlay: Esc or ?/F1 closes it; otherwise ignore input.
@@ -472,6 +527,7 @@ func (m *Model) updateCommandPhase(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.visualOrder) > 0 {
 			if pos := m.cursorVisualPos(); pos > 0 {
 				m.cursor = m.visualOrder[pos-1]
+				m.ensureCursorVisible()
 			}
 		}
 
@@ -479,7 +535,64 @@ func (m *Model) updateCommandPhase(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.visualOrder) > 0 {
 			if pos := m.cursorVisualPos(); pos < len(m.visualOrder)-1 {
 				m.cursor = m.visualOrder[pos+1]
+				m.ensureCursorVisible()
 			}
+		}
+
+	case key.Matches(msg, keys.PageUp):
+		m.listViewport.ViewUp()
+		// Move cursor to top of visible area
+		if len(m.visualOrder) > 0 {
+			visibleTop := m.listViewport.YOffset
+			if visibleTop < len(m.visualOrder) {
+				m.cursor = m.visualOrder[visibleTop]
+			}
+		}
+
+	case key.Matches(msg, keys.PageDown):
+		m.listViewport.ViewDown()
+		// Move cursor to bottom of visible area
+		if len(m.visualOrder) > 0 {
+			visibleBottom := m.listViewport.YOffset + m.listViewport.Height - 1
+			if visibleBottom >= len(m.visualOrder) {
+				visibleBottom = len(m.visualOrder) - 1
+			}
+			if visibleBottom >= 0 {
+				m.cursor = m.visualOrder[visibleBottom]
+			}
+		}
+
+	case key.Matches(msg, keys.HalfPageUp):
+		m.listViewport.HalfViewUp()
+		if len(m.visualOrder) > 0 {
+			visibleTop := m.listViewport.YOffset
+			if visibleTop < len(m.visualOrder) {
+				m.cursor = m.visualOrder[visibleTop]
+			}
+		}
+
+	case key.Matches(msg, keys.HalfPageDown):
+		m.listViewport.HalfViewDown()
+		if len(m.visualOrder) > 0 {
+			visibleBottom := m.listViewport.YOffset + m.listViewport.Height - 1
+			if visibleBottom >= len(m.visualOrder) {
+				visibleBottom = len(m.visualOrder) - 1
+			}
+			if visibleBottom >= 0 {
+				m.cursor = m.visualOrder[visibleBottom]
+			}
+		}
+
+	case key.Matches(msg, keys.Home):
+		m.listViewport.GotoTop()
+		if len(m.visualOrder) > 0 {
+			m.cursor = m.visualOrder[0]
+		}
+
+	case key.Matches(msg, keys.End):
+		m.listViewport.GotoBottom()
+		if len(m.visualOrder) > 0 {
+			m.cursor = m.visualOrder[len(m.visualOrder)-1]
 		}
 
 	case key.Matches(msg, keys.TogglePin):
@@ -657,6 +770,26 @@ func (m Model) cursorVisualPos() int {
 		}
 	}
 	return 0
+}
+
+// ensureCursorVisible scrolls the viewport if necessary to keep the cursor visible.
+func (m *Model) ensureCursorVisible() {
+	pos := m.cursorVisualPos()
+	// Each item takes approximately 1 line in the list
+	// Account for category headers by estimating 1.2 lines per item on average
+	linePos := pos
+
+	// If cursor is above the visible area, scroll up
+	if linePos < m.listViewport.YOffset {
+		m.listViewport.SetYOffset(linePos)
+	}
+
+	// If cursor is below the visible area, scroll down
+	// Leave a small margin at the bottom
+	visibleBottom := m.listViewport.YOffset + m.listViewport.Height - 2
+	if linePos > visibleBottom {
+		m.listViewport.SetYOffset(linePos - m.listViewport.Height + 3)
+	}
 }
 
 // buildVisualOrder creates a mapping from visual position to filtered index.
@@ -993,12 +1126,36 @@ func (m Model) viewCommandPhase() string {
 	// ═══════════════════════════════════════════════════════════════
 	listContent := m.renderCommandList(listWidth - 4)
 
-	// List box with subtle glow
+	// Calculate list box height
+	listBoxHeight := m.height - 14
+	if listBoxHeight < 5 {
+		listBoxHeight = 5
+	}
+
+	// Update viewport content and dimensions for scrolling
+	m.listViewport.Width = listWidth - 6 // Account for borders and padding
+	m.listViewport.Height = listBoxHeight - 2
+	m.listViewport.SetContent(listContent)
+
+	// Render scroll indicator if content overflows
+	scrollIndicator := ""
+	if m.listViewport.TotalLineCount() > m.listViewport.Height {
+		pct := m.listViewport.ScrollPercent() * 100
+		scrollStyle := lipgloss.NewStyle().Foreground(t.Overlay)
+		if pct < 1 {
+			scrollIndicator = scrollStyle.Render(" ↓ scroll")
+		} else if pct > 99 {
+			scrollIndicator = scrollStyle.Render(" ↑ scroll")
+		} else {
+			scrollIndicator = scrollStyle.Render(fmt.Sprintf(" %.0f%%", pct))
+		}
+	}
+
+	// List box with subtle glow - use viewport content
 	listBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(t.Surface2).
-		Width(listWidth-2).
-		Height(m.height-14).
+		Width(listWidth - 2).
 		Padding(1, 1)
 
 	var columns string
@@ -1011,19 +1168,19 @@ func (m Model) viewCommandPhase() string {
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(t.Blue).
 			Width(previewWidth-2).
-			Height(m.height-14).
+			Height(listBoxHeight).
 			Padding(1, 1)
 
 		// Join columns horizontally
 		columns = lipgloss.JoinHorizontal(
 			lipgloss.Top,
-			listBox.Render(listContent),
+			listBox.Render(m.listViewport.View()+scrollIndicator),
 			"  ",
 			previewBox.Render(previewContent),
 		)
 	} else {
 		// Narrow display: list only (preview shown on selection)
-		columns = listBox.Render(listContent)
+		columns = listBox.Render(m.listViewport.View() + scrollIndicator)
 	}
 
 	b.WriteString(columns + "\n\n")
@@ -1462,6 +1619,14 @@ func (m Model) renderHelpBar() string {
 		{"1-9", "quick select"},
 		{"Enter", "select"},
 		{"Esc", "back"},
+	}
+
+	// Show scroll hint if there are more items than visible
+	if m.tier >= layout.TierSplit && m.listViewport.TotalLineCount() > m.listViewport.Height {
+		items = append(items, struct {
+			key  string
+			desc string
+		}{"pgup/dn", "scroll"})
 	}
 
 	if m.tier >= layout.TierWide {
