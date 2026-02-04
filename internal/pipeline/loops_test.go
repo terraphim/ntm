@@ -395,3 +395,173 @@ func TestNewLoopExecutor(t *testing.T) {
 		t.Error("expected LoopExecutor to reference the original executor")
 	}
 }
+
+func TestStoreCollected(t *testing.T) {
+	executor := NewExecutor(ExecutorConfig{Session: "test"})
+	executor.state = &ExecutionState{
+		Variables: make(map[string]interface{}),
+	}
+	loopExec := NewLoopExecutor(executor)
+
+	collected := []interface{}{"result1", "result2", "result3"}
+	loopExec.storeCollected("my_results", collected)
+
+	val, ok := executor.state.Variables["my_results"]
+	if !ok {
+		t.Fatal("expected my_results variable to be set")
+	}
+	stored, ok := val.([]interface{})
+	if !ok {
+		t.Fatalf("expected []interface{}, got %T", val)
+	}
+	if len(stored) != 3 {
+		t.Errorf("expected 3 collected items, got %d", len(stored))
+	}
+}
+
+func TestStoreCollected_Empty(t *testing.T) {
+	executor := NewExecutor(ExecutorConfig{Session: "test"})
+	executor.state = &ExecutionState{
+		Variables: make(map[string]interface{}),
+	}
+	loopExec := NewLoopExecutor(executor)
+
+	loopExec.storeCollected("empty_results", []interface{}{})
+
+	val, ok := executor.state.Variables["empty_results"]
+	if !ok {
+		t.Fatal("expected empty_results variable to be set")
+	}
+	stored, ok := val.([]interface{})
+	if !ok {
+		t.Fatalf("expected []interface{}, got %T", val)
+	}
+	if len(stored) != 0 {
+		t.Errorf("expected 0 collected items, got %d", len(stored))
+	}
+}
+
+func TestExecuteWhile_DryRun_ImmediateFalse(t *testing.T) {
+	config := ExecutorConfig{
+		Session:       "test-session",
+		DryRun:        true,
+		GlobalTimeout: 30 * time.Second,
+	}
+	executor := NewExecutor(config)
+	executor.state = &ExecutionState{
+		Variables: map[string]interface{}{
+			"condition": "false",
+		},
+		Steps: make(map[string]StepResult),
+	}
+
+	step := &Step{
+		ID:     "while-step",
+		Prompt: "While iteration",
+		Loop: &LoopConfig{
+			While:         "${vars.condition}",
+			MaxIterations: 10,
+		},
+	}
+
+	result := executor.loopExec.ExecuteLoop(context.Background(), step, &Workflow{})
+
+	if result.Status != StatusCompleted {
+		t.Errorf("expected StatusCompleted, got %v", result.Status)
+	}
+	if result.Iterations != 0 {
+		t.Errorf("expected 0 iterations (condition immediately false), got %d", result.Iterations)
+	}
+}
+
+func TestExecuteWhile_Cancelled(t *testing.T) {
+	executor := NewExecutor(ExecutorConfig{Session: "test", DryRun: true})
+	executor.state = &ExecutionState{
+		Variables: map[string]interface{}{
+			"running": "true",
+		},
+		Steps: make(map[string]StepResult),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	step := &Step{
+		ID:     "while-cancel-step",
+		Prompt: "While cancel test",
+		Loop: &LoopConfig{
+			While:         "${vars.running}",
+			MaxIterations: 100,
+		},
+	}
+
+	result := executor.loopExec.ExecuteLoop(ctx, step, &Workflow{})
+
+	if result.Status != StatusCancelled {
+		t.Errorf("expected StatusCancelled, got %v", result.Status)
+	}
+}
+
+func TestExecuteLoop_ForEachDryRun(t *testing.T) {
+	config := ExecutorConfig{
+		Session:       "test-session",
+		DryRun:        true,
+		GlobalTimeout: 30 * time.Second,
+	}
+	executor := NewExecutor(config)
+	executor.state = &ExecutionState{
+		Variables: map[string]interface{}{
+			"files": []interface{}{"a.go", "b.go", "c.go"},
+		},
+		Steps: make(map[string]StepResult),
+	}
+
+	step := &Step{
+		ID:     "foreach-step",
+		Prompt: "Process ${loop.item}",
+		Loop: &LoopConfig{
+			Items: "${vars.files}",
+			As:    "file",
+		},
+	}
+
+	result := executor.loopExec.ExecuteLoop(context.Background(), step, &Workflow{})
+
+	if result.Status != StatusCompleted {
+		t.Errorf("expected StatusCompleted, got %v", result.Status)
+	}
+	if result.Iterations != 3 {
+		t.Errorf("expected 3 iterations, got %d", result.Iterations)
+	}
+}
+
+func TestExecuteLoop_TimesWithCollect(t *testing.T) {
+	config := ExecutorConfig{
+		Session:       "test-session",
+		DryRun:        true,
+		GlobalTimeout: 30 * time.Second,
+	}
+	executor := NewExecutor(config)
+	executor.state = &ExecutionState{
+		Variables: make(map[string]interface{}),
+		Steps:    make(map[string]StepResult),
+	}
+
+	step := &Step{
+		ID:     "collect-step",
+		Prompt: "Iteration ${loop.index}",
+		Loop: &LoopConfig{
+			Times:   3,
+			Collect: "outputs",
+		},
+	}
+
+	result := executor.loopExec.ExecuteLoop(context.Background(), step, &Workflow{})
+
+	if result.Status != StatusCompleted {
+		t.Errorf("expected StatusCompleted, got %v", result.Status)
+	}
+	if result.Iterations != 3 {
+		t.Errorf("expected 3 iterations, got %d", result.Iterations)
+	}
+}

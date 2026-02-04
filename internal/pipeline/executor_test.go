@@ -3,11 +3,36 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Dicklesworthstone/ntm/internal/status"
 )
+
+// mockDetector implements status.Detector for testing without tmux.
+type mockDetector struct {
+	detectFunc    func(paneID string) (status.AgentStatus, error)
+	detectAllFunc func(session string) ([]status.AgentStatus, error)
+}
+
+func (m *mockDetector) Detect(paneID string) (status.AgentStatus, error) {
+	if m.detectFunc != nil {
+		return m.detectFunc(paneID)
+	}
+	return status.AgentStatus{}, fmt.Errorf("not implemented")
+}
+
+func (m *mockDetector) DetectAll(session string) ([]status.AgentStatus, error) {
+	if m.detectAllFunc != nil {
+		return m.detectAllFunc(session)
+	}
+	return nil, fmt.Errorf("not implemented")
+}
 
 func TestDefaultExecutorConfig(t *testing.T) {
 	cfg := DefaultExecutorConfig("test-session")
@@ -1840,5 +1865,816 @@ func TestExecutor_Run_DryRun_WithLoop(t *testing.T) {
 	}
 	if state.Status != StatusCompleted {
 		t.Errorf("state.Status = %v, want Completed", state.Status)
+	}
+}
+
+// --- Mock-based tests for tmux-dependent functions ---
+
+// TestWaitForIdle_SuccessfulDetection tests waitForIdle with a mock detector
+// that transitions from working to idle after a few polls.
+func TestWaitForIdle_SuccessfulDetection(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	cfg.ProgressInterval = 50 * time.Millisecond
+	e := NewExecutor(cfg)
+
+	var callCount int32
+	e.detector = &mockDetector{
+		detectFunc: func(paneID string) (status.AgentStatus, error) {
+			n := atomic.AddInt32(&callCount, 1)
+			if n <= 2 {
+				return status.AgentStatus{State: status.StateWorking, PaneID: paneID}, nil
+			}
+			return status.AgentStatus{State: status.StateIdle, PaneID: paneID}, nil
+		},
+	}
+
+	ctx := context.Background()
+	err := e.waitForIdle(ctx, "mock-pane", 10*time.Second)
+
+	if err != nil {
+		t.Fatalf("waitForIdle() should succeed when detector returns idle: %v", err)
+	}
+	if atomic.LoadInt32(&callCount) < 3 {
+		t.Errorf("expected at least 3 Detect() calls, got %d", atomic.LoadInt32(&callCount))
+	}
+}
+
+// TestWaitForIdle_TimeoutWithMock tests that waitForIdle returns error when timeout expires (mock detector)
+func TestWaitForIdle_TimeoutWithMock(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	cfg.ProgressInterval = 50 * time.Millisecond
+	e := NewExecutor(cfg)
+
+	e.detector = &mockDetector{
+		detectFunc: func(paneID string) (status.AgentStatus, error) {
+			return status.AgentStatus{State: status.StateWorking, PaneID: paneID}, nil
+		},
+	}
+
+	ctx := context.Background()
+	err := e.waitForIdle(ctx, "mock-pane", 3*time.Second)
+
+	if err == nil {
+		t.Fatal("waitForIdle() should return error on timeout")
+	}
+	if !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("expected timeout error, got: %v", err)
+	}
+}
+
+// TestWaitForIdle_DetectorErrors tests that waitForIdle continues polling when detector returns errors
+func TestWaitForIdle_DetectorErrors(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	cfg.ProgressInterval = 50 * time.Millisecond
+	e := NewExecutor(cfg)
+
+	var callCount int32
+	e.detector = &mockDetector{
+		detectFunc: func(paneID string) (status.AgentStatus, error) {
+			n := atomic.AddInt32(&callCount, 1)
+			if n <= 3 {
+				return status.AgentStatus{}, fmt.Errorf("tmux error")
+			}
+			return status.AgentStatus{State: status.StateIdle, PaneID: paneID}, nil
+		},
+	}
+
+	ctx := context.Background()
+	err := e.waitForIdle(ctx, "mock-pane", 10*time.Second)
+
+	if err != nil {
+		t.Fatalf("waitForIdle() should succeed after transient errors: %v", err)
+	}
+}
+
+// TestDetectAgentState_WithMockDetector tests detectAgentState returns state from detector
+func TestDetectAgentState_WithMockDetector(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	e := NewExecutor(cfg)
+
+	e.detector = &mockDetector{
+		detectFunc: func(paneID string) (status.AgentStatus, error) {
+			return status.AgentStatus{State: status.StateIdle, PaneID: paneID}, nil
+		},
+	}
+
+	result := e.detectAgentState("mock-pane")
+	if result != "idle" {
+		t.Errorf("detectAgentState() = %q, want %q", result, "idle")
+	}
+}
+
+// TestDetectAgentState_WorkingState tests detectAgentState with working state
+func TestDetectAgentState_WorkingState(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	e := NewExecutor(cfg)
+
+	e.detector = &mockDetector{
+		detectFunc: func(paneID string) (status.AgentStatus, error) {
+			return status.AgentStatus{State: status.StateWorking, PaneID: paneID}, nil
+		},
+	}
+
+	result := e.detectAgentState("mock-pane")
+	if result != "working" {
+		t.Errorf("detectAgentState() = %q, want %q", result, "working")
+	}
+}
+
+// TestDetectAgentState_ErrorReturnsUnknown tests detectAgentState returns "unknown" on error
+func TestDetectAgentState_ErrorReturnsUnknown(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	e := NewExecutor(cfg)
+
+	e.detector = &mockDetector{
+		detectFunc: func(paneID string) (status.AgentStatus, error) {
+			return status.AgentStatus{}, fmt.Errorf("detector error")
+		},
+	}
+
+	result := e.detectAgentState("mock-pane")
+	if result != "unknown" {
+		t.Errorf("detectAgentState() = %q, want %q", result, "unknown")
+	}
+}
+
+// --- Resume tests ---
+
+func TestResume_NilState(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	cfg.DryRun = true
+	e := NewExecutor(cfg)
+
+	_, err := e.Resume(context.Background(), &Workflow{SchemaVersion: SchemaVersion, Name: "test"}, nil, nil)
+	if err == nil {
+		t.Fatal("Resume() should return error for nil state")
+	}
+	if !strings.Contains(err.Error(), "resume state is nil") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestResume_CompletedStepsPreserved(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	cfg.DryRun = true
+	e := NewExecutor(cfg)
+
+	workflow := &Workflow{
+		SchemaVersion: SchemaVersion,
+		Name:          "resume-workflow",
+		Settings:      DefaultWorkflowSettings(),
+		Steps: []Step{
+			{ID: "step1", Prompt: "First task"},
+			{ID: "step2", Prompt: "Second task", DependsOn: []string{"step1"}},
+		},
+	}
+
+	prior := &ExecutionState{
+		RunID:      "resume-run-1",
+		WorkflowID: "resume-workflow",
+		Status:     StatusRunning,
+		Steps: map[string]StepResult{
+			"step1": {StepID: "step1", Status: StatusCompleted, Output: "step1 output"},
+		},
+		Variables: map[string]interface{}{},
+	}
+
+	state, err := e.Resume(context.Background(), workflow, prior, nil)
+	if err != nil {
+		t.Fatalf("Resume() error: %v", err)
+	}
+	if state.Status != StatusCompleted {
+		t.Errorf("state.Status = %v, want Completed", state.Status)
+	}
+	if _, ok := state.Steps["step2"]; !ok {
+		t.Error("step2 should have been executed on resume")
+	}
+}
+
+func TestResume_FillsDefaults(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test-session")
+	cfg.DryRun = true
+	cfg.RunID = "config-run-id"
+	cfg.WorkflowFile = "test.yaml"
+	e := NewExecutor(cfg)
+
+	workflow := &Workflow{
+		SchemaVersion: SchemaVersion,
+		Name:          "defaults-workflow",
+		Settings:      DefaultWorkflowSettings(),
+		Steps: []Step{
+			{ID: "step1", Prompt: "Task"},
+		},
+	}
+
+	prior := &ExecutionState{
+		Steps:     nil,
+		Variables: nil,
+	}
+
+	state, err := e.Resume(context.Background(), workflow, prior, nil)
+	if err != nil {
+		t.Fatalf("Resume() error: %v", err)
+	}
+	if state.RunID != "config-run-id" {
+		t.Errorf("RunID = %q, want %q", state.RunID, "config-run-id")
+	}
+	if state.Session != "test-session" {
+		t.Errorf("Session = %q, want %q", state.Session, "test-session")
+	}
+	if state.WorkflowFile != "test.yaml" {
+		t.Errorf("WorkflowFile = %q, want %q", state.WorkflowFile, "test.yaml")
+	}
+	if state.WorkflowID != "defaults-workflow" {
+		t.Errorf("WorkflowID = %q, want %q", state.WorkflowID, "defaults-workflow")
+	}
+}
+
+// --- calculateRetryDelay tests ---
+
+func TestCalculateRetryDelay_Exponential(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	e := NewExecutor(cfg)
+
+	base := 1 * time.Second
+	tests := []struct {
+		attempt int
+		want    time.Duration
+	}{
+		{1, 1 * time.Second},
+		{2, 2 * time.Second},
+		{3, 4 * time.Second},
+		{4, 8 * time.Second},
+		{5, 16 * time.Second},
+	}
+
+	for _, tt := range tests {
+		delay := e.calculateRetryDelay(base, tt.attempt, "exponential")
+		if delay != tt.want {
+			t.Errorf("calculateRetryDelay(1s, %d, exponential) = %v, want %v", tt.attempt, delay, tt.want)
+		}
+	}
+}
+
+func TestCalculateRetryDelay_Linear(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	e := NewExecutor(cfg)
+
+	base := 2 * time.Second
+	tests := []struct {
+		attempt int
+		want    time.Duration
+	}{
+		{1, 2 * time.Second},
+		{2, 4 * time.Second},
+		{3, 6 * time.Second},
+	}
+
+	for _, tt := range tests {
+		delay := e.calculateRetryDelay(base, tt.attempt, "linear")
+		if delay != tt.want {
+			t.Errorf("calculateRetryDelay(2s, %d, linear) = %v, want %v", tt.attempt, delay, tt.want)
+		}
+	}
+}
+
+func TestCalculateRetryDelay_NoBackoff(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	e := NewExecutor(cfg)
+
+	base := 3 * time.Second
+	for attempt := 1; attempt <= 5; attempt++ {
+		delay := e.calculateRetryDelay(base, attempt, "")
+		if delay != base {
+			t.Errorf("calculateRetryDelay(3s, %d, \"\") = %v, want %v", attempt, delay, base)
+		}
+	}
+}
+
+// --- persistState tests ---
+
+func TestPersistState_WithProjectDir(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	cfg := DefaultExecutorConfig("test")
+	cfg.ProjectDir = tmpDir
+	e := NewExecutor(cfg)
+	e.state = &ExecutionState{
+		RunID:      "persist-test-run",
+		WorkflowID: "persist-workflow",
+		Status:     StatusRunning,
+		Steps:      make(map[string]StepResult),
+		Variables:  make(map[string]interface{}),
+	}
+
+	e.persistState()
+
+	statePath := filepath.Join(tmpDir, ".ntm", "pipelines", "persist-test-run.json")
+	if _, err := os.Stat(statePath); os.IsNotExist(err) {
+		t.Fatalf("state file not created at %s", statePath)
+	}
+
+	loaded, err := LoadState(tmpDir, "persist-test-run")
+	if err != nil {
+		t.Fatalf("LoadState() error: %v", err)
+	}
+	if loaded.RunID != "persist-test-run" {
+		t.Errorf("loaded RunID = %q, want %q", loaded.RunID, "persist-test-run")
+	}
+	if loaded.WorkflowID != "persist-workflow" {
+		t.Errorf("loaded WorkflowID = %q, want %q", loaded.WorkflowID, "persist-workflow")
+	}
+}
+
+// --- Run workflow tests ---
+
+func TestExecutor_Run_DryRun_WithConditions(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test-session")
+	cfg.DryRun = true
+	e := NewExecutor(cfg)
+
+	workflow := &Workflow{
+		SchemaVersion: SchemaVersion,
+		Name:          "condition-workflow",
+		Settings:      DefaultWorkflowSettings(),
+		Vars: map[string]VarDef{
+			"enabled": {Default: "true"},
+			"skipped": {Default: "false"},
+		},
+		Steps: []Step{
+			{ID: "step1", Prompt: "Always runs"},
+			{ID: "step2", Prompt: "Runs when enabled", When: "${vars.enabled}"},
+			{ID: "step3", Prompt: "Skipped when false", When: "${vars.skipped}"},
+		},
+	}
+
+	ctx := context.Background()
+	state, err := e.Run(ctx, workflow, nil, nil)
+
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if state.Status != StatusCompleted {
+		t.Errorf("state.Status = %v, want Completed", state.Status)
+	}
+
+	if r, ok := state.Steps["step1"]; !ok || r.Status != StatusCompleted {
+		t.Error("step1 should be completed")
+	}
+	if r, ok := state.Steps["step2"]; !ok || r.Status != StatusCompleted {
+		t.Error("step2 should be completed (when=true)")
+	}
+	if r, ok := state.Steps["step3"]; !ok || r.Status != StatusSkipped {
+		t.Errorf("step3 should be skipped, got %v", state.Steps["step3"].Status)
+	}
+}
+
+func TestExecutor_Run_DryRun_WithOutputVars(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test-session")
+	cfg.DryRun = true
+	e := NewExecutor(cfg)
+
+	workflow := &Workflow{
+		SchemaVersion: SchemaVersion,
+		Name:          "output-workflow",
+		Settings:      DefaultWorkflowSettings(),
+		Steps: []Step{
+			{ID: "step1", Prompt: "Generate output", OutputVar: "result1"},
+			{ID: "step2", Prompt: "Use ${vars.result1}", DependsOn: []string{"step1"}},
+		},
+	}
+
+	ctx := context.Background()
+	state, err := e.Run(ctx, workflow, nil, nil)
+
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if state.Status != StatusCompleted {
+		t.Errorf("state.Status = %v, want Completed", state.Status)
+	}
+
+	if val, ok := state.Variables["result1"]; !ok {
+		t.Error("result1 should be stored in variables")
+	} else if _, ok := val.(string); !ok {
+		t.Errorf("result1 should be string, got %T", val)
+	}
+}
+
+func TestExecutor_Run_DryRun_WithWhileLoop(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test-session")
+	cfg.DryRun = true
+	e := NewExecutor(cfg)
+
+	workflow := &Workflow{
+		SchemaVersion: SchemaVersion,
+		Name:          "while-workflow",
+		Settings:      DefaultWorkflowSettings(),
+		Vars: map[string]VarDef{
+			"running": {Default: "false"},
+		},
+		Steps: []Step{
+			{
+				ID:     "while-step",
+				Prompt: "While loop iteration ${loop.index}",
+				Loop: &LoopConfig{
+					While:         "${vars.running}",
+					MaxIterations: 10,
+				},
+			},
+		},
+	}
+
+	ctx := context.Background()
+	state, err := e.Run(ctx, workflow, nil, nil)
+
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if state.Status != StatusCompleted {
+		t.Errorf("state.Status = %v, want Completed", state.Status)
+	}
+}
+
+func TestExecutor_Run_DryRun_Cancel(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test-session")
+	cfg.DryRun = true
+	e := NewExecutor(cfg)
+
+	workflow := &Workflow{
+		SchemaVersion: SchemaVersion,
+		Name:          "cancel-workflow",
+		Settings:      DefaultWorkflowSettings(),
+		Steps: []Step{
+			{ID: "step1", Prompt: "Task 1"},
+			{ID: "step2", Prompt: "Task 2", DependsOn: []string{"step1"}},
+			{ID: "step3", Prompt: "Task 3", DependsOn: []string{"step2"}},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	state, err := e.Run(ctx, workflow, nil, nil)
+
+	if err == nil {
+		t.Fatal("Run() should return error on cancel")
+	}
+	if state.Status != StatusCancelled {
+		t.Errorf("state.Status = %v, want Cancelled", state.Status)
+	}
+}
+
+func TestExecutor_Run_DryRun_WithTimesLoop(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test-session")
+	cfg.DryRun = true
+	e := NewExecutor(cfg)
+
+	workflow := &Workflow{
+		SchemaVersion: SchemaVersion,
+		Name:          "times-workflow",
+		Settings:      DefaultWorkflowSettings(),
+		Steps: []Step{
+			{
+				ID:     "times-step",
+				Prompt: "Iteration ${loop.index}",
+				Loop: &LoopConfig{
+					Times: 3,
+				},
+			},
+		},
+	}
+
+	ctx := context.Background()
+	state, err := e.Run(ctx, workflow, nil, nil)
+
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if state.Status != StatusCompleted {
+		t.Errorf("state.Status = %v, want Completed", state.Status)
+	}
+}
+
+// --- clearStepVariables tests ---
+
+func TestClearStepVariables(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	cfg.DryRun = true
+	e := NewExecutor(cfg)
+
+	workflow := &Workflow{
+		SchemaVersion: SchemaVersion,
+		Name:          "test",
+		Steps: []Step{
+			{ID: "step1", Prompt: "Task", OutputVar: "myresult"},
+		},
+	}
+	e.graph = NewDependencyGraph(workflow)
+
+	e.state = &ExecutionState{
+		Variables: map[string]interface{}{
+			"steps.step1.output": "output data",
+			"steps.step1.data":   "parsed data",
+			"myresult":           "result",
+			"myresult_parsed":    "parsed result",
+			"unrelated":          "keep this",
+		},
+	}
+
+	e.clearStepVariables("step1")
+
+	if _, ok := e.state.Variables["steps.step1.output"]; ok {
+		t.Error("steps.step1.output should be cleared")
+	}
+	if _, ok := e.state.Variables["steps.step1.data"]; ok {
+		t.Error("steps.step1.data should be cleared")
+	}
+	if _, ok := e.state.Variables["myresult"]; ok {
+		t.Error("myresult should be cleared")
+	}
+	if _, ok := e.state.Variables["myresult_parsed"]; ok {
+		t.Error("myresult_parsed should be cleared")
+	}
+	if _, ok := e.state.Variables["unrelated"]; !ok {
+		t.Error("unrelated variable should be preserved")
+	}
+}
+
+func TestClearStepVariables_NilState(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	e := NewExecutor(cfg)
+	e.state = nil
+	e.clearStepVariables("step1")
+}
+
+// --- truncatePrompt edge cases ---
+
+func TestTruncatePrompt_EdgeCases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		n     int
+		want  string
+	}{
+		{"zero limit", "hello", 0, ""},
+		{"negative limit", "hello", -1, ""},
+		{"limit 1", "hello", 1, "."},
+		{"limit 2", "hello", 2, ".."},
+		{"limit 3", "hello", 3, "..."},
+		{"exact fit", "hello", 5, "hello"},
+		{"needs truncation", "hello world", 8, "hello..."},
+		{"newlines replaced", "hello\nworld", 20, "hello world"},
+		{"tabs replaced", "hello\tworld", 20, "hello world"},
+		{"multibyte UTF-8", "héllo wörld", 8, "héll..."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := truncatePrompt(tt.input, tt.n)
+			if got != tt.want {
+				t.Errorf("truncatePrompt(%q, %d) = %q, want %q", tt.input, tt.n, got, tt.want)
+			}
+		})
+	}
+}
+
+// --- Cancel tests ---
+
+// --- calculateProgress tests ---
+
+func TestCalculateProgress_NoGraph(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	e := NewExecutor(cfg)
+	e.graph = nil
+
+	progress := e.calculateProgress()
+	if progress != 0.0 {
+		t.Errorf("calculateProgress() = %f, want 0.0 with nil graph", progress)
+	}
+}
+
+func TestCalculateProgress_EmptyWorkflow(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	e := NewExecutor(cfg)
+	e.state = &ExecutionState{Steps: make(map[string]StepResult)}
+	e.graph = NewDependencyGraph(&Workflow{
+		SchemaVersion: SchemaVersion,
+		Name:          "empty",
+	})
+
+	progress := e.calculateProgress()
+	if progress != 1.0 {
+		t.Errorf("calculateProgress() = %f, want 1.0 for empty workflow", progress)
+	}
+}
+
+func TestCalculateProgress_PartiallyComplete(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	e := NewExecutor(cfg)
+	e.state = &ExecutionState{
+		Steps: map[string]StepResult{
+			"step1": {Status: StatusCompleted},
+			"step2": {Status: StatusFailed},
+		},
+	}
+	e.graph = NewDependencyGraph(&Workflow{
+		SchemaVersion: SchemaVersion,
+		Name:          "partial",
+		Steps: []Step{
+			{ID: "step1", Prompt: "A"},
+			{ID: "step2", Prompt: "B"},
+			{ID: "step3", Prompt: "C"},
+			{ID: "step4", Prompt: "D"},
+		},
+	})
+
+	progress := e.calculateProgress()
+	if progress != 0.5 {
+		t.Errorf("calculateProgress() = %f, want 0.5", progress)
+	}
+}
+
+// --- MinProgressInterval tests ---
+
+func TestNewExecutor_MinProgressInterval(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	cfg.ProgressInterval = 1 * time.Millisecond
+
+	e := NewExecutor(cfg)
+	if e.config.ProgressInterval != 1*time.Second {
+		t.Errorf("ProgressInterval = %v, want 1s (default) when below minimum", e.config.ProgressInterval)
+	}
+}
+
+func TestNewExecutor_ZeroProgressInterval(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	cfg.ProgressInterval = 0
+
+	e := NewExecutor(cfg)
+	if e.config.ProgressInterval != 1*time.Second {
+		t.Errorf("ProgressInterval = %v, want 1s (default) for zero interval", e.config.ProgressInterval)
+	}
+}
+
+// --- GenerateRunID tests ---
+
+func TestGenerateRunID_Format(t *testing.T) {
+	t.Parallel()
+
+	id := GenerateRunID()
+	if !strings.HasPrefix(id, "run-") {
+		t.Errorf("GenerateRunID() = %q, should start with 'run-'", id)
+	}
+	parts := strings.Split(id, "-")
+	if len(parts) < 3 {
+		t.Errorf("GenerateRunID() = %q, expected at least 3 parts separated by '-'", id)
+	}
+}
+
+func TestGenerateRunID_Unique(t *testing.T) {
+	t.Parallel()
+
+	ids := make(map[string]bool)
+	for i := 0; i < 100; i++ {
+		id := GenerateRunID()
+		if ids[id] {
+			t.Fatalf("GenerateRunID() produced duplicate: %s", id)
+		}
+		ids[id] = true
+	}
+}
+
+// --- resolvePrompt tests ---
+
+func TestResolvePrompt_FromFile(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	promptPath := filepath.Join(tmpDir, "prompt.txt")
+	os.WriteFile(promptPath, []byte("Hello from file"), 0644)
+
+	cfg := DefaultExecutorConfig("test")
+	e := NewExecutor(cfg)
+
+	step := &Step{PromptFile: promptPath}
+	prompt, err := e.resolvePrompt(step)
+	if err != nil {
+		t.Fatalf("resolvePrompt() error: %v", err)
+	}
+	if prompt != "Hello from file" {
+		t.Errorf("resolvePrompt() = %q, want %q", prompt, "Hello from file")
+	}
+}
+
+func TestResolvePrompt_MissingFile(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	e := NewExecutor(cfg)
+
+	step := &Step{PromptFile: "/nonexistent/file.txt"}
+	_, err := e.resolvePrompt(step)
+	if err == nil {
+		t.Fatal("resolvePrompt() should error for missing file")
+	}
+}
+
+func TestResolvePrompt_NoPrompt(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultExecutorConfig("test")
+	e := NewExecutor(cfg)
+
+	step := &Step{}
+	_, err := e.resolvePrompt(step)
+	if err == nil {
+		t.Fatal("resolvePrompt() should error when no prompt or prompt_file")
+	}
+}
+
+// --- normalizeAgentType tests ---
+
+func TestNormalizeAgentType_Aliases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"claude", "cc"},
+		{"Claude", "cc"},
+		{"CLAUDE", "cc"},
+		{"cc", "cc"},
+		{"claude-code", "cc"},
+		{"codex", "cod"},
+		{"cod", "cod"},
+		{"openai", "cod"},
+		{"gemini", "gmi"},
+		{"gmi", "gmi"},
+		{"google", "gmi"},
+		{"unknown", "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			got := normalizeAgentType(tt.input)
+			if got != tt.want {
+				t.Errorf("normalizeAgentType(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }
