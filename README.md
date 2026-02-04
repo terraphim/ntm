@@ -3278,6 +3278,81 @@ ntm policy edit                # Open in $EDITOR
 
 ---
 
+## Privacy & Redaction
+
+NTM scans prompts and outputs for secrets/PII at critical IO boundaries (send/copy/save/mail/export) and supports a privacy mode for sessions that should not persist data. The canonical redaction engine lives in `internal/redaction` and is documented in `docs/REDACTION_SPEC.md`.
+
+### Redaction Modes
+
+Redaction can be controlled per-command with `--redact=off|warn|redact|block` or in config via `redaction.mode`.
+
+- `off`: no scanning or redaction.
+- `warn`: detect secrets and emit warnings without changing content.
+- `redact`: replace matches with placeholders like `[REDACTED:OPENAI_KEY:deadbeef]`.
+- `block`: fail the operation when secrets are detected.
+
+Examples (synthetic secrets only):
+
+```bash
+ntm send myproject --redact=warn --cc "Use sk-proj-FAKEtestkey1234567890123456789012345678901234 for testing"
+ntm send myproject --redact=block --all "token=ghp_FAKEtesttokenvalue12345678901234567"
+ntm send myproject --redact=block --allow-secret --all "token=ghp_FAKEtesttokenvalue12345678901234567"
+```
+
+`--allow-secret` downgrades `block` to `warn` for a single invocation (use with caution).
+
+### Prompt Preflight
+
+Use `ntm preflight` to lint prompts and run secret detection before dispatching:
+
+```bash
+ntm preflight "Review auth changes in src/auth.go"
+ntm preflight --strict "rm -rf /tmp/cache"
+ntm preflight --json "Deploy with token=ghp_FAKEtesttokenvalue12345678901234567"
+```
+
+`--strict` treats warnings as failures, making it safe to enforce in automation.
+
+### Privacy Mode
+
+Privacy mode disables persistence of sensitive session data (prompt history, event logs, checkpoints, scrollback capture). Enable per session:
+
+```bash
+ntm spawn myproject --cc=2 --privacy
+```
+
+Override for a single command when you explicitly want to persist or export:
+
+```bash
+ntm support-bundle myproject --allow-persist
+```
+
+Privacy defaults can be set in config:
+
+```toml
+[redaction]
+mode = "warn"
+allowlist = ["^dev-"]
+
+[privacy]
+enabled = false
+disable_prompt_history = true
+disable_event_logs = true
+disable_checkpoints = true
+disable_scrollback_capture = true
+require_explicit_persist = true
+```
+
+### Scrub Artifacts
+
+Scan NTM artifacts without leaking raw secrets:
+
+```bash
+ntm scrub --path .ntm --format json
+```
+
+---
+
 ## Configuration Management
 
 NTM provides commands for inspecting and managing your configuration.

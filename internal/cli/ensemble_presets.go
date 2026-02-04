@@ -252,6 +252,12 @@ func runEnsembleExport(w io.Writer, name string, opts ensembleExportOptions) err
 	}
 	outputPath = filepath.Clean(outputPath)
 
+	slog.Default().Info("ensemble export",
+		"preset", name,
+		"output", outputPath,
+		"force", opts.Force,
+	)
+
 	if !opts.Force {
 		if _, err := os.Stat(outputPath); err == nil {
 			return fmt.Errorf("output file already exists: %s (use --force to overwrite)", outputPath)
@@ -275,10 +281,12 @@ func runEnsembleExport(w io.Writer, name string, opts ensembleExportOptions) err
 	if err != nil {
 		return fmt.Errorf("create output file: %w", err)
 	}
-	defer f.Close()
-
 	if err := toml.NewEncoder(f).Encode(payload); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("encode TOML: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close output file: %w", err)
 	}
 
 	info, err := f.Stat()
@@ -286,6 +294,11 @@ func runEnsembleExport(w io.Writer, name string, opts ensembleExportOptions) err
 	if err == nil {
 		size = int(info.Size())
 	}
+	slog.Default().Info("ensemble export complete",
+		"preset", name,
+		"output", outputPath,
+		"bytes", size,
+	)
 
 	result := ensembleExportOutput{
 		GeneratedAt: output.Timestamp(),
@@ -335,6 +348,12 @@ to import from a remote URL safely.`,
 }
 
 func runEnsembleImport(w io.Writer, input string, opts ensembleImportOptions) error {
+	slog.Default().Info("ensemble import",
+		"source_input", input,
+		"allow_remote", opts.AllowRemote,
+		"checksum_provided", strings.TrimSpace(opts.SHA256) != "",
+	)
+
 	data, source, err := readEnsembleImportSource(input, opts)
 	if err != nil {
 		return err
@@ -389,6 +408,12 @@ func runEnsembleImport(w io.Writer, input string, opts ensembleImportOptions) er
 		return err
 	}
 
+	slog.Default().Info("ensemble import complete",
+		"name", preset.Name,
+		"target", importPath,
+		"source", source,
+	)
+
 	result := ensembleImportOutput{
 		GeneratedAt: output.Timestamp(),
 		Name:        preset.Name,
@@ -430,6 +455,9 @@ func readEnsembleImportSource(input string, opts ensembleImportOptions) ([]byte,
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, "", fmt.Errorf("read remote body: %w", err)
+		}
+		if err := resp.Body.Close(); err != nil {
+			return nil, "", fmt.Errorf("close remote body: %w", err)
 		}
 		if !checkSHA256(data, expected) {
 			return nil, "", fmt.Errorf("sha256 checksum mismatch")
@@ -721,7 +749,7 @@ func renderPresetsTableVerbose(w io.Writer, details []ensemblePresetDetail) erro
 }
 
 // renderYAML outputs data as YAML.
-func renderYAML(w io.Writer, v interface{}) error {
+func renderYAML(w io.Writer, v any) error {
 	data, err := yaml.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("marshal yaml: %w", err)
