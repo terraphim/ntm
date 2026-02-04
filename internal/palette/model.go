@@ -431,12 +431,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Update viewport dimensions (list height minus chrome)
 		// Account for header (~4 lines), filter (~3 lines), help bar (~2 lines), borders (~4 lines)
-		listHeight := m.height - 14
-		if listHeight < 5 {
-			listHeight = 5
+		// The -2 matches what View() uses for the actual rendered viewport height
+		listBoxHeight := m.height - 14
+		if listBoxHeight < 5 {
+			listBoxHeight = 5
 		}
 		m.listViewport.Width = m.width - 8
-		m.listViewport.Height = listHeight
+		m.listViewport.Height = listBoxHeight - 2 // Must match View() calculation
 		return m, nil
 
 	case AnimationTickMsg:
