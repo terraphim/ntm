@@ -10,6 +10,42 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/redaction"
 )
 
+func TestGetRedactionConfig_NilByDefault(t *testing.T) {
+	// Not parallel: modifies package-level redactionConfig
+	origCfg := GetRedactionConfig()
+	SetRedactionConfig(nil)
+	t.Cleanup(func() { SetRedactionConfig(origCfg) })
+
+	got := GetRedactionConfig()
+	if got != nil {
+		t.Errorf("GetRedactionConfig() = %v, want nil when not configured", got)
+	}
+}
+
+func TestGetRedactionConfig_ReturnsCopy(t *testing.T) {
+	// Not parallel: modifies package-level redactionConfig
+	origCfg := GetRedactionConfig()
+	t.Cleanup(func() { SetRedactionConfig(origCfg) })
+
+	cfg := &redaction.Config{Mode: redaction.ModeWarn}
+	SetRedactionConfig(cfg)
+
+	got := GetRedactionConfig()
+	if got == nil {
+		t.Fatal("GetRedactionConfig() = nil, want non-nil after SetRedactionConfig")
+	}
+	if got.Mode != redaction.ModeWarn {
+		t.Errorf("GetRedactionConfig().Mode = %v, want %v", got.Mode, redaction.ModeWarn)
+	}
+
+	// Verify it returns a copy, not the original pointer
+	got.Mode = redaction.ModeRedact
+	got2 := GetRedactionConfig()
+	if got2.Mode != redaction.ModeWarn {
+		t.Error("GetRedactionConfig() should return a copy; mutation affected the original")
+	}
+}
+
 func TestSaveAndLoadPromptHistory(t *testing.T) {
 	// Create temp dir for test
 	tmpDir, err := os.MkdirTemp("", "ntm-prompts-test")

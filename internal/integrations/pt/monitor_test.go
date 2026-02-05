@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Dicklesworthstone/ntm/internal/config"
+	"github.com/Dicklesworthstone/ntm/internal/tools"
 )
 
 func TestNewHealthMonitor(t *testing.T) {
@@ -205,23 +206,27 @@ func TestInitGlobalMonitor(t *testing.T) {
 }
 
 func TestMapPTClassification(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
-		input    Classification
+		input    tools.PTClassification
 		expected Classification
 	}{
-		{"useful", ClassUseful, ClassUseful},
-		{"stuck", ClassStuck, ClassStuck},
-		{"zombie", ClassZombie, ClassZombie},
-		{"unknown", ClassUnknown, ClassUnknown},
-		{"waiting", ClassWaiting, ClassWaiting},
-		{"idle", ClassIdle, ClassIdle},
+		{"useful", tools.PTClassUseful, ClassUseful},
+		{"abandoned_maps_to_stuck", tools.PTClassAbandoned, ClassStuck},
+		{"zombie", tools.PTClassZombie, ClassZombie},
+		{"unknown", tools.PTClassUnknown, ClassUnknown},
+		{"empty_string_maps_to_unknown", tools.PTClassification(""), ClassUnknown},
+		{"arbitrary_maps_to_unknown", tools.PTClassification("foobar"), ClassUnknown},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.input != tt.expected {
-				t.Errorf("expected %s, got %s", tt.expected, tt.input)
+			t.Parallel()
+			got := mapPTClassification(tt.input)
+			if got != tt.expected {
+				t.Errorf("mapPTClassification(%q) = %q, want %q", tt.input, got, tt.expected)
 			}
 		})
 	}
