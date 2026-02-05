@@ -1,0 +1,477 @@
+package context
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func makePending(agentID, session, pane string, timeout time.Time) *PendingRotation {
+	return &PendingRotation{
+		AgentID:        agentID,
+		SessionName:    session,
+		PaneID:         pane,
+		ContextPercent: 85.5,
+		CreatedAt:      time.Now(),
+		TimeoutAt:      timeout,
+		DefaultAction:  ConfirmRotate,
+		WorkDir:        "/tmp/test",
+	}
+}
+
+func TestNewPendingRotationStoreWithPath(t *testing.T) {
+	t.Parallel()
+	store := NewPendingRotationStoreWithPath("/tmp/test.jsonl")
+	if store.StoragePath() != "/tmp/test.jsonl" {
+		t.Errorf("StoragePath() = %q, want /tmp/test.jsonl", store.StoragePath())
+	}
+}
+
+func TestPendingRotationStore_AddAndGet(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store := NewPendingRotationStoreWithPath(filepath.Join(dir, "pending.jsonl"))
+
+	// Get on empty store returns nil
+	got, err := store.Get("agent-1")
+	if err != nil {
+		t.Fatalf("Get empty: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil for empty store, got %+v", got)
+	}
+
+	// Add a pending rotation
+	timeout := time.Now().Add(10 * time.Minute)
+	p := makePending("agent-1", "sess-1", "1.1", timeout)
+	if err := store.Add(p); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	// Get it back
+	got, err = store.Get("agent-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if got.AgentID != "agent-1" {
+		t.Errorf("AgentID = %q, want agent-1", got.AgentID)
+	}
+	if got.SessionName != "sess-1" {
+		t.Errorf("SessionName = %q, want sess-1", got.SessionName)
+	}
+	if got.DefaultAction != ConfirmRotate {
+		t.Errorf("DefaultAction = %q, want rotate", got.DefaultAction)
+	}
+}
+
+func TestPendingRotationStore_AddUpdatesExisting(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store := NewPendingRotationStoreWithPath(filepath.Join(dir, "pending.jsonl"))
+
+	timeout := time.Now().Add(10 * time.Minute)
+	p1 := makePending("agent-1", "sess-1", "1.1", timeout)
+	p1.ContextPercent = 80.0
+	if err := store.Add(p1); err != nil {
+		t.Fatalf("Add 1: %v", err)
+	}
+
+	// Add again with different context percent — should replace
+	p2 := makePending("agent-1", "sess-1", "1.1", timeout)
+	p2.ContextPercent = 95.0
+	if err := store.Add(p2); err != nil {
+		t.Fatalf("Add 2: %v", err)
+	}
+
+	// Should only have one entry
+	all, err := store.GetAll()
+	if err != nil {
+		t.Fatalf("GetAll: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("expected 1 entry after update, got %d", len(all))
+	}
+	if all[0].ContextPercent != 95.0 {
+		t.Errorf("ContextPercent = %f, want 95.0", all[0].ContextPercent)
+	}
+}
+
+func TestPendingRotationStore_Remove(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store := NewPendingRotationStoreWithPath(filepath.Join(dir, "pending.jsonl"))
+
+	timeout := time.Now().Add(10 * time.Minute)
+	_ = store.Add(makePending("agent-1", "sess-1", "1.1", timeout))
+	_ = store.Add(makePending("agent-2", "sess-1", "1.2", timeout))
+
+	// Remove agent-1
+	if err := store.Remove("agent-1"); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	// agent-1 should be gone
+	got, err := store.Get("agent-1")
+	if err != nil {
+		t.Fatalf("Get after remove: %v", err)
+	}
+	if got != nil {
+		t.Error("expected nil after remove")
+	}
+
+	// agent-2 should still be there
+	got, err = store.Get("agent-2")
+	if err != nil {
+		t.Fatalf("Get agent-2: %v", err)
+	}
+	if got == nil {
+		t.Error("expected agent-2 to still exist")
+	}
+}
+
+func TestPendingRotationStore_GetAll(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store := NewPendingRotationStoreWithPath(filepath.Join(dir, "pending.jsonl"))
+
+	timeout := time.Now().Add(10 * time.Minute)
+	_ = store.Add(makePending("agent-1", "sess-1", "1.1", timeout))
+	_ = store.Add(makePending("agent-2", "sess-2", "2.1", timeout))
+	_ = store.Add(makePending("agent-3", "sess-1", "1.3", timeout))
+
+	all, err := store.GetAll()
+	if err != nil {
+		t.Fatalf("GetAll: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(all))
+	}
+}
+
+func TestPendingRotationStore_GetAll_SkipsExpired(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store := NewPendingRotationStoreWithPath(filepath.Join(dir, "pending.jsonl"))
+
+	future := time.Now().Add(10 * time.Minute)
+	past := time.Now().Add(-1 * time.Minute) // already expired
+
+	_ = store.Add(makePending("agent-1", "sess-1", "1.1", future))
+	_ = store.Add(makePending("agent-2", "sess-1", "1.2", past))
+
+	all, err := store.GetAll()
+	if err != nil {
+		t.Fatalf("GetAll: %v", err)
+	}
+	// Only future entry should remain
+	if len(all) != 1 {
+		t.Fatalf("expected 1 non-expired entry, got %d", len(all))
+	}
+	if all[0].AgentID != "agent-1" {
+		t.Errorf("expected agent-1, got %q", all[0].AgentID)
+	}
+}
+
+func TestPendingRotationStore_GetForSession(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store := NewPendingRotationStoreWithPath(filepath.Join(dir, "pending.jsonl"))
+
+	timeout := time.Now().Add(10 * time.Minute)
+	_ = store.Add(makePending("agent-1", "sess-1", "1.1", timeout))
+	_ = store.Add(makePending("agent-2", "sess-2", "2.1", timeout))
+	_ = store.Add(makePending("agent-3", "sess-1", "1.3", timeout))
+
+	result, err := store.GetForSession("sess-1")
+	if err != nil {
+		t.Fatalf("GetForSession: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 entries for sess-1, got %d", len(result))
+	}
+
+	// None for non-existent session
+	result, err = store.GetForSession("sess-99")
+	if err != nil {
+		t.Fatalf("GetForSession empty: %v", err)
+	}
+	if len(result) != 0 {
+		t.Fatalf("expected 0 entries for sess-99, got %d", len(result))
+	}
+}
+
+func TestPendingRotationStore_GetExpired(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store := NewPendingRotationStoreWithPath(filepath.Join(dir, "pending.jsonl"))
+
+	future := time.Now().Add(10 * time.Minute)
+	past := time.Now().Add(-1 * time.Minute)
+
+	_ = store.Add(makePending("agent-1", "sess-1", "1.1", future))
+	_ = store.Add(makePending("agent-2", "sess-1", "1.2", past))
+
+	expired, err := store.GetExpired()
+	if err != nil {
+		t.Fatalf("GetExpired: %v", err)
+	}
+	if len(expired) != 1 {
+		t.Fatalf("expected 1 expired entry, got %d", len(expired))
+	}
+	if expired[0].AgentID != "agent-2" {
+		t.Errorf("expected agent-2, got %q", expired[0].AgentID)
+	}
+}
+
+func TestPendingRotationStore_CleanExpired(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pending.jsonl")
+	store := NewPendingRotationStoreWithPath(path)
+
+	future := time.Now().Add(10 * time.Minute)
+	past := time.Now().Add(-1 * time.Minute)
+
+	// Write entries directly to bypass Add's expired-entry filtering.
+	entries := []StoredPendingRotation{
+		*FromPendingRotation(makePending("agent-1", "sess-1", "1.1", future)),
+		*FromPendingRotation(makePending("agent-2", "sess-1", "1.2", past)),
+		*FromPendingRotation(makePending("agent-3", "sess-1", "1.3", past)),
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	for _, e := range entries {
+		b, _ := json.Marshal(e)
+		_, _ = f.Write(b)
+		_, _ = f.Write([]byte("\n"))
+	}
+	f.Close()
+
+	removed, err := store.CleanExpired()
+	if err != nil {
+		t.Fatalf("CleanExpired: %v", err)
+	}
+	if removed != 2 {
+		t.Errorf("removed = %d, want 2", removed)
+	}
+
+	all, err := store.GetAll()
+	if err != nil {
+		t.Fatalf("GetAll after clean: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("expected 1 entry after clean, got %d", len(all))
+	}
+}
+
+func TestPendingRotationStore_CleanExpired_NothingToClean(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store := NewPendingRotationStoreWithPath(filepath.Join(dir, "pending.jsonl"))
+
+	future := time.Now().Add(10 * time.Minute)
+	_ = store.Add(makePending("agent-1", "sess-1", "1.1", future))
+
+	removed, err := store.CleanExpired()
+	if err != nil {
+		t.Fatalf("CleanExpired: %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("removed = %d, want 0", removed)
+	}
+}
+
+func TestPendingRotationStore_Count(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store := NewPendingRotationStoreWithPath(filepath.Join(dir, "pending.jsonl"))
+
+	// Empty store
+	count, err := store.Count()
+	if err != nil {
+		t.Fatalf("Count empty: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("count = %d, want 0", count)
+	}
+
+	// Add entries
+	timeout := time.Now().Add(10 * time.Minute)
+	_ = store.Add(makePending("agent-1", "sess-1", "1.1", timeout))
+	_ = store.Add(makePending("agent-2", "sess-1", "1.2", timeout))
+
+	count, err = store.Count()
+	if err != nil {
+		t.Fatalf("Count: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("count = %d, want 2", count)
+	}
+}
+
+func TestPendingRotationStore_Clear(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pending.jsonl")
+	store := NewPendingRotationStoreWithPath(path)
+
+	timeout := time.Now().Add(10 * time.Minute)
+	_ = store.Add(makePending("agent-1", "sess-1", "1.1", timeout))
+
+	// Verify file exists
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Fatal("expected file to exist before clear")
+	}
+
+	if err := store.Clear(); err != nil {
+		t.Fatalf("Clear: %v", err)
+	}
+
+	// File should be gone
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("expected file to be removed after clear")
+	}
+
+	// Clear on already-cleared store should be no-op
+	if err := store.Clear(); err != nil {
+		t.Fatalf("Clear on empty: %v", err)
+	}
+}
+
+func TestPendingRotationStore_GetOnNonExistentFile(t *testing.T) {
+	t.Parallel()
+	store := NewPendingRotationStoreWithPath("/tmp/nonexistent-test-pending.jsonl")
+
+	// Get should return nil, nil
+	got, err := store.Get("agent-1")
+	if err != nil {
+		t.Fatalf("Get nonexistent file: %v", err)
+	}
+	if got != nil {
+		t.Error("expected nil for nonexistent file")
+	}
+
+	// GetAll should return empty
+	all, err := store.GetAll()
+	if err != nil {
+		t.Fatalf("GetAll nonexistent file: %v", err)
+	}
+	if len(all) != 0 {
+		t.Errorf("expected 0 entries, got %d", len(all))
+	}
+}
+
+func TestPendingRotationStore_MalformedLines(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pending.jsonl")
+
+	// Write a mix of valid and malformed JSONL
+	timeout := time.Now().Add(10 * time.Minute).Format(time.RFC3339Nano)
+	content := `not-json
+{"agent_id":"agent-1","session_name":"sess-1","pane_id":"1.1","context_percent":85.5,"created_at":"2026-01-01T00:00:00Z","timeout_at":"` + timeout + `","default_action":"rotate"}
+{broken json
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	store := NewPendingRotationStoreWithPath(path)
+	all, err := store.GetAll()
+	if err != nil {
+		t.Fatalf("GetAll with malformed: %v", err)
+	}
+	// Should skip malformed lines and return the valid one
+	if len(all) != 1 {
+		t.Fatalf("expected 1 valid entry, got %d", len(all))
+	}
+	if all[0].AgentID != "agent-1" {
+		t.Errorf("AgentID = %q, want agent-1", all[0].AgentID)
+	}
+}
+
+func TestPendingRotationStore_Persistence(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pending.jsonl")
+
+	timeout := time.Now().Add(10 * time.Minute)
+
+	// Write with one store instance
+	store1 := NewPendingRotationStoreWithPath(path)
+	_ = store1.Add(makePending("agent-1", "sess-1", "1.1", timeout))
+	_ = store1.Add(makePending("agent-2", "sess-2", "2.1", timeout))
+
+	// Read with a new store instance
+	store2 := NewPendingRotationStoreWithPath(path)
+	all, err := store2.GetAll()
+	if err != nil {
+		t.Fatalf("GetAll from new store: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 entries from persisted store, got %d", len(all))
+	}
+}
+
+func TestStoredPendingRotation_ToPendingRotation(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	timeout := now.Add(5 * time.Minute)
+
+	stored := &StoredPendingRotation{
+		AgentID:        "agent-1",
+		SessionName:    "sess-1",
+		PaneID:         "1.1",
+		ContextPercent: 90.0,
+		CreatedAt:      now,
+		TimeoutAt:      timeout,
+		DefaultAction:  ConfirmCompact,
+		WorkDir:        "/projects/test",
+	}
+
+	p := stored.ToPendingRotation()
+	if p.AgentID != "agent-1" {
+		t.Errorf("AgentID = %q, want agent-1", p.AgentID)
+	}
+	if p.DefaultAction != ConfirmCompact {
+		t.Errorf("DefaultAction = %q, want compact", p.DefaultAction)
+	}
+	if p.WorkDir != "/projects/test" {
+		t.Errorf("WorkDir = %q, want /projects/test", p.WorkDir)
+	}
+}
+
+func TestFromPendingRotation_Fields(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	timeout := now.Add(5 * time.Minute)
+
+	p := &PendingRotation{
+		AgentID:        "agent-2",
+		SessionName:    "sess-2",
+		PaneID:         "2.2",
+		ContextPercent: 75.5,
+		CreatedAt:      now,
+		TimeoutAt:      timeout,
+		DefaultAction:  ConfirmIgnore,
+		WorkDir:        "/projects/other",
+	}
+
+	stored := FromPendingRotation(p)
+	if stored.AgentID != "agent-2" {
+		t.Errorf("AgentID = %q, want agent-2", stored.AgentID)
+	}
+	if stored.DefaultAction != ConfirmIgnore {
+		t.Errorf("DefaultAction = %q, want ignore", stored.DefaultAction)
+	}
+	if stored.WorkDir != "/projects/other" {
+		t.Errorf("WorkDir = %q, want /projects/other", stored.WorkDir)
+	}
+}
