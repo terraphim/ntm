@@ -3595,6 +3595,102 @@ func TestValidateEnsembleConfig(t *testing.T) {
 			wantErr: true,
 			errMsg:  "max_entries",
 		},
+		// Additional test cases for remaining branches
+		{
+			name:    "valid assignment category",
+			cfg:     &EnsembleConfig{Assignment: "category"},
+			wantErr: false,
+		},
+		{
+			name:    "valid assignment explicit",
+			cfg:     &EnsembleConfig{Assignment: "explicit"},
+			wantErr: false,
+		},
+		{
+			name:    "valid mode tier experimental",
+			cfg:     &EnsembleConfig{ModeTierDefault: "experimental"},
+			wantErr: false,
+		},
+		{
+			name: "invalid synthesis strategy",
+			cfg: &EnsembleConfig{
+				Synthesis: EnsembleSynthesisConfig{Strategy: "invalid-strategy"},
+			},
+			wantErr: true,
+			errMsg:  "synthesis.strategy",
+		},
+		{
+			name: "invalid budget total negative",
+			cfg: &EnsembleConfig{
+				Budget: EnsembleBudgetConfig{Total: -500},
+			},
+			wantErr: true,
+			errMsg:  "budget",
+		},
+		{
+			name: "invalid budget synthesis negative",
+			cfg: &EnsembleConfig{
+				Budget: EnsembleBudgetConfig{Synthesis: -100},
+			},
+			wantErr: true,
+			errMsg:  "budget",
+		},
+		{
+			name: "invalid budget context_pack negative",
+			cfg: &EnsembleConfig{
+				Budget: EnsembleBudgetConfig{ContextPack: -50},
+			},
+			wantErr: true,
+			errMsg:  "budget",
+		},
+		{
+			name: "invalid early_stop min_agents negative",
+			cfg: &EnsembleConfig{
+				EarlyStop: EnsembleEarlyStopConfig{MinAgents: -1},
+			},
+			wantErr: true,
+			errMsg:  "min_agents",
+		},
+		{
+			name: "invalid early_stop window_size negative",
+			cfg: &EnsembleConfig{
+				EarlyStop: EnsembleEarlyStopConfig{WindowSize: -1},
+			},
+			wantErr: true,
+			errMsg:  "window_size",
+		},
+		{
+			name: "invalid early_stop findings_threshold negative",
+			cfg: &EnsembleConfig{
+				EarlyStop: EnsembleEarlyStopConfig{FindingsThreshold: -0.5},
+			},
+			wantErr: true,
+			errMsg:  "findings_threshold",
+		},
+		{
+			name: "invalid early_stop findings_threshold too high",
+			cfg: &EnsembleConfig{
+				EarlyStop: EnsembleEarlyStopConfig{FindingsThreshold: 1.5},
+			},
+			wantErr: true,
+			errMsg:  "findings_threshold",
+		},
+		{
+			name: "invalid early_stop similarity_threshold negative",
+			cfg: &EnsembleConfig{
+				EarlyStop: EnsembleEarlyStopConfig{SimilarityThreshold: -0.5},
+			},
+			wantErr: true,
+			errMsg:  "similarity_threshold",
+		},
+		{
+			name: "invalid early_stop similarity_threshold too high",
+			cfg: &EnsembleConfig{
+				EarlyStop: EnsembleEarlyStopConfig{SimilarityThreshold: 1.5},
+			},
+			wantErr: true,
+			errMsg:  "similarity_threshold",
+		},
 	}
 
 	for _, tc := range tests {

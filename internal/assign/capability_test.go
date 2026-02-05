@@ -134,12 +134,37 @@ func TestParseAgentType(t *testing.T) {
 		{"cc", tmux.AgentClaude},
 		{"claude", tmux.AgentClaude},
 		{"Claude", tmux.AgentClaude},
+		{"CC", tmux.AgentClaude}, // uppercase short code
 		{"cod", tmux.AgentCodex},
 		{"codex", tmux.AgentCodex},
 		{"Codex", tmux.AgentCodex},
+		{"COD", tmux.AgentCodex}, // uppercase short code
 		{"gmi", tmux.AgentGemini},
 		{"gemini", tmux.AgentGemini},
 		{"Gemini", tmux.AgentGemini},
+		{"GMI", tmux.AgentGemini}, // uppercase short code
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			got := ParseAgentType(tc.input)
+			if got != tc.want {
+				t.Errorf("ParseAgentType(%s) = %s, want %s", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseAgentTypeUnknown(t *testing.T) {
+	// Unknown agent types should return the lowercased input as-is
+	tests := []struct {
+		input string
+		want  tmux.AgentType
+	}{
+		{"unknown_agent", tmux.AgentType("unknown_agent")},
+		{"custom", tmux.AgentType("custom")},
+		{"CUSTOM", tmux.AgentType("custom")}, // lowercased
+		{"my-agent", tmux.AgentType("my-agent")},
 	}
 
 	for _, tc := range tests {
@@ -157,19 +182,49 @@ func TestParseTaskType(t *testing.T) {
 		input string
 		want  TaskType
 	}{
+		// Bug type - all aliases
 		{"bug", TaskBug},
 		{"fix", TaskBug},
 		{"broken", TaskBug},
+		{"error", TaskBug},
+		{"crash", TaskBug},
+		// Feature type - all aliases
 		{"feature", TaskFeature},
 		{"implement", TaskFeature},
+		{"add", TaskFeature},
+		{"new", TaskFeature},
+		// Testing type - all aliases
 		{"test", TaskTesting},
 		{"testing", TaskTesting},
+		{"spec", TaskTesting},
+		{"coverage", TaskTesting},
+		// Docs type - all aliases
 		{"docs", TaskDocs},
+		{"doc", TaskDocs},
 		{"documentation", TaskDocs},
+		{"readme", TaskDocs},
+		{"comment", TaskDocs},
+		// Refactor type - all aliases
 		{"refactor", TaskRefactor},
+		{"refactoring", TaskRefactor},
+		// Analysis type - all aliases
 		{"analysis", TaskAnalysis},
+		{"analyze", TaskAnalysis},
 		{"investigate", TaskAnalysis},
-		{"unknown", TaskTask}, // defaults to task
+		{"research", TaskAnalysis},
+		{"design", TaskAnalysis},
+		// Chore type
+		{"chore", TaskChore},
+		// Epic type
+		{"epic", TaskEpic},
+		// Unknown defaults to task
+		{"unknown", TaskTask},
+		{"random", TaskTask},
+		// Case insensitivity
+		{"BUG", TaskBug},
+		{"FEATURE", TaskFeature},
+		{"Docs", TaskDocs},
+		{"REFACTOR", TaskRefactor},
 	}
 
 	for _, tc := range tests {
