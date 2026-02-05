@@ -2161,8 +2161,8 @@ func TestOriginAllowedExtended(t *testing.T) {
 		{"port in allowlist but not origin", "http://localhost", []string{"localhost:3000"}, false},
 		{"multiple allowlist entries", "http://api.example.com", []string{"web.example.com", "api.example.com"}, true},
 		{"allowlist with invalid URL", "http://example.com", []string{"://invalid", "example.com"}, true},
-		// "://" parses but has empty host, url.Hostname() returns "", so matching fails
-		{"malformed origin with empty host", "://", []string{"*"}, false}
+		// "://" parses with error (missing protocol scheme), so originAllowed returns false
+		{"malformed origin with empty host", "://", []string{"*"}, false},
 		{"URL with userinfo", "http://user:pass@example.com", []string{"example.com"}, true},
 		{"allowlist full URL without port matches any port", "http://localhost:9999", []string{"http://localhost"}, true},
 	}
