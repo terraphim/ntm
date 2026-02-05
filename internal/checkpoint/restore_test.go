@@ -2,7 +2,9 @@ package checkpoint
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -444,6 +446,48 @@ func TestRestorer_RestoreLatest_NoCheckpoints(t *testing.T) {
 	}
 }
 
+func TestRestorer_checkGitState_BranchMismatch(t *testing.T) {
+	repoDir, branch, commit := initGitRepo(t)
+
+	r := NewRestorer()
+	cp := &Checkpoint{
+		Git: GitState{
+			Branch: branch + "-other",
+			Commit: commit,
+		},
+	}
+
+	warning := r.checkGitState(cp, repoDir)
+	if !strings.Contains(warning, "git branch mismatch") {
+		t.Fatalf("expected branch mismatch warning, got %q", warning)
+	}
+}
+
+func TestRestorer_checkGitState_CommitMismatch(t *testing.T) {
+	repoDir, branch, commit := initGitRepo(t)
+
+	// Create a new commit to move HEAD forward.
+	updateFile := filepath.Join(repoDir, "README.md")
+	if err := os.WriteFile(updateFile, []byte("updated"), 0644); err != nil {
+		t.Fatalf("failed to update file: %v", err)
+	}
+	runGitCmd(t, repoDir, "add", ".")
+	runGitCmd(t, repoDir, "commit", "-m", "Second commit")
+
+	r := NewRestorer()
+	cp := &Checkpoint{
+		Git: GitState{
+			Branch: branch,
+			Commit: commit,
+		},
+	}
+
+	warning := r.checkGitState(cp, repoDir)
+	if !strings.Contains(warning, "git commit mismatch") {
+		t.Fatalf("expected commit mismatch warning, got %q", warning)
+	}
+}
+
 // containsSubstr checks if s contains substr (case-insensitive).
 func containsSubstr(s, substr string) bool {
 	return filepath.Base(s) == substr || len(s) >= len(substr) && findSubstr(s, substr)
@@ -475,4 +519,42 @@ func matchIgnoreCase(a, b string) bool {
 		}
 	}
 	return true
+}
+
+func initGitRepo(t *testing.T) (string, string, string) {
+	t.Helper()
+
+	repoDir, err := os.MkdirTemp("", "ntm-restore-git-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoDir) })
+
+	runGitCmd(t, repoDir, "init")
+	runGitCmd(t, repoDir, "config", "user.email", "test@example.com")
+	runGitCmd(t, repoDir, "config", "user.name", "Test User")
+
+	readme := filepath.Join(repoDir, "README.md")
+	if err := os.WriteFile(readme, []byte("initial"), 0644); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+	runGitCmd(t, repoDir, "add", ".")
+	runGitCmd(t, repoDir, "commit", "-m", "Initial commit")
+
+	branch := runGitCmd(t, repoDir, "rev-parse", "--abbrev-ref", "HEAD")
+	commit := runGitCmd(t, repoDir, "rev-parse", "HEAD")
+
+	return repoDir, strings.TrimSpace(branch), strings.TrimSpace(commit)
+}
+
+func runGitCmd(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+
+	allArgs := append([]string{"-C", dir}, args...)
+	cmd := exec.Command("git", allArgs...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v (output: %s)", args, err, string(out))
+	}
+	return string(out)
 }
