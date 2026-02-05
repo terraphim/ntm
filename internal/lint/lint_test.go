@@ -299,6 +299,40 @@ func TestCompilePattern_Concurrent(t *testing.T) {
 	wg.Wait()
 }
 
+// =============================================================================
+// RuleSet.Disable (bd-8gkp7)
+// =============================================================================
+
+func TestRuleSet_Disable(t *testing.T) {
+	t.Parallel()
+	rs := DefaultRuleSet()
+
+	// Verify rule is enabled by default
+	if !rs.Rules[RuleSecretDetected].Enabled {
+		t.Fatal("RuleSecretDetected should be enabled by default")
+	}
+
+	// Disable it
+	rs.Disable(RuleSecretDetected)
+	if rs.Rules[RuleSecretDetected].Enabled {
+		t.Error("RuleSecretDetected should be disabled after Disable()")
+	}
+
+	// Re-enable it
+	rs.Enable(RuleSecretDetected)
+	if !rs.Rules[RuleSecretDetected].Enabled {
+		t.Error("RuleSecretDetected should be re-enabled after Enable()")
+	}
+}
+
+func TestRuleSet_Disable_UnknownRule(t *testing.T) {
+	t.Parallel()
+	rs := DefaultRuleSet()
+
+	// Should not panic for unknown rule ID
+	rs.Disable(RuleID("nonexistent-rule"))
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s

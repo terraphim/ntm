@@ -416,3 +416,60 @@ func TestListMacros(t *testing.T) {
 		}
 	}
 }
+
+// =============================================================================
+// TemplateSource.String (bd-8gkp7)
+// =============================================================================
+
+func TestTemplateSource_String(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		source TemplateSource
+		want   string
+	}{
+		{SourceBuiltin, "builtin"},
+		{SourceUser, "user"},
+		{SourceProject, "project"},
+		{TemplateSource(99), "unknown"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.source.String(); got != tt.want {
+				t.Errorf("TemplateSource(%d).String() = %q, want %q", tt.source, got, tt.want)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Template.HasVariable (bd-8gkp7)
+// =============================================================================
+
+func TestTemplate_HasVariable(t *testing.T) {
+	t.Parallel()
+	tmpl := &Template{
+		Variables: []VariableSpec{
+			{Name: "file", Required: true},
+			{Name: "session", Required: false},
+		},
+	}
+
+	if !tmpl.HasVariable("file") {
+		t.Error("HasVariable(file) should return true")
+	}
+	if !tmpl.HasVariable("session") {
+		t.Error("HasVariable(session) should return true")
+	}
+	if tmpl.HasVariable("nonexistent") {
+		t.Error("HasVariable(nonexistent) should return false")
+	}
+}
+
+func TestTemplate_HasVariable_Empty(t *testing.T) {
+	t.Parallel()
+	tmpl := &Template{}
+	if tmpl.HasVariable("anything") {
+		t.Error("HasVariable should return false for template with no variables")
+	}
+}

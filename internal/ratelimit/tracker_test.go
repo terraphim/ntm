@@ -457,6 +457,115 @@ func TestParseWaitSeconds(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// RecordRateLimitWithCooldown (bd-8gkp7)
+// =============================================================================
+
+func TestRecordRateLimitWithCooldown(t *testing.T) {
+	t.Parallel()
+	tracker := NewRateLimitTracker("")
+
+	// With explicit positive waitSeconds
+	cooldown := tracker.RecordRateLimitWithCooldown("anthropic", "spawn", 30)
+	if cooldown != 30*time.Second {
+		t.Errorf("cooldown = %v, want 30s", cooldown)
+	}
+	if !tracker.IsInCooldown("anthropic") {
+		t.Error("expected IsInCooldown=true after setting cooldown")
+	}
+	remaining := tracker.CooldownRemaining("anthropic")
+	if remaining <= 0 || remaining > 30*time.Second {
+		t.Errorf("CooldownRemaining = %v, expected (0, 30s]", remaining)
+	}
+}
+
+func TestRecordRateLimitWithCooldown_ZeroWait(t *testing.T) {
+	t.Parallel()
+	tracker := NewRateLimitTracker("")
+
+	// With waitSeconds <= 0, should use adaptive delay
+	cooldown := tracker.RecordRateLimitWithCooldown("anthropic", "send", 0)
+	if cooldown <= 0 {
+		t.Errorf("expected positive cooldown from adaptive delay, got %v", cooldown)
+	}
+	// The adaptive delay after one rate limit should be default * 1.5
+	expectedApprox := time.Duration(float64(DefaultDelayAnthropic) * delayIncreaseRate)
+	if cooldown != expectedApprox {
+		t.Errorf("cooldown = %v, want ~%v (default * increase rate)", cooldown, expectedApprox)
+	}
+}
+
+func TestRecordRateLimitWithCooldown_ExtendsNotShrinks(t *testing.T) {
+	t.Parallel()
+	tracker := NewRateLimitTracker("")
+
+	// Set a long cooldown first
+	tracker.RecordRateLimitWithCooldown("anthropic", "spawn", 60)
+	// Then a shorter one — should not shrink
+	tracker.RecordRateLimitWithCooldown("anthropic", "spawn", 5)
+	remaining := tracker.CooldownRemaining("anthropic")
+	if remaining < 50*time.Second {
+		t.Errorf("cooldown should not shrink: remaining = %v", remaining)
+	}
+}
+
+// =============================================================================
+// CooldownRemaining / IsInCooldown / ClearCooldown (bd-8gkp7)
+// =============================================================================
+
+func TestCooldownRemaining_UnknownProvider(t *testing.T) {
+	t.Parallel()
+	tracker := NewRateLimitTracker("")
+
+	remaining := tracker.CooldownRemaining("nonexistent")
+	if remaining != 0 {
+		t.Errorf("CooldownRemaining for unknown provider = %v, want 0", remaining)
+	}
+}
+
+func TestIsInCooldown_NoCooldownSet(t *testing.T) {
+	t.Parallel()
+	tracker := NewRateLimitTracker("")
+
+	// Just record a rate limit without cooldown
+	tracker.RecordRateLimit("anthropic", "send")
+	if tracker.IsInCooldown("anthropic") {
+		t.Error("IsInCooldown should be false without explicit cooldown")
+	}
+}
+
+func TestClearCooldown(t *testing.T) {
+	t.Parallel()
+	tracker := NewRateLimitTracker("")
+
+	// Set cooldown
+	tracker.RecordRateLimitWithCooldown("anthropic", "spawn", 60)
+	if !tracker.IsInCooldown("anthropic") {
+		t.Fatal("expected cooldown to be active")
+	}
+
+	// Clear it
+	tracker.ClearCooldown("anthropic")
+	if tracker.IsInCooldown("anthropic") {
+		t.Error("IsInCooldown should be false after ClearCooldown")
+	}
+	if tracker.CooldownRemaining("anthropic") != 0 {
+		t.Error("CooldownRemaining should be 0 after ClearCooldown")
+	}
+}
+
+func TestClearCooldown_UnknownProvider(t *testing.T) {
+	t.Parallel()
+	tracker := NewRateLimitTracker("")
+
+	// Should not panic for unknown provider
+	tracker.ClearCooldown("nonexistent")
+}
+
+// =============================================================================
+// Existing tests below
+// =============================================================================
+
 func TestDetectRateLimit(t *testing.T) {
 	tests := []struct {
 		name            string
