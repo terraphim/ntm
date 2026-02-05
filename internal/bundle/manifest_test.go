@@ -356,3 +356,64 @@ func containsAt(s, substr string, start int) bool {
 	}
 	return false
 }
+
+func TestManifest_AddError(t *testing.T) {
+	t.Parallel()
+
+	m := NewManifest("v1.0.0")
+
+	// Initially no errors
+	if len(m.Errors) != 0 {
+		t.Fatalf("expected no errors initially, got %d", len(m.Errors))
+	}
+
+	// Add first error
+	m.AddError("failed to read file: permission denied")
+	if len(m.Errors) != 1 {
+		t.Errorf("Errors count = %d, want 1", len(m.Errors))
+	}
+	if m.Errors[0] != "failed to read file: permission denied" {
+		t.Errorf("Errors[0] = %q, want %q", m.Errors[0], "failed to read file: permission denied")
+	}
+
+	// Add second error
+	m.AddError("skipped large binary file")
+	if len(m.Errors) != 2 {
+		t.Errorf("Errors count = %d, want 2", len(m.Errors))
+	}
+	if m.Errors[1] != "skipped large binary file" {
+		t.Errorf("Errors[1] = %q, want %q", m.Errors[1], "skipped large binary file")
+	}
+}
+
+func TestManifest_FileCount(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		files int
+	}{
+		{"empty manifest", 0},
+		{"single file", 1},
+		{"multiple files", 5},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := NewManifest("v1.0.0")
+
+			for i := 0; i < tc.files; i++ {
+				m.AddFile(FileEntry{
+					Path:      "file" + string(rune('a'+i)) + ".txt",
+					SHA256:    makeValidHash(),
+					SizeBytes: int64(100 * (i + 1)),
+				})
+			}
+
+			if got := m.FileCount(); got != tc.files {
+				t.Errorf("FileCount() = %d, want %d", got, tc.files)
+			}
+		})
+	}
+}
