@@ -697,6 +697,75 @@ func TestSafetyCheck_ApprovalRequired(t *testing.T) {
 	suite.logger.Log("[E2E-SAFETY] safety_check_approval_completed")
 }
 
+func TestSafetyCheck_RCHWrapperPassThrough(t *testing.T) {
+	suite := NewSafetyTestSuite(t, "check-rch-wrapper")
+
+	ntmDir := filepath.Join(suite.tempDir, ".ntm")
+	if err := os.MkdirAll(ntmDir, 0755); err != nil {
+		t.Fatalf("[E2E-SAFETY] Failed to create ntm dir: %v", err)
+	}
+
+	policyPath := filepath.Join(ntmDir, "policy.yaml")
+	policyData := []byte(strings.Join([]string{
+		"version: 1",
+		"approval_required:",
+		"  - pattern: \"^rch\\\\b\"",
+		"    reason: \"RCH commands require review\"",
+		"",
+	}, "\n"))
+	if err := os.WriteFile(policyPath, policyData, 0644); err != nil {
+		t.Fatalf("[E2E-SAFETY] Failed to write policy file: %v", err)
+	}
+
+	binDir := filepath.Join(suite.tempDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("[E2E-SAFETY] Failed to create bin dir: %v", err)
+	}
+
+	dcgPath := filepath.Join(binDir, "dcg")
+	dcgScript := `#!/bin/bash
+set -euo pipefail
+
+if [ "$1" = "check" ]; then
+  cmd="${@: -1}"
+  if [[ "$cmd" == rch* ]]; then
+    printf '{"command":"%s","reason":"blocked by fake dcg"}\n' "$cmd"
+    exit 1
+  fi
+  exit 0
+fi
+
+if [ "$1" = "--version" ]; then
+  echo "dcg 0.1.0"
+  exit 0
+fi
+
+exit 0
+`
+	if err := os.WriteFile(dcgPath, []byte(dcgScript), 0755); err != nil {
+		t.Fatalf("[E2E-SAFETY] Failed to write fake dcg: %v", err)
+	}
+
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	command := "rch build cargo -- build"
+	resp, _, _, err := suite.runSafetyCheck(command)
+	if resp == nil {
+		t.Fatalf("[E2E-SAFETY] Failed to parse check response: %v", err)
+	}
+	if err != nil {
+		t.Fatalf("[E2E-SAFETY] Expected exit code 0 for rch command, got error: %v", err)
+	}
+	if resp.Action != "approve" {
+		t.Errorf("[E2E-SAFETY] Expected action=approve for rch command, got %q", resp.Action)
+	}
+	if resp.DCG == nil || !resp.DCG.Available || !resp.DCG.Checked || resp.DCG.Blocked {
+		t.Errorf("[E2E-SAFETY] Expected dcg to allow rch wrapper via passthrough, got %+v", resp.DCG)
+	}
+
+	suite.logger.Log("[E2E-SAFETY] safety_check_rch_wrapper_completed")
+}
+
 func TestSafetyBlocked_JSON(t *testing.T) {
 	suite := NewSafetyTestSuite(t, "blocked")
 

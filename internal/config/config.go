@@ -1038,6 +1038,7 @@ type RCHConfig struct {
 	FallbackLocal     bool     `toml:"fallback_local"`     // Fallback to local build on RCH failure
 	ShowLocation      bool     `toml:"show_location"`      // Show build location in output
 	PreferredWorker   string   `toml:"preferred_worker"`   // Worker preference (by name or "auto")
+	DCGWhitelist      bool     `toml:"dcg_whitelist"`      // Whitelist RCH wrapper commands in DCG checks
 }
 
 // DefaultRCHConfig returns sensible defaults for RCH integration.
@@ -1055,6 +1056,7 @@ func DefaultRCHConfig() RCHConfig {
 		FallbackLocal:   true,   // Fallback to local if remote fails
 		ShowLocation:    true,   // Show where build ran
 		PreferredWorker: "auto", // Auto-select best worker
+		DCGWhitelist:    true,   // Allow RCH wrapper commands in DCG checks
 	}
 }
 
@@ -2290,6 +2292,7 @@ func Print(cfg *Config, w io.Writer) error {
 	} else {
 		fmt.Fprintln(w, "custom_whitelist = []")
 	}
+	fmt.Fprintln(w, "# RCH wrapper commands are allowlisted when integrations.rch.dcg_whitelist = true")
 	if cfg.Integrations.DCG.AuditLog != "" {
 		fmt.Fprintf(w, "audit_log = %q\n", cfg.Integrations.DCG.AuditLog)
 	} else {

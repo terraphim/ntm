@@ -402,12 +402,16 @@ func runAdd(opts AddOptions) error {
 		// Configure DCG hooks for Claude agents when DCG integration is enabled
 		if agent.Type == AgentTypeClaude && cfg.Integrations.DCG.Enabled {
 			if dcg.ShouldConfigureHooks(cfg.Integrations.DCG.Enabled, cfg.Integrations.DCG.BinaryPath) {
+				customWhitelist := cfg.Integrations.DCG.CustomWhitelist
+				if cfg.Integrations.RCH.Enabled && cfg.Integrations.RCH.DCGWhitelist {
+					customWhitelist = dcg.AppendRCHWhitelist(customWhitelist)
+				}
 				dcgOpts := dcg.DCGHookOptions{
 					BinaryPath:      cfg.Integrations.DCG.BinaryPath,
 					AuditLog:        cfg.Integrations.DCG.AuditLog,
 					Timeout:         5000, // 5 second timeout for hook
 					CustomBlocklist: cfg.Integrations.DCG.CustomBlocklist,
-					CustomWhitelist: cfg.Integrations.DCG.CustomWhitelist,
+					CustomWhitelist: customWhitelist,
 				}
 				dcgEnvVars, err := dcg.HookEnvVars(dcgOpts)
 				if err == nil {

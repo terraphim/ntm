@@ -229,6 +229,48 @@ func TestWriteHookConfigFile(t *testing.T) {
 	}
 }
 
+func TestAppendRCHWhitelist(t *testing.T) {
+	t.Parallel()
+
+	base := []string{"git status", "rch *"}
+	merged := AppendRCHWhitelist(base)
+
+	expected := []string{"git status", "rch *", "rch build *", "rch intercept *", "rch offload *"}
+	if len(merged) != len(expected) {
+		t.Fatalf("expected %d entries, got %d: %v", len(expected), len(merged), merged)
+	}
+	for i, value := range expected {
+		if merged[i] != value {
+			t.Fatalf("merged[%d]=%q, want %q (merged=%v)", i, merged[i], value, merged)
+		}
+	}
+}
+
+func TestRCHWhitelistPatterns(t *testing.T) {
+	t.Parallel()
+
+	patterns := RCHWhitelistPatterns()
+	if len(patterns) < 3 {
+		t.Fatalf("expected at least 3 patterns, got %d", len(patterns))
+	}
+	found := map[string]bool{
+		"rch *":           false,
+		"rch build *":     false,
+		"rch intercept *": false,
+		"rch offload *":   false,
+	}
+	for _, pattern := range patterns {
+		if _, ok := found[pattern]; ok {
+			found[pattern] = true
+		}
+	}
+	for pattern, ok := range found {
+		if !ok {
+			t.Fatalf("missing expected pattern %q in %v", pattern, patterns)
+		}
+	}
+}
+
 func TestCheckDCGAvailable_NotInstalled(t *testing.T) {
 	// Use a binary path that doesn't exist
 	InvalidateDCGCache()

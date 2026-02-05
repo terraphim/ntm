@@ -167,9 +167,9 @@ type ExtendedCheckResult struct {
 	Command          string `json:"command"`
 	Blocked          bool   `json:"blocked"`
 	Reason           string `json:"reason,omitempty"`
-	Severity         string `json:"severity,omitempty"`         // critical, high, medium, low, safe
-	RuleMatched      string `json:"rule_matched,omitempty"`     // e.g., RECURSIVE_DELETE_ROOT
-	Suggestion       string `json:"suggestion,omitempty"`       // e.g., "Use trash-cli instead"
+	Severity         string `json:"severity,omitempty"`          // critical, high, medium, low, safe
+	RuleMatched      string `json:"rule_matched,omitempty"`      // e.g., RECURSIVE_DELETE_ROOT
+	Suggestion       string `json:"suggestion,omitempty"`        // e.g., "Use trash-cli instead"
 	SaferAlternative string `json:"safer_alternative,omitempty"` // e.g., "trash-put /data/backup"
 }
 
@@ -286,12 +286,73 @@ func dcgCompatible(version Version) bool {
 	return version.AtLeast(dcgMinVersion)
 }
 
+func extractRCHInnerCommand(command string) (string, bool) {
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" {
+		return "", false
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) < 2 {
+		return "", false
+	}
+	if fields[0] != "rch" {
+		return "", false
+	}
+
+	sep := -1
+	for i, field := range fields {
+		if field == "--" {
+			sep = i
+			break
+		}
+	}
+
+	if sep != -1 {
+		inner := fields[sep+1:]
+		if len(inner) == 0 {
+			return "", false
+		}
+		if len(fields) >= 3 && fields[1] == "build" && sep > 2 {
+			tool := fields[2]
+			if tool != "" && inner[0] != tool {
+				inner = append([]string{tool}, inner...)
+			}
+		}
+		return strings.Join(inner, " "), true
+	}
+
+	if len(fields) < 3 {
+		return "", false
+	}
+	switch fields[1] {
+	case "build":
+		inner := fields[2:]
+		if len(inner) == 0 {
+			return "", false
+		}
+		return strings.Join(inner, " "), true
+	case "intercept", "offload":
+		inner := fields[2:]
+		if len(inner) == 0 {
+			return "", false
+		}
+		return strings.Join(inner, " "), true
+	default:
+		return "", false
+	}
+}
+
 // CheckCommand checks if a command would be blocked by DCG
 func (a *DCGAdapter) CheckCommand(ctx context.Context, command string) (*BlockedCommand, error) {
 	ctx, cancel := context.WithTimeout(ctx, a.Timeout())
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, a.BinaryName(), "check", "--json", command)
+	commandToCheck := strings.TrimSpace(command)
+	if inner, ok := extractRCHInnerCommand(commandToCheck); ok {
+		commandToCheck = inner
+	}
+
+	cmd := exec.CommandContext(ctx, a.BinaryName(), "check", "--json", commandToCheck)
 	stdout := NewLimitedBuffer(10 * 1024 * 1024)
 	var stderr bytes.Buffer
 	cmd.Stdout = stdout
@@ -314,7 +375,7 @@ func (a *DCGAdapter) CheckCommand(ctx context.Context, command string) (*Blocked
 			}
 			// Return basic blocked info
 			return &BlockedCommand{
-				Command: command,
+				Command: commandToCheck,
 				Reason:  "blocked by dcg",
 			}, nil
 		}
@@ -331,6 +392,11 @@ func (a *DCGAdapter) CheckCommandExtended(ctx context.Context, command, context_
 	ctx, cancel := context.WithTimeout(ctx, a.Timeout())
 	defer cancel()
 
+	commandToCheck := strings.TrimSpace(command)
+	if inner, ok := extractRCHInnerCommand(commandToCheck); ok {
+		commandToCheck = inner
+	}
+
 	// Build command arguments
 	args := []string{"check", "--json"}
 	if context_ != "" {
@@ -339,7 +405,7 @@ func (a *DCGAdapter) CheckCommandExtended(ctx context.Context, command, context_
 	if cwd != "" {
 		args = append(args, "--cwd", cwd)
 	}
-	args = append(args, command)
+	args = append(args, commandToCheck)
 
 	cmd := exec.CommandContext(ctx, a.BinaryName(), args...)
 	stdout := NewLimitedBuffer(10 * 1024 * 1024)
@@ -352,7 +418,7 @@ func (a *DCGAdapter) CheckCommandExtended(ctx context.Context, command, context_
 	// Parse output regardless of exit code
 	output := stdout.Bytes()
 	result := &ExtendedCheckResult{
-		Command: command,
+		Command: commandToCheck,
 		Blocked: false,
 	}
 

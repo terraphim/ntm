@@ -2195,6 +2195,7 @@ var dcgCommandPrefixes = map[string]struct{}{
 	"chown":     {},
 	"kubectl":   {},
 	"terraform": {},
+	"rch":       {},
 }
 
 func maybeBlockSendWithDCG(prompt, session string, panes []tmux.Pane) error {
