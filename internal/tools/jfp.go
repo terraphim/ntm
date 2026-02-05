@@ -93,6 +93,7 @@ func (a *JFPAdapter) Capabilities(ctx context.Context) ([]Capability, error) {
 		"show",       // jfp show <id>
 		"install",    // jfp install [...ids]
 		"export",     // jfp export [...ids]
+		"update",     // jfp update - refresh registry/cache
 		"suggest",    // jfp suggest <task>
 		"mcp_server", // jfp serve (MCP server mode)
 	}
@@ -214,6 +215,33 @@ func (a *JFPAdapter) Bundles(ctx context.Context) (json.RawMessage, error) {
 // Bundle returns details for a specific bundle
 func (a *JFPAdapter) Bundle(ctx context.Context, id string) (json.RawMessage, error) {
 	return a.runCommand(ctx, "bundle", id, "--json")
+}
+
+// Install installs one or more prompts by ID.
+func (a *JFPAdapter) Install(ctx context.Context, ids []string, projectDir string) (json.RawMessage, error) {
+	args := []string{"install"}
+	if projectDir != "" {
+		args = append(args, "--project", projectDir)
+	}
+	args = append(args, ids...)
+	args = append(args, "--json")
+	return a.runCommand(ctx, args...)
+}
+
+// Export exports one or more prompts by ID.
+func (a *JFPAdapter) Export(ctx context.Context, ids []string, format string) (json.RawMessage, error) {
+	args := []string{"export"}
+	if format != "" {
+		args = append(args, "--format", format)
+	}
+	args = append(args, ids...)
+	args = append(args, "--json")
+	return a.runCommand(ctx, args...)
+}
+
+// Update refreshes the local prompt registry/cache.
+func (a *JFPAdapter) Update(ctx context.Context) (json.RawMessage, error) {
+	return a.runCommand(ctx, "update", "--json")
 }
 
 // runCommand executes a jfp command and returns raw JSON

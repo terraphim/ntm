@@ -102,6 +102,30 @@ case "$1" in
         fi
         exit 0
         ;;
+    install)
+        if [[ "$*" == *"--json"* ]]; then
+            echo '{"installed": ["test-prompt"], "project": "default"}'
+        else
+            echo "Installed test-prompt"
+        fi
+        exit 0
+        ;;
+    export)
+        if [[ "$*" == *"--json"* ]]; then
+            echo '{"exported": ["test-prompt"], "format": "skill"}'
+        else
+            echo "Exported test-prompt"
+        fi
+        exit 0
+        ;;
+    update)
+        if [[ "$*" == *"--json"* ]]; then
+            echo '{"updated": true}'
+        else
+            echo "Updated"
+        fi
+        exit 0
+        ;;
     --help|-h)
         echo "jfp - JeffreysPrompts CLI (fake for testing)"
         echo "Usage: jfp [command] [options]"

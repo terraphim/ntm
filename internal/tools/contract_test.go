@@ -577,6 +577,51 @@ func TestJFPAdapterMethods(t *testing.T) {
 	if !json.Valid(result) {
 		t.Error("Search() returned invalid JSON")
 	}
+
+	// Test Show
+	result, err = adapter.Show(ctx, "test-prompt")
+	if err != nil {
+		t.Fatalf("Show() error: %v", err)
+	}
+	if !json.Valid(result) {
+		t.Error("Show() returned invalid JSON")
+	}
+
+	// Test Suggest
+	result, err = adapter.Suggest(ctx, "test task")
+	if err != nil {
+		t.Fatalf("Suggest() error: %v", err)
+	}
+	if !json.Valid(result) {
+		t.Error("Suggest() returned invalid JSON")
+	}
+
+	// Test Install
+	result, err = adapter.Install(ctx, []string{"test-prompt"}, "")
+	if err != nil {
+		t.Fatalf("Install() error: %v", err)
+	}
+	if !json.Valid(result) {
+		t.Error("Install() returned invalid JSON")
+	}
+
+	// Test Export
+	result, err = adapter.Export(ctx, []string{"test-prompt"}, "skill")
+	if err != nil {
+		t.Fatalf("Export() error: %v", err)
+	}
+	if !json.Valid(result) {
+		t.Error("Export() returned invalid JSON")
+	}
+
+	// Test Update
+	result, err = adapter.Update(ctx)
+	if err != nil {
+		t.Fatalf("Update() error: %v", err)
+	}
+	if !json.Valid(result) {
+		t.Error("Update() returned invalid JSON")
+	}
 }
 
 // TestBVAdapterVersionParsing tests version string parsing

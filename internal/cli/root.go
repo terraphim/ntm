@@ -543,6 +543,31 @@ Shell Integration:
 			}
 			return
 		}
+		if robotJFPInstall != "" {
+			project := jfpProject
+			if project == "" {
+				project = robotEnsembleProject
+			}
+			if err := robot.PrintJFPInstall(robotJFPInstall, project); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+		if robotJFPExport != "" {
+			if err := robot.PrintJFPExport(robotJFPExport, jfpFormat); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+		if robotJFPUpdate {
+			if err := robot.PrintJFPUpdate(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 		if robotJFPInstalled {
 			if err := robot.PrintJFPInstalled(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -1979,12 +2004,17 @@ var (
 	robotJFPSearch     string // search query
 	robotJFPShow       string // prompt ID to show
 	robotJFPSuggest    string // task for suggestions
+	robotJFPInstall    string // prompt IDs to install
+	robotJFPExport     string // prompt IDs to export
+	robotJFPUpdate     bool   // update JFP registry cache
 	robotJFPInstalled  bool   // list installed skills
 	robotJFPCategories bool   // list categories
 	robotJFPTags       bool   // list tags
 	robotJFPBundles    bool   // list bundles
 	jfpCategory        string // filter by category
 	jfpTag             string // filter by tag
+	jfpProject         string // project directory for install
+	jfpFormat          string // export format
 
 	// Robot-ms flags for Meta Skill integration
 	robotMSSearch string // search query
@@ -2306,7 +2336,7 @@ func init() {
 	rootCmd.Flags().IntVar(&robotEnsembleBudgetPerMode, "budget-per-agent", 0, "Override per-agent token cap for ensemble spawn")
 	rootCmd.Flags().BoolVar(&robotEnsembleNoCache, "no-cache", false, "Bypass context cache for ensemble spawn")
 	rootCmd.Flags().BoolVar(&robotEnsembleNoQuestions, "no-questions", false, "Skip targeted questions during ensemble spawn (future)")
-	rootCmd.Flags().StringVar(&robotEnsembleProject, "project", "", "Project directory override for ensemble spawn")
+	rootCmd.Flags().StringVar(&robotEnsembleProject, "project", "", "Project directory override for robot commands (e.g., ensemble spawn, JFP install)")
 	rootCmd.Flags().StringVar(&robotEnsembleSuggest, "robot-ensemble-suggest", "", "Suggest best ensemble preset for a question. Example: ntm --robot-ensemble-suggest=\"What security issues exist?\"")
 	rootCmd.Flags().BoolVar(&robotEnsembleSuggestIDOnly, "suggest-id-only", false, "Output only preset name with --robot-ensemble-suggest")
 	rootCmd.Flags().StringVar(&robotEnsembleStop, "robot-ensemble-stop", "", "Stop an ensemble and save partial state. Required: SESSION. Example: ntm --robot-ensemble-stop=myproject")
@@ -2475,6 +2505,9 @@ func init() {
 	rootCmd.Flags().StringVar(&robotJFPSearch, "robot-jfp-search", "", "Search prompts. Required: QUERY. Example: ntm --robot-jfp-search='debugging'")
 	rootCmd.Flags().StringVar(&robotJFPShow, "robot-jfp-show", "", "Show prompt details. Required: ID. Example: ntm --robot-jfp-show='prompt-123'")
 	rootCmd.Flags().StringVar(&robotJFPSuggest, "robot-jfp-suggest", "", "Get prompt suggestions for a task. Required: TASK. Example: ntm --robot-jfp-suggest='build a REST API'")
+	rootCmd.Flags().StringVar(&robotJFPInstall, "robot-jfp-install", "", "Install JFP prompt(s). Required: ID(s). Example: ntm --robot-jfp-install='prompt-123'")
+	rootCmd.Flags().StringVar(&robotJFPExport, "robot-jfp-export", "", "Export JFP prompt(s). Required: ID(s). Example: ntm --robot-jfp-export='prompt-123'")
+	rootCmd.Flags().BoolVar(&robotJFPUpdate, "robot-jfp-update", false, "Update JFP registry cache (JSON)")
 	rootCmd.Flags().BoolVar(&robotJFPInstalled, "robot-jfp-installed", false, "List installed Claude Code skills (JSON)")
 	rootCmd.Flags().BoolVar(&robotJFPCategories, "robot-jfp-categories", false, "List all prompt categories with counts (JSON)")
 	rootCmd.Flags().BoolVar(&robotJFPTags, "robot-jfp-tags", false, "List all prompt tags with counts (JSON)")
@@ -2483,6 +2516,8 @@ func init() {
 	// JFP filters - work with --robot-jfp-list
 	rootCmd.Flags().StringVar(&jfpCategory, "jfp-category", "", "Filter JFP list by category. Example: --jfp-category=coding")
 	rootCmd.Flags().StringVar(&jfpTag, "jfp-tag", "", "Filter JFP list by tag. Example: --jfp-tag=debugging")
+	rootCmd.Flags().StringVar(&jfpProject, "jfp-project", "", "Project directory for JFP installs (optional)")
+	rootCmd.Flags().StringVar(&jfpFormat, "jfp-format", "", "Export format for JFP export (skill or md)")
 
 	// MS (Meta Skill) robot flags
 	rootCmd.Flags().StringVar(&robotMSSearch, "robot-ms-search", "", "Search Meta Skill catalog. Required: QUERY. Example: ntm --robot-ms-search='commit workflow'")
