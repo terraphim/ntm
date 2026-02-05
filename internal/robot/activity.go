@@ -471,6 +471,25 @@ func (sc *StateClassifier) Classify() (*AgentActivity, error) {
 		return nil, err
 	}
 
+	return sc.classifyInternal(sample)
+}
+
+// ClassifyWithOutput analyzes provided pane output and returns the agent's activity state.
+// Use this to avoid redundant tmux captures.
+func (sc *StateClassifier) ClassifyWithOutput(output string) (*AgentActivity, error) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	// Update velocity tracker with provided output
+	sample, err := sc.velocityTracker.UpdateWithOutput(output)
+	if err != nil {
+		return nil, err
+	}
+
+	return sc.classifyInternal(sample)
+}
+
+func (sc *StateClassifier) classifyInternal(sample *VelocitySample) (*AgentActivity, error) {
 	// Get current content for pattern matching
 	content := sc.velocityTracker.LastCapture
 	velocity := sample.Velocity

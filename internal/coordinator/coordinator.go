@@ -273,13 +273,57 @@ func (c *SessionCoordinator) monitorLoop() {
 
 // updateAgentStates refreshes the state of all agents.
 func (c *SessionCoordinator) updateAgentStates() {
-	// Get panes from tmux
-	panes, err := tmux.GetPanes(c.session)
+	// 1. Get panes with activity from tmux (single call)
+	// This returns both pane metadata and last activity timestamp
+	panes, err := tmux.GetPanesWithActivity(c.session)
 	if err != nil {
 		return
 	}
 
-	// Pre-calculate status updates outside the lock to avoid blocking readers during IO.
+	// Filter for agent panes to capture
+	var agentPanes []tmux.PaneActivity
+	for _, p := range panes {
+		if p.Pane.Type != tmux.AgentUser && p.Pane.Type != tmux.AgentUnknown {
+			agentPanes = append(agentPanes, p)
+		}
+	}
+
+	// 2. Parallel capture of pane outputs
+	// We use HealthCheck (50 lines) to provide enough context for both
+	// the UnifiedDetector (patterns) and ActivityMonitor (velocity).
+	type captureResult struct {
+		paneID string
+		output string
+		err    error
+	}
+
+	resultsCh := make(chan captureResult, len(agentPanes))
+	var wg sync.WaitGroup
+
+	for _, p := range agentPanes {
+		wg.Add(1)
+		go func(paneID string) {
+			defer wg.Done()
+			// Short timeout for capture to prevent holding up the cycle
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			output, err := tmux.CaptureForHealthCheckContext(ctx, paneID)
+			resultsCh <- captureResult{paneID: paneID, output: output, err: err}
+		}(p.Pane.ID)
+	}
+
+	wg.Wait()
+	close(resultsCh)
+
+	outputs := make(map[string]string)
+	for res := range resultsCh {
+		if res.err == nil {
+			outputs[res.paneID] = res.output
+		}
+	}
+
+	// 3. Calculate status updates (CPU bound, fast)
 	type agentUpdate struct {
 		paneID    string
 		paneIndex int
@@ -289,17 +333,26 @@ func (c *SessionCoordinator) updateAgentStates() {
 
 	var updates []agentUpdate
 	if c.monitor != nil {
-		updates = make([]agentUpdate, 0, len(panes))
-		for _, pane := range panes {
-			if pane.Type == tmux.AgentUser {
-				continue // Not an agent pane
+		updates = make([]agentUpdate, 0, len(agentPanes))
+		for _, p := range agentPanes {
+			output, ok := outputs[p.Pane.ID]
+			if !ok {
+				continue // Skip if capture failed
 			}
-			agentType := string(pane.Type)
-			state := c.monitor.GetAgentStatus(pane.ID, agentType)
+
+			// Use the optimized method that accepts pre-captured output and activity
+			state := c.monitor.GetAgentStatusWithOutput(
+				p.Pane.ID,
+				p.Pane.Title,
+				string(p.Pane.Type),
+				output,
+				p.LastActivity,
+			)
+
 			updates = append(updates, agentUpdate{
-				paneID:    pane.ID,
-				paneIndex: pane.Index,
-				agentType: agentType,
+				paneID:    p.Pane.ID,
+				paneIndex: p.Pane.Index,
+				agentType: string(p.Pane.Type),
 				status:    state,
 			})
 		}

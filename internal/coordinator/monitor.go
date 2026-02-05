@@ -42,6 +42,8 @@ func NewAgentMonitor(session string, mailClient *agentmail.Client, projectKey st
 
 // GetAgentStatus returns the current status of an agent pane.
 func (m *AgentMonitor) GetAgentStatus(paneID, agentType string) AgentStatusResult {
+	// This legacy method still performs its own capture.
+	// For better performance, use GetAgentStatusWithOutput.
 	result := AgentStatusResult{
 		Status:       robot.StateUnknown,
 		ContextUsage: 0,
@@ -69,6 +71,42 @@ func (m *AgentMonitor) GetAgentStatus(paneID, agentType string) AgentStatusResul
 	activity, err := classifier.Classify()
 	if err == nil {
 		result.Velocity = activity.Velocity
+		if activity.State == robot.StateError {
+			result.Status = robot.StateError
+			result.Healthy = false
+		}
+	}
+
+	return result
+}
+
+// GetAgentStatusWithOutput calculates status using provided output and metadata.
+// This allows avoiding redundant tmux captures in the coordinator loop.
+func (m *AgentMonitor) GetAgentStatusWithOutput(paneID, paneName, agentType string, output string, lastActivity time.Time) AgentStatusResult {
+	result := AgentStatusResult{
+		Status:       robot.StateUnknown,
+		ContextUsage: 0,
+		LastActivity: lastActivity,
+		Healthy:      true,
+	}
+
+	// 1. Static analysis using UnifiedDetector
+	agentStatus := m.detector.Analyze(paneID, paneName, agentType, output, lastActivity)
+	
+	// Map status.AgentState to robot.AgentState
+	result.Status = mapStatusToRobotState(agentStatus.State)
+	result.Healthy = agentStatus.State != status.StateError
+	result.ContextUsage = agentStatus.ContextUsage
+
+	// 2. Activity/Velocity analysis using ActivityMonitor
+	classifier := m.activityMon.GetOrCreate(paneID)
+	classifier.SetAgentType(agentType)
+	
+	// Inject the already-captured output
+	activity, err := classifier.ClassifyWithOutput(output)
+	if err == nil {
+		result.Velocity = activity.Velocity
+		// If activity monitor detects error state (via hysteresis etc), respect it
 		if activity.State == robot.StateError {
 			result.Status = robot.StateError
 			result.Healthy = false
