@@ -113,13 +113,8 @@ cleanup() {
     fi
 
     if [[ -n "${PROJECTS_BASE:-}" && -d "${PROJECTS_BASE}" ]]; then
-        if [[ "${E2E_CLEANUP:-1}" == "1" ]]; then
-            rm -rf "${PROJECTS_BASE}" 2>/dev/null || true
-            log_info "Cleaned projects base: ${PROJECTS_BASE}"
-        else
-            log_info "Leaving projects base for inspection: ${PROJECTS_BASE}"
-            log_info "Set E2E_CLEANUP=1 to enable automatic cleanup"
-        fi
+        log_info "Leaving projects base for inspection: ${PROJECTS_BASE}"
+        log_info "Manual cleanup required (deletion disabled by safety policy)"
     fi
 }
 trap cleanup EXIT
