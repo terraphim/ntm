@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -399,9 +400,12 @@ func runAdd(opts AddOptions) error {
 			}
 		}
 
-		// Configure DCG hooks for Claude agents when DCG integration is enabled
-		if agent.Type == AgentTypeClaude && cfg.Integrations.DCG.Enabled {
-			if dcg.ShouldConfigureHooks(cfg.Integrations.DCG.Enabled, cfg.Integrations.DCG.BinaryPath) {
+		// Configure Claude hooks for DCG and RCH integrations
+		if agent.Type == AgentTypeClaude {
+			var preToolHooks []dcg.HookEntry
+			var hookSources []string
+
+			if cfg.Integrations.DCG.Enabled && dcg.ShouldConfigureHooks(cfg.Integrations.DCG.Enabled, cfg.Integrations.DCG.BinaryPath) {
 				customWhitelist := cfg.Integrations.DCG.CustomWhitelist
 				if cfg.Integrations.RCH.Enabled && cfg.Integrations.RCH.DCGWhitelist {
 					customWhitelist = dcg.AppendRCHWhitelist(customWhitelist)
@@ -413,19 +417,46 @@ func runAdd(opts AddOptions) error {
 					CustomBlocklist: cfg.Integrations.DCG.CustomBlocklist,
 					CustomWhitelist: customWhitelist,
 				}
-				dcgEnvVars, err := dcg.HookEnvVars(dcgOpts)
+				dcgConfig, err := dcg.GenerateHookConfig(dcgOpts)
+				if err == nil {
+					preToolHooks = append(preToolHooks, dcgConfig.Hooks.PreToolUse...)
+					hookSources = append(hookSources, "dcg")
+				} else if !IsJSONOutput() {
+					output.PrintWarningf("Failed to configure DCG hooks for agent %d: %v", num, err)
+				}
+			}
+
+			if dcg.ShouldConfigureRCHHooks(cfg.Integrations.RCH.Enabled, cfg.Integrations.RCH.InterceptPatterns) {
+				rchHook, err := dcg.GenerateRCHHookEntry(dcg.RCHHookOptions{
+					BinaryPath: cfg.Integrations.RCH.BinaryPath,
+					Patterns:   cfg.Integrations.RCH.InterceptPatterns,
+					Timeout:    5000,
+				})
+				if err == nil {
+					preToolHooks = append(preToolHooks, rchHook)
+					hookSources = append(hookSources, "rch")
+				} else if !IsJSONOutput() {
+					output.PrintWarningf("Failed to configure RCH hooks for agent %d: %v", num, err)
+				}
+			}
+
+			if len(preToolHooks) > 0 {
+				hookConfig := dcg.ClaudeHookConfig{
+					Hooks: dcg.HooksSection{
+						PreToolUse: preToolHooks,
+					},
+				}
+				hookJSON, err := json.Marshal(hookConfig)
 				if err == nil {
 					if envVars == nil {
 						envVars = make(map[string]string)
 					}
-					for k, v := range dcgEnvVars {
-						envVars[k] = v
-					}
+					envVars["CLAUDE_CODE_HOOKS"] = string(hookJSON)
 					if !IsJSONOutput() {
-						output.PrintInfof("DCG hooks configured for agent %d", num)
+						output.PrintInfof("Claude hooks configured for agent %d (%s)", num, strings.Join(hookSources, ", "))
 					}
 				} else if !IsJSONOutput() {
-					output.PrintWarningf("Failed to configure DCG hooks for agent %d: %v", num, err)
+					output.PrintWarningf("Failed to configure Claude hooks for agent %d: %v", num, err)
 				}
 			}
 		}

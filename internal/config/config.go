@@ -1048,7 +1048,7 @@ func DefaultRCHConfig() RCHConfig {
 		BinaryPath:   "",   // Default to PATH lookup
 		MinBuildTime: 10,   // Only offload builds expected to take 10+ seconds
 		InterceptPatterns: []string{
-			"^cargo (build|test|check)",
+			"^cargo (build|test|check|rustc)",
 			"^go (build|test)",
 			"^npm run build",
 			"^make",
