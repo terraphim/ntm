@@ -149,3 +149,138 @@ func TestResolveSwarmInitialPrompt_PromptFileReadError(t *testing.T) {
 		t.Fatal("expected error for missing prompt file, got nil")
 	}
 }
+
+func TestGlobToRegex(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		glob   string
+		want   string
+		match  string // Test string that should match
+		reject string // Test string that should not match
+	}{
+		{"simple wildcard", "*.go", ".*\\.go", "main.go", "main.gox"},
+		{"question mark", "a?c", "a.c", "abc", "abbc"},
+		{"double star", "**/*.ts", ".*.*/.*\\.ts", "src/app.ts", ""},
+		{"literal dots", "file.txt", "file\\.txt", "", ""},
+		{"special chars escaped", "test[1].go", "test\\[1\\]\\.go", "", ""},
+		{"complex pattern", "src/**/*.{js,ts}", "src/.*.*/.*\\.\\{js,ts\\}", "", ""},
+		{"plain string", "hello", "hello", "hello", "world"},
+		{"empty string", "", "", "", ""},
+		{"parens escaped", "func()", "func\\(\\)", "", ""},
+		{"caret escaped", "^start", "\\^start", "", ""},
+		{"dollar escaped", "end$", "end\\$", "", ""},
+		{"pipe escaped", "a|b", "a\\|b", "", ""},
+		{"backslash escaped", "a\\b", "a\\\\b", "", ""},
+		{"plus escaped", "a+b", "a\\+b", "", ""},
+		{"braces escaped", "{a,b}", "\\{a,b\\}", "", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := globToRegex(tc.glob)
+			if got != tc.want {
+				t.Errorf("globToRegex(%q) = %q, want %q", tc.glob, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBuildSwarmPlanOutput(t *testing.T) {
+	t.Parallel()
+
+	plan := &swarm.SwarmPlan{
+		ScanDir:         "/projects",
+		TotalCC:         2,
+		TotalCod:        3,
+		TotalGmi:        1,
+		TotalAgents:     6,
+		SessionsPerType: 2,
+		PanesPerSession: 4,
+		Allocations: []swarm.ProjectAllocation{
+			{
+				Project: swarm.ProjectBeadCount{
+					Name:      "proj1",
+					Path:      "/projects/proj1",
+					OpenBeads: 5,
+					Tier:      1,
+				},
+				CCAgents:    1,
+				CodAgents:   2,
+				GmiAgents:   0,
+				TotalAgents: 3,
+			},
+		},
+		Sessions: []swarm.SessionSpec{
+			{
+				Name:      "cc_0",
+				AgentType: "cc",
+				PaneCount: 2,
+				Panes: []swarm.PaneSpec{
+					{Index: 0, Project: "proj1", AgentType: "cc"},
+					{Index: 1, Project: "proj1", AgentType: "cc"},
+				},
+			},
+		},
+	}
+
+	out := buildSwarmPlanOutput(plan, true)
+
+	if out.ScanDir != plan.ScanDir {
+		t.Errorf("ScanDir = %q, want %q", out.ScanDir, plan.ScanDir)
+	}
+	if out.TotalCC != plan.TotalCC {
+		t.Errorf("TotalCC = %d, want %d", out.TotalCC, plan.TotalCC)
+	}
+	if out.TotalCod != plan.TotalCod {
+		t.Errorf("TotalCod = %d, want %d", out.TotalCod, plan.TotalCod)
+	}
+	if out.TotalGmi != plan.TotalGmi {
+		t.Errorf("TotalGmi = %d, want %d", out.TotalGmi, plan.TotalGmi)
+	}
+	if out.TotalAgents != plan.TotalAgents {
+		t.Errorf("TotalAgents = %d, want %d", out.TotalAgents, plan.TotalAgents)
+	}
+	if !out.DryRun {
+		t.Error("DryRun should be true")
+	}
+	if len(out.Allocations) != 1 {
+		t.Fatalf("Allocations length = %d, want 1", len(out.Allocations))
+	}
+	if out.Allocations[0].Project != "proj1" {
+		t.Errorf("Allocations[0].Project = %q, want %q", out.Allocations[0].Project, "proj1")
+	}
+	if len(out.Sessions) != 1 {
+		t.Fatalf("Sessions length = %d, want 1", len(out.Sessions))
+	}
+	if len(out.Sessions[0].Panes) != 2 {
+		t.Errorf("Sessions[0].Panes length = %d, want 2", len(out.Sessions[0].Panes))
+	}
+}
+
+func TestBuildSwarmPlanOutput_EmptyPlan(t *testing.T) {
+	t.Parallel()
+
+	plan := &swarm.SwarmPlan{
+		ScanDir:     "/empty",
+		Allocations: []swarm.ProjectAllocation{},
+		Sessions:    []swarm.SessionSpec{},
+	}
+
+	out := buildSwarmPlanOutput(plan, false)
+
+	if out.ScanDir != "/empty" {
+		t.Errorf("ScanDir = %q, want %q", out.ScanDir, "/empty")
+	}
+	if out.DryRun {
+		t.Error("DryRun should be false")
+	}
+	if len(out.Allocations) != 0 {
+		t.Errorf("Allocations length = %d, want 0", len(out.Allocations))
+	}
+	if len(out.Sessions) != 0 {
+		t.Errorf("Sessions length = %d, want 0", len(out.Sessions))
+	}
+}
