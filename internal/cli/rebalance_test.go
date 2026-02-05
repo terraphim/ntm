@@ -2,6 +2,8 @@ package cli
 
 import (
 	"testing"
+
+	"github.com/Dicklesworthstone/ntm/internal/assignment"
 )
 
 func TestCalculateImbalanceScore(t *testing.T) {
@@ -200,5 +202,120 @@ func TestCalculateAfterStateEmpty(t *testing.T) {
 
 	if after[1] != 3 {
 		t.Errorf("expected pane 1 after = 3 (unchanged), got %d", after[1])
+	}
+}
+
+func TestSuggestTransfersDistributesAcrossTargets(t *testing.T) {
+	workloads := []RebalanceWorkload{
+		{Pane: 1, AgentType: "claude", TaskCount: 5},
+		{Pane: 2, AgentType: "codex", TaskCount: 0, IsHealthy: true, IsIdle: true},
+		{Pane: 3, AgentType: "gemini", TaskCount: 1, IsHealthy: true},
+	}
+
+	store := assignmentStoreWith(
+		makeAssignment("bd-1", "bead 1", 1, assignment.StatusAssigned),
+		makeAssignment("bd-2", "bead 2", 1, assignment.StatusAssigned),
+		makeAssignment("bd-3", "bead 3", 1, assignment.StatusAssigned),
+		makeAssignment("bd-4", "bead 4", 1, assignment.StatusAssigned),
+		makeAssignment("bd-5", "bead 5", 1, assignment.StatusAssigned),
+	)
+
+	transfers := suggestTransfers(workloads, store)
+
+	if len(transfers) != 3 {
+		t.Fatalf("expected 3 transfers, got %d", len(transfers))
+	}
+
+	seenTargets := make(map[int]bool)
+	for _, t := range transfers {
+		seenTargets[t.ToPane] = true
+	}
+
+	if len(seenTargets) < 2 {
+		t.Fatalf("expected transfers to multiple targets, got %v", seenTargets)
+	}
+}
+
+func TestSuggestTransfersRespectsAssignedStatus(t *testing.T) {
+	workloads := []RebalanceWorkload{
+		{Pane: 1, AgentType: "claude", TaskCount: 2},
+		{Pane: 2, AgentType: "codex", TaskCount: 0, IsHealthy: true, IsIdle: true},
+	}
+
+	store := assignmentStoreWith(
+		makeAssignment("bd-assigned", "assigned bead", 1, assignment.StatusAssigned),
+		makeAssignment("bd-working", "working bead", 1, assignment.StatusWorking),
+	)
+
+	transfers := suggestTransfers(workloads, store)
+
+	if len(transfers) != 1 {
+		t.Fatalf("expected 1 transfer, got %d", len(transfers))
+	}
+	if transfers[0].BeadID != "bd-assigned" {
+		t.Fatalf("expected assigned bead transfer, got %s", transfers[0].BeadID)
+	}
+}
+
+func TestSuggestTransfersReasonSameType(t *testing.T) {
+	workloads := []RebalanceWorkload{
+		{Pane: 1, AgentType: "claude", TaskCount: 3},
+		{Pane: 2, AgentType: "claude", TaskCount: 0, IsHealthy: true, IsIdle: true},
+	}
+
+	store := assignmentStoreWith(
+		makeAssignment("bd-1", "bead 1", 1, assignment.StatusAssigned),
+		makeAssignment("bd-2", "bead 2", 1, assignment.StatusAssigned),
+		makeAssignment("bd-3", "bead 3", 1, assignment.StatusAssigned),
+	)
+
+	transfers := suggestTransfers(workloads, store)
+	if len(transfers) == 0 {
+		t.Fatalf("expected transfers, got none")
+	}
+	for _, tr := range transfers {
+		if tr.Reason != "same_type_balance" {
+			t.Fatalf("expected reason same_type_balance, got %q", tr.Reason)
+		}
+	}
+}
+
+func TestSuggestTransfersReasonTargetIdle(t *testing.T) {
+	workloads := []RebalanceWorkload{
+		{Pane: 1, AgentType: "claude", TaskCount: 2},
+		{Pane: 2, AgentType: "codex", TaskCount: 0, IsHealthy: true, IsIdle: true},
+	}
+
+	store := assignmentStoreWith(
+		makeAssignment("bd-1", "bead 1", 1, assignment.StatusAssigned),
+		makeAssignment("bd-2", "bead 2", 1, assignment.StatusAssigned),
+	)
+
+	transfers := suggestTransfers(workloads, store)
+	if len(transfers) != 1 {
+		t.Fatalf("expected 1 transfer, got %d", len(transfers))
+	}
+	if transfers[0].Reason != "target_idle" {
+		t.Fatalf("expected reason target_idle, got %q", transfers[0].Reason)
+	}
+}
+
+func assignmentStoreWith(assignments ...*assignment.Assignment) *assignment.AssignmentStore {
+	store := &assignment.AssignmentStore{
+		Assignments: make(map[string]*assignment.Assignment),
+	}
+	for _, a := range assignments {
+		store.Assignments[a.BeadID] = a
+	}
+	return store
+}
+
+func makeAssignment(beadID, title string, pane int, status assignment.AssignmentStatus) *assignment.Assignment {
+	return &assignment.Assignment{
+		BeadID:    beadID,
+		BeadTitle: title,
+		Pane:      pane,
+		AgentType: "claude",
+		Status:    status,
 	}
 }

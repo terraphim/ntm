@@ -342,7 +342,8 @@ func suggestTransfers(workloads []RebalanceWorkload, store *assignment.Assignmen
 
 	var transfers []RebalanceTransfer
 
-	for _, source := range sources {
+	for i := range sources {
+		source := &sources[i]
 		if len(targets) == 0 {
 			break
 		}
@@ -364,7 +365,7 @@ func suggestTransfers(workloads []RebalanceWorkload, store *assignment.Assignmen
 				break
 			}
 
-			target := targets[0]
+			target := &targets[0]
 
 			// Prefer same agent type
 			reason := "source_overloaded"

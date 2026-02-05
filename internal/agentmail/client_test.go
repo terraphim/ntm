@@ -587,6 +587,112 @@ func TestReservationConflict_UnmarshalJSON(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// Client option and method tests for coverage
+// =============================================================================
+
+func TestInvalidateCache(t *testing.T) {
+	t.Parallel()
+
+	c := NewClient()
+	// Manually set cache time to simulate a cached result
+	c.availableCacheTime.Store(time.Now().Unix())
+	c.availableCache.Store(true)
+
+	// Verify cache was set
+	if c.availableCacheTime.Load() == 0 {
+		t.Fatal("expected cache time to be set")
+	}
+
+	// Invalidate
+	c.InvalidateCache()
+
+	// Verify cache was cleared
+	if c.availableCacheTime.Load() != 0 {
+		t.Error("expected cache time to be cleared after InvalidateCache")
+	}
+}
+
+func TestBaseURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		inputURL string
+		wantURL  string
+	}{
+		{"default URL", "", DefaultBaseURL},
+		{"custom URL with trailing slash", "http://custom:8080/mcp/", "http://custom:8080/mcp/"},
+		{"custom URL without trailing slash", "http://custom:8080/mcp", "http://custom:8080/mcp/"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var c *Client
+			if tc.inputURL == "" {
+				c = NewClient()
+			} else {
+				c = NewClient(WithBaseURL(tc.inputURL))
+			}
+			got := c.BaseURL()
+			if got != tc.wantURL {
+				t.Errorf("BaseURL() = %q, want %q", got, tc.wantURL)
+			}
+		})
+	}
+}
+
+func TestWithHTTPClient(t *testing.T) {
+	t.Parallel()
+
+	customClient := &http.Client{Timeout: 5 * time.Minute}
+	c := NewClient(WithHTTPClient(customClient))
+
+	if c.httpClient != customClient {
+		t.Error("expected custom HTTP client to be set")
+	}
+}
+
+func TestWithTimeout(t *testing.T) {
+	t.Parallel()
+
+	// WithTimeout modifies an existing httpClient's timeout
+	customClient := &http.Client{Timeout: 10 * time.Second}
+	c := NewClient(WithHTTPClient(customClient), WithTimeout(60*time.Second))
+
+	if c.httpClient.Timeout != 60*time.Second {
+		t.Errorf("expected timeout 60s, got %v", c.httpClient.Timeout)
+	}
+}
+
+func TestHttpBaseURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		baseURL string
+		want    string
+	}{
+		{"MCP URL with trailing slash", "http://127.0.0.1:8765/mcp/", "http://127.0.0.1:8765"},
+		{"MCP URL without trailing slash", "http://127.0.0.1:8765/mcp", "http://127.0.0.1:8765"},
+		{"non-MCP URL with trailing slash", "http://example.com/api/", "http://example.com/api"},
+		{"non-MCP URL without trailing slash", "http://example.com/api", "http://example.com/api"},
+		{"root URL with trailing slash", "http://localhost:8000/", "http://localhost:8000"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := NewClient(WithBaseURL(tc.baseURL))
+			got := c.httpBaseURL()
+			if got != tc.want {
+				t.Errorf("httpBaseURL() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFetchInbox_UnmarshalFormats(t *testing.T) {
 	t.Parallel()
 
