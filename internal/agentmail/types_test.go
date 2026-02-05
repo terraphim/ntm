@@ -269,3 +269,120 @@ func TestErrorSentinelHelpers(t *testing.T) {
 		}
 	})
 }
+
+// =============================================================================
+// ReservationConflict.UnmarshalJSON tests
+// =============================================================================
+
+func TestReservationConflictUnmarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		input       string
+		wantPath    string
+		wantHolders []string
+		wantErr     bool
+	}{
+		{
+			name:        "null holders",
+			input:       `{"path":"src/main.go","holders":null}`,
+			wantPath:    "src/main.go",
+			wantHolders: []string{},
+			wantErr:     false,
+		},
+		{
+			name:        "empty array holders",
+			input:       `{"path":"src/lib.go","holders":[]}`,
+			wantPath:    "src/lib.go",
+			wantHolders: []string{},
+			wantErr:     false,
+		},
+		{
+			name:        "legacy string array holders",
+			input:       `{"path":"internal/*.go","holders":["BlueLake","GreenCastle"]}`,
+			wantPath:    "internal/*.go",
+			wantHolders: []string{"BlueLake", "GreenCastle"},
+			wantErr:     false,
+		},
+		{
+			name:        "current format with agent field",
+			input:       `{"path":"api/routes.go","holders":[{"agent":"RedMountain"},{"agent":"SilverRiver"}]}`,
+			wantPath:    "api/routes.go",
+			wantHolders: []string{"RedMountain", "SilverRiver"},
+			wantErr:     false,
+		},
+		{
+			name:        "current format with agent_name field",
+			input:       `{"path":"db/schema.go","holders":[{"agent_name":"PurpleCloud"}]}`,
+			wantPath:    "db/schema.go",
+			wantHolders: []string{"PurpleCloud"},
+			wantErr:     false,
+		},
+		{
+			name:        "mixed agent and agent_name fields",
+			input:       `{"path":"pkg/util.go","holders":[{"agent":"GoldStar"},{"agent_name":"BronzeMoon"},{"agent":"SilverSun","agent_name":"ignored"}]}`,
+			wantPath:    "pkg/util.go",
+			wantHolders: []string{"GoldStar", "BronzeMoon", "SilverSun"},
+			wantErr:     false,
+		},
+		{
+			name:        "object with empty agent fields skipped",
+			input:       `{"path":"test.go","holders":[{"agent":""},{"agent":"ValidAgent"},{"agent_name":""}]}`,
+			wantPath:    "test.go",
+			wantHolders: []string{"ValidAgent"},
+			wantErr:     false,
+		},
+		{
+			name:        "omitted holders field treated as empty",
+			input:       `{"path":"foo.go"}`,
+			wantPath:    "foo.go",
+			wantHolders: []string{},
+			wantErr:     false,
+		},
+		{
+			name:    "invalid JSON",
+			input:   `{"path":"bad.go","holders":`,
+			wantErr: true,
+		},
+		{
+			name:    "unsupported holders format (number)",
+			input:   `{"path":"num.go","holders":42}`,
+			wantErr: true,
+		},
+		{
+			name:    "unsupported holders format (string)",
+			input:   `{"path":"str.go","holders":"not-an-array"}`,
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var rc ReservationConflict
+			err := json.Unmarshal([]byte(tc.input), &rc)
+
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("expected error for input %s", tc.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if rc.Path != tc.wantPath {
+				t.Errorf("Path = %q, want %q", rc.Path, tc.wantPath)
+			}
+			if len(rc.Holders) != len(tc.wantHolders) {
+				t.Fatalf("Holders length = %d, want %d", len(rc.Holders), len(tc.wantHolders))
+			}
+			for i, h := range rc.Holders {
+				if h != tc.wantHolders[i] {
+					t.Errorf("Holders[%d] = %q, want %q", i, h, tc.wantHolders[i])
+				}
+			}
+		})
+	}
+}

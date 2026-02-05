@@ -3483,3 +3483,133 @@ func TestDirWritable(t *testing.T) {
 		}
 	})
 }
+
+// =============================================================================
+// ValidateEnsembleConfig
+// =============================================================================
+
+func TestValidateEnsembleConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cfg     *EnsembleConfig
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "nil config",
+			cfg:     nil,
+			wantErr: false,
+		},
+		{
+			name:    "empty config",
+			cfg:     &EnsembleConfig{},
+			wantErr: false,
+		},
+		{
+			name:    "valid assignment round-robin",
+			cfg:     &EnsembleConfig{Assignment: "round-robin"},
+			wantErr: false,
+		},
+		{
+			name:    "valid assignment affinity",
+			cfg:     &EnsembleConfig{Assignment: "affinity"},
+			wantErr: false,
+		},
+		{
+			name:    "invalid assignment",
+			cfg:     &EnsembleConfig{Assignment: "invalid-assignment"},
+			wantErr: true,
+			errMsg:  "assignment",
+		},
+		{
+			name:    "valid mode tier core",
+			cfg:     &EnsembleConfig{ModeTierDefault: "core"},
+			wantErr: false,
+		},
+		{
+			name:    "valid mode tier advanced",
+			cfg:     &EnsembleConfig{ModeTierDefault: "advanced"},
+			wantErr: false,
+		},
+		{
+			name:    "invalid mode tier",
+			cfg:     &EnsembleConfig{ModeTierDefault: "invalid-tier"},
+			wantErr: true,
+			errMsg:  "mode_tier_default",
+		},
+		{
+			name: "invalid synthesis min_confidence negative",
+			cfg: &EnsembleConfig{
+				Synthesis: EnsembleSynthesisConfig{MinConfidence: -0.5},
+			},
+			wantErr: true,
+			errMsg:  "min_confidence",
+		},
+		{
+			name: "invalid synthesis min_confidence too high",
+			cfg: &EnsembleConfig{
+				Synthesis: EnsembleSynthesisConfig{MinConfidence: 1.5},
+			},
+			wantErr: true,
+			errMsg:  "min_confidence",
+		},
+		{
+			name: "invalid synthesis max_findings negative",
+			cfg: &EnsembleConfig{
+				Synthesis: EnsembleSynthesisConfig{MaxFindings: -1},
+			},
+			wantErr: true,
+			errMsg:  "max_findings",
+		},
+		{
+			name: "invalid budget per_agent negative",
+			cfg: &EnsembleConfig{
+				Budget: EnsembleBudgetConfig{PerAgent: -100},
+			},
+			wantErr: true,
+			errMsg:  "budget",
+		},
+		{
+			name: "invalid budget per_agent > total",
+			cfg: &EnsembleConfig{
+				Budget: EnsembleBudgetConfig{PerAgent: 1000, Total: 500},
+			},
+			wantErr: true,
+			errMsg:  "per_agent",
+		},
+		{
+			name: "invalid cache ttl negative",
+			cfg: &EnsembleConfig{
+				Cache: EnsembleCacheConfig{TTLMinutes: -1},
+			},
+			wantErr: true,
+			errMsg:  "ttl_minutes",
+		},
+		{
+			name: "invalid cache max_entries negative",
+			cfg: &EnsembleConfig{
+				Cache: EnsembleCacheConfig{MaxEntries: -1},
+			},
+			wantErr: true,
+			errMsg:  "max_entries",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateEnsembleConfig(tc.cfg)
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("ValidateEnsembleConfig() = nil, want error containing %q", tc.errMsg)
+				} else if !strings.Contains(err.Error(), tc.errMsg) {
+					t.Errorf("error = %q, should contain %q", err.Error(), tc.errMsg)
+				}
+			} else if err != nil {
+				t.Errorf("ValidateEnsembleConfig() = %v, want nil", err)
+			}
+		})
+	}
+}

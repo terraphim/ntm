@@ -680,3 +680,12 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("DefaultConfig().Mode = %q, want %q", cfg.Mode, ModeWarn)
 	}
 }
+
+func TestConfigError_Error(t *testing.T) {
+	e := &ConfigError{Field: "mode", Message: "invalid value"}
+	got := e.Error()
+	want := "redaction config error: mode: invalid value"
+	if got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}

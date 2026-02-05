@@ -416,3 +416,25 @@ func TestEmptyCommandHooksConfig(t *testing.T) {
 		t.Errorf("expected empty hooks, got %d", len(cfg.Hooks))
 	}
 }
+
+func TestDurationUnmarshalTextInvalid(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"empty string", ""},
+		{"invalid format", "not-a-duration"},
+		{"missing unit", "30"},
+		{"invalid unit", "30x"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var d Duration
+			err := d.UnmarshalText([]byte(tt.input))
+			if err == nil {
+				t.Errorf("UnmarshalText(%q) should return error", tt.input)
+			}
+		})
+	}
+}
