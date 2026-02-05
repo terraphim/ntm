@@ -638,3 +638,195 @@ func sqrt(x float64) float64 {
 	}
 	return z
 }
+
+// DefaultDecayFactor is the half-life in days for score decay.
+// After this many days, a score's weight is halved.
+const DefaultDecayFactor = 7
+
+// DefaultMinSamplesForEffectiveness is the minimum samples needed
+// to use effectiveness scores for assignment decisions.
+const DefaultMinSamplesForEffectiveness = 3
+
+// AgentTaskEffectiveness represents an agent's effectiveness for a task type.
+// This is distinct from EffectivenessScore in metrics.go which handles metric computation.
+type AgentTaskEffectiveness struct {
+	AgentType    string  `json:"agent_type"`
+	TaskType     string  `json:"task_type"`
+	Score        float64 `json:"score"`         // Weighted average score (0-1)
+	SampleCount  int     `json:"sample_count"`  // Number of scores used
+	Confidence   float64 `json:"confidence"`    // Confidence in score (0-1)
+	HasData      bool    `json:"has_data"`      // Whether sufficient data exists
+	DecayApplied bool    `json:"decay_applied"` // Whether decay was applied
+}
+
+// DecayedAverage computes a time-weighted average where recent scores
+// count more than older scores. Uses exponential decay with half-life.
+func (t *Tracker) DecayedAverage(q Query, windowDays int, halfLifeDays int) (float64, int, error) {
+	if windowDays <= 0 {
+		windowDays = TrendWindowDays
+	}
+	if halfLifeDays <= 0 {
+		halfLifeDays = DefaultDecayFactor
+	}
+
+	q.Since = time.Now().AddDate(0, 0, -windowDays)
+	scores, err := t.QueryScores(q)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	if len(scores) == 0 {
+		return 0, 0, nil
+	}
+
+	now := time.Now()
+	var weightedSum, totalWeight float64
+
+	for _, s := range scores {
+		// Calculate age in days
+		ageDays := now.Sub(s.Timestamp).Hours() / 24
+
+		// Exponential decay: weight = 2^(-age/halfLife)
+		// After halfLifeDays, weight is 0.5
+		// After 2*halfLifeDays, weight is 0.25, etc.
+		weight := exp2(-ageDays / float64(halfLifeDays))
+
+		weightedSum += s.Metrics.Overall * weight
+		totalWeight += weight
+	}
+
+	if totalWeight == 0 {
+		return 0, len(scores), nil
+	}
+
+	return weightedSum / totalWeight, len(scores), nil
+}
+
+// QueryEffectiveness retrieves the effectiveness score for an agent-task pair.
+// Returns a score suitable for use in assignment decisions.
+func (t *Tracker) QueryEffectiveness(agentType, taskType string, windowDays int) (*AgentTaskEffectiveness, error) {
+	if windowDays <= 0 {
+		windowDays = TrendWindowDays
+	}
+
+	result := &AgentTaskEffectiveness{
+		AgentType: agentType,
+		TaskType:  taskType,
+	}
+
+	// Query historical scores
+	q := Query{
+		AgentType: agentType,
+		TaskType:  taskType,
+		Since:     time.Now().AddDate(0, 0, -windowDays),
+	}
+
+	scores, err := t.QueryScores(q)
+	if err != nil {
+		return result, err
+	}
+
+	result.SampleCount = len(scores)
+
+	// Check minimum samples threshold
+	if len(scores) < DefaultMinSamplesForEffectiveness {
+		result.HasData = false
+		result.Confidence = 0
+		return result, nil
+	}
+
+	result.HasData = true
+
+	// Calculate decayed average
+	score, _, err := t.DecayedAverage(q, windowDays, DefaultDecayFactor)
+	if err != nil {
+		return result, err
+	}
+
+	result.Score = score
+	result.DecayApplied = true
+
+	// Calculate confidence based on sample count
+	// More samples = higher confidence, caps at 1.0
+	// 10 samples = 90% confidence, 20+ = 100%
+	result.Confidence = minFloat(1.0, float64(len(scores))/20.0)
+
+	return result, nil
+}
+
+// QueryAllEffectiveness returns effectiveness scores for all agent-task pairs
+// with sufficient data.
+func (t *Tracker) QueryAllEffectiveness(windowDays int) (map[string]map[string]*AgentTaskEffectiveness, error) {
+	if windowDays <= 0 {
+		windowDays = TrendWindowDays
+	}
+
+	// Get all scores in window
+	scores, err := t.QueryScores(Query{
+		Since: time.Now().AddDate(0, 0, -windowDays),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Build unique agent-task pairs
+	pairs := make(map[string]map[string]bool)
+	for _, s := range scores {
+		if pairs[s.AgentType] == nil {
+			pairs[s.AgentType] = make(map[string]bool)
+		}
+		pairs[s.AgentType][s.TaskType] = true
+	}
+
+	// Query effectiveness for each pair
+	result := make(map[string]map[string]*AgentTaskEffectiveness)
+	for agentType, taskTypes := range pairs {
+		result[agentType] = make(map[string]*AgentTaskEffectiveness)
+		for taskType := range taskTypes {
+			eff, err := t.QueryEffectiveness(agentType, taskType, windowDays)
+			if err != nil {
+				continue
+			}
+			if eff.HasData {
+				result[agentType][taskType] = eff
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// exp2 computes 2^x using a simple approximation (avoiding math import).
+func exp2(x float64) float64 {
+	if x == 0 {
+		return 1
+	}
+	if x < -10 {
+		return 0 // Very small, treat as zero
+	}
+	if x > 10 {
+		return 1024 // Cap at reasonable maximum
+	}
+
+	// Use ln(2) ≈ 0.693147 and e^x approximation
+	// 2^x = e^(x * ln(2))
+	y := x * 0.693147 // ln(2)
+
+	// Taylor series for e^y: 1 + y + y²/2 + y³/6 + y⁴/24 + ...
+	result := 1.0
+	term := 1.0
+	for i := 1; i <= 12; i++ {
+		term *= y / float64(i)
+		result += term
+	}
+	return result
+}
+
+// minFloat returns the smaller of two float64 values.
+// Named differently from min in metrics.go to avoid redeclaration.
+func minFloat(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}

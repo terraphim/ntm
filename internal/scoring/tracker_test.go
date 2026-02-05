@@ -920,3 +920,252 @@ func TestExpandPath(t *testing.T) {
 		}
 	})
 }
+
+func TestExp2(t *testing.T) {
+	tests := []struct {
+		name      string
+		x         float64
+		want      float64
+		tolerance float64
+	}{
+		{"zero", 0, 1.0, 0.001},
+		{"one", 1, 2.0, 0.01},
+		{"two", 2, 4.0, 0.01},
+		{"negative one", -1, 0.5, 0.01},
+		{"negative two", -2, 0.25, 0.01},
+		{"very negative", -15, 0.0, 0.001}, // Should be near zero
+		{"very positive", 15, 1024, 100},   // Capped at reasonable max
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := exp2(tt.x)
+			diff := math.Abs(got - tt.want)
+			if diff > tt.tolerance {
+				t.Errorf("exp2(%v) = %v, want %v (tolerance %v)", tt.x, got, tt.want, tt.tolerance)
+			}
+		})
+	}
+}
+
+func TestMinFloat(t *testing.T) {
+	tests := []struct {
+		a, b, want float64
+	}{
+		{1.0, 2.0, 1.0},
+		{2.0, 1.0, 1.0},
+		{1.0, 1.0, 1.0},
+		{-1.0, 1.0, -1.0},
+		{0.0, 0.5, 0.0},
+	}
+
+	for _, tt := range tests {
+		got := minFloat(tt.a, tt.b)
+		if got != tt.want {
+			t.Errorf("minFloat(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
+func TestAgentTaskEffectivenessStruct(t *testing.T) {
+	score := AgentTaskEffectiveness{
+		AgentType:    "claude",
+		TaskType:     "bug",
+		Score:        0.85,
+		SampleCount:  10,
+		Confidence:   0.5,
+		HasData:      true,
+		DecayApplied: true,
+	}
+
+	if score.AgentType != "claude" {
+		t.Errorf("expected AgentType=claude, got %s", score.AgentType)
+	}
+	if score.Score != 0.85 {
+		t.Errorf("expected Score=0.85, got %f", score.Score)
+	}
+	if !score.HasData {
+		t.Error("expected HasData=true")
+	}
+	if !score.DecayApplied {
+		t.Error("expected DecayApplied=true")
+	}
+}
+
+func TestDefaultDecayFactor(t *testing.T) {
+	if DefaultDecayFactor != 7 {
+		t.Errorf("expected DefaultDecayFactor=7, got %d", DefaultDecayFactor)
+	}
+}
+
+func TestDefaultMinSamplesForEffectiveness(t *testing.T) {
+	if DefaultMinSamplesForEffectiveness != 3 {
+		t.Errorf("expected DefaultMinSamplesForEffectiveness=3, got %d", DefaultMinSamplesForEffectiveness)
+	}
+}
+
+func TestDecayedAverageEmptyTracker(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "empty_scores.jsonl")
+
+	tracker, err := NewTracker(TrackerOptions{
+		Path:          path,
+		RetentionDays: 90,
+		Enabled:       true,
+	})
+	if err != nil {
+		t.Fatalf("NewTracker error: %v", err)
+	}
+	defer tracker.Close()
+
+	avg, count, err := tracker.DecayedAverage(Query{AgentType: "claude"}, 14, 7)
+	if err != nil {
+		t.Fatalf("DecayedAverage error: %v", err)
+	}
+
+	if avg != 0 {
+		t.Errorf("expected avg=0 for empty tracker, got %f", avg)
+	}
+	if count != 0 {
+		t.Errorf("expected count=0 for empty tracker, got %d", count)
+	}
+}
+
+func TestQueryEffectivenessNoData(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "no_data_scores.jsonl")
+
+	tracker, err := NewTracker(TrackerOptions{
+		Path:          path,
+		RetentionDays: 90,
+		Enabled:       true,
+	})
+	if err != nil {
+		t.Fatalf("NewTracker error: %v", err)
+	}
+	defer tracker.Close()
+
+	eff, err := tracker.QueryEffectiveness("claude", "bug", 14)
+	if err != nil {
+		t.Fatalf("QueryEffectiveness error: %v", err)
+	}
+
+	if eff.AgentType != "claude" {
+		t.Errorf("expected AgentType=claude, got %s", eff.AgentType)
+	}
+	if eff.TaskType != "bug" {
+		t.Errorf("expected TaskType=bug, got %s", eff.TaskType)
+	}
+	if eff.HasData {
+		t.Error("expected HasData=false with no scores")
+	}
+	if eff.Confidence != 0 {
+		t.Errorf("expected Confidence=0 with no data, got %f", eff.Confidence)
+	}
+}
+
+func TestQueryEffectivenessWithScores(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "with_scores.jsonl")
+
+	tracker, err := NewTracker(TrackerOptions{
+		Path:          path,
+		RetentionDays: 90,
+		Enabled:       true,
+	})
+	if err != nil {
+		t.Fatalf("NewTracker error: %v", err)
+	}
+	defer tracker.Close()
+
+	// Record several scores
+	now := time.Now()
+	scores := []Score{
+		{Timestamp: now.Add(-1 * 24 * time.Hour), AgentType: "claude", TaskType: "bug", Metrics: ScoreMetrics{Overall: 0.9}},
+		{Timestamp: now.Add(-2 * 24 * time.Hour), AgentType: "claude", TaskType: "bug", Metrics: ScoreMetrics{Overall: 0.8}},
+		{Timestamp: now.Add(-3 * 24 * time.Hour), AgentType: "claude", TaskType: "bug", Metrics: ScoreMetrics{Overall: 0.7}},
+	}
+
+	for i := range scores {
+		if err := tracker.Record(&scores[i]); err != nil {
+			t.Fatalf("Record error: %v", err)
+		}
+	}
+
+	eff, err := tracker.QueryEffectiveness("claude", "bug", 14)
+	if err != nil {
+		t.Fatalf("QueryEffectiveness error: %v", err)
+	}
+
+	if !eff.HasData {
+		t.Error("expected HasData=true with 3 scores")
+	}
+	if eff.SampleCount != 3 {
+		t.Errorf("expected SampleCount=3, got %d", eff.SampleCount)
+	}
+	if !eff.DecayApplied {
+		t.Error("expected DecayApplied=true")
+	}
+
+	// Score should be weighted towards recent (0.9) due to decay
+	if eff.Score < 0.75 || eff.Score > 0.95 {
+		t.Errorf("expected Score in range [0.75, 0.95], got %f", eff.Score)
+	}
+
+	// Confidence should be low with only 3 samples (3/20 = 0.15)
+	if eff.Confidence < 0.1 || eff.Confidence > 0.2 {
+		t.Errorf("expected Confidence near 0.15 with 3 samples, got %f", eff.Confidence)
+	}
+}
+
+func TestQueryAllEffectiveness(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "all_eff_scores.jsonl")
+
+	tracker, err := NewTracker(TrackerOptions{
+		Path:          path,
+		RetentionDays: 90,
+		Enabled:       true,
+	})
+	if err != nil {
+		t.Fatalf("NewTracker error: %v", err)
+	}
+	defer tracker.Close()
+
+	// Record scores for multiple agent-task pairs
+	now := time.Now()
+	scores := []Score{
+		{Timestamp: now.Add(-1 * 24 * time.Hour), AgentType: "claude", TaskType: "bug", Metrics: ScoreMetrics{Overall: 0.9}},
+		{Timestamp: now.Add(-2 * 24 * time.Hour), AgentType: "claude", TaskType: "bug", Metrics: ScoreMetrics{Overall: 0.8}},
+		{Timestamp: now.Add(-3 * 24 * time.Hour), AgentType: "claude", TaskType: "bug", Metrics: ScoreMetrics{Overall: 0.7}},
+		{Timestamp: now.Add(-1 * 24 * time.Hour), AgentType: "codex", TaskType: "feature", Metrics: ScoreMetrics{Overall: 0.85}},
+		{Timestamp: now.Add(-2 * 24 * time.Hour), AgentType: "codex", TaskType: "feature", Metrics: ScoreMetrics{Overall: 0.75}},
+		{Timestamp: now.Add(-3 * 24 * time.Hour), AgentType: "codex", TaskType: "feature", Metrics: ScoreMetrics{Overall: 0.80}},
+	}
+
+	for i := range scores {
+		if err := tracker.Record(&scores[i]); err != nil {
+			t.Fatalf("Record error: %v", err)
+		}
+	}
+
+	all, err := tracker.QueryAllEffectiveness(14)
+	if err != nil {
+		t.Fatalf("QueryAllEffectiveness error: %v", err)
+	}
+
+	// Should have two agent types
+	if len(all) != 2 {
+		t.Errorf("expected 2 agent types, got %d", len(all))
+	}
+
+	// Claude should have bug scores
+	if _, ok := all["claude"]["bug"]; !ok {
+		t.Error("expected claude-bug effectiveness")
+	}
+
+	// Codex should have feature scores
+	if _, ok := all["codex"]["feature"]; !ok {
+		t.Error("expected codex-feature effectiveness")
+	}
+}
