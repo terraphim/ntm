@@ -24,6 +24,11 @@ const (
 	MinDelayOpenAI    = 3 * time.Second
 	MinDelayGoogle    = 2 * time.Second
 
+	// MaxLearnedDelay caps the adaptive delay to prevent overflow.
+	// With delayIncreaseRate=1.5, uncapped growth overflows int64
+	// nanoseconds after ~61 consecutive rate limits (ntm-45).
+	MaxLearnedDelay = 10 * time.Minute
+
 	// Learning parameters
 	delayIncreaseRate       = 1.5 // Increase by 50% on rate limit
 	delayDecreaseRate       = 0.9 // Decrease by 10% on consecutive successes
@@ -164,9 +169,13 @@ func (t *RateLimitTracker) recordRateLimitLocked(provider, action string, now ti
     state.TotalRateLimits++
     state.ConsecutiveSuccess = 0 // Reset consecutive successes
 
-    // Increase delay by 50%
-    newDelay := time.Duration(float64(state.CurrentDelay) * delayIncreaseRate)
-    state.CurrentDelay = newDelay
+    // Increase delay by 50%, capping to prevent int64 overflow (ntm-45).
+    newDelayF := float64(state.CurrentDelay) * delayIncreaseRate
+    if newDelayF > float64(MaxLearnedDelay) {
+        state.CurrentDelay = MaxLearnedDelay
+    } else {
+        state.CurrentDelay = time.Duration(newDelayF)
+    }
     return state
 }
 
