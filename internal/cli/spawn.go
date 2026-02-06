@@ -317,6 +317,9 @@ type SpawnOptions struct {
 
 	// Marching orders: pane-specific initialization prompts (bd-2lodn)
 	MarchingOrders map[int]string // pane index (0-based) -> prompt
+
+	// Per-agent-type default prompts (bd-2ywo)
+	DefaultPrompts config.PromptsConfig
 }
 
 // RecoveryContext holds all the information needed to help an agent recover
@@ -799,6 +802,7 @@ Examples:
 				PrivacyMode:        privacyMode,
 				AllowPersist:       allowPersist,
 				MarchingOrders:     marchingOrders,
+				DefaultPrompts:     cfg.Prompts,
 			}
 
 			return spawnSessionLogic(opts)
@@ -1564,6 +1568,21 @@ func spawnSessionLogic(opts SpawnOptions) (err error) {
 			panePrompt := opts.Prompt
 			if mo, ok := opts.MarchingOrders[idx]; ok {
 				panePrompt = mo
+			}
+
+			// Prepend per-agent-type default prompt if configured (bd-2ywo).
+			if defaultPrompt, err := opts.DefaultPrompts.ResolveForType(string(agentType)); err != nil {
+				if !IsJSONOutput() {
+					fmt.Printf("⚠ Warning: failed to resolve default prompt for %s agent %d: %v\n", agentType, idx, err)
+				}
+			} else if defaultPrompt != "" {
+				if panePrompt == "" {
+					// If no explicit prompt was provided, still send the default prompt so agents
+					// come up with the expected behavioral baseline.
+					panePrompt = defaultPrompt
+				} else {
+					panePrompt = defaultPrompt + "\n\n" + panePrompt
+				}
 			}
 			hasPrompt := panePrompt != ""
 

@@ -92,6 +92,7 @@ type Config struct {
 	Redaction          RedactionConfig       `toml:"redaction"`        // Secrets/PII redaction configuration
 	Privacy            PrivacyConfig         `toml:"privacy"`          // Privacy mode configuration
 	Send               SendConfig            `toml:"send"`             // Send command defaults
+	Prompts            PromptsConfig         `toml:"prompts"`          // Per-agent-type default prompts
 
 	// Runtime-only fields (populated by project config merging)
 	ProjectDefaults map[string]int `toml:"-"`
@@ -1764,7 +1765,44 @@ func ValidatePrivacyConfig(cfg *PrivacyConfig) error {
 // SendConfig holds defaults for the send command.
 type SendConfig struct {
 	BasePrompt     string `toml:"base_prompt"`      // Text prepended to all prompts
-	BasePromptFile string `toml:"base_prompt_file"`  // File whose contents are prepended to all prompts
+	BasePromptFile string `toml:"base_prompt_file"` // File whose contents are prepended to all prompts
+}
+
+// PromptsConfig holds per-agent-type default prompts (bd-2ywo).
+type PromptsConfig struct {
+	CCDefault      string `toml:"cc_default"`       // Default prompt for Claude agents
+	CCDefaultFile  string `toml:"cc_default_file"`  // File path for Claude default prompt
+	CodDefault     string `toml:"cod_default"`      // Default prompt for Codex agents
+	CodDefaultFile string `toml:"cod_default_file"` // File path for Codex default prompt
+	GmiDefault     string `toml:"gmi_default"`      // Default prompt for Gemini agents
+	GmiDefaultFile string `toml:"gmi_default_file"` // File path for Gemini default prompt
+}
+
+// ResolveForType returns the default prompt for a given agent type string (cc, cod, gmi).
+// It reads from the inline string first, falling back to the file if configured.
+func (p PromptsConfig) ResolveForType(agentType string) (string, error) {
+	var val, filePath string
+	switch agentType {
+	case "cc":
+		val, filePath = p.CCDefault, p.CCDefaultFile
+	case "cod":
+		val, filePath = p.CodDefault, p.CodDefaultFile
+	case "gmi":
+		val, filePath = p.GmiDefault, p.GmiDefaultFile
+	default:
+		return "", nil
+	}
+	if val != "" {
+		return strings.TrimSpace(val), nil
+	}
+	if filePath != "" {
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return "", fmt.Errorf("reading prompts.%s_default_file: %w", agentType, err)
+		}
+		return strings.TrimSpace(string(data)), nil
+	}
+	return "", nil
 }
 
 // ToRedactionLibConfig converts the config to the redaction library's Config type.

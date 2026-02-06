@@ -4028,3 +4028,108 @@ func TestValidateEnsembleConfig(t *testing.T) {
 		})
 	}
 }
+
+// --- PromptsConfig tests (bd-2ywo) ---
+
+func TestPromptsConfigResolveForType(t *testing.T) {
+	t.Parallel()
+	p := PromptsConfig{
+		CCDefault:  "claude prompt",
+		CodDefault: "codex prompt",
+		GmiDefault: "gemini prompt",
+	}
+
+	tests := []struct {
+		agentType string
+		want      string
+	}{
+		{"cc", "claude prompt"},
+		{"cod", "codex prompt"},
+		{"gmi", "gemini prompt"},
+		{"ollama", ""},
+		{"unknown", ""},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.agentType, func(t *testing.T) {
+			t.Parallel()
+			got, err := p.ResolveForType(tt.agentType)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("ResolveForType(%q) = %q, want %q", tt.agentType, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPromptsConfigResolveFromFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cc_prompt.md")
+	if err := os.WriteFile(path, []byte("  from file  \n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	p := PromptsConfig{
+		CCDefaultFile: path,
+	}
+	got, err := p.ResolveForType("cc")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "from file" {
+		t.Errorf("expected trimmed file content, got %q", got)
+	}
+}
+
+func TestPromptsConfigInlineOverridesFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cod_prompt.md")
+	if err := os.WriteFile(path, []byte("from file"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	p := PromptsConfig{
+		CodDefault:     "inline value",
+		CodDefaultFile: path,
+	}
+	got, err := p.ResolveForType("cod")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "inline value" {
+		t.Errorf("inline should override file, got %q", got)
+	}
+}
+
+func TestPromptsConfigMissingFile(t *testing.T) {
+	t.Parallel()
+	p := PromptsConfig{
+		GmiDefaultFile: "/nonexistent/prompt.md",
+	}
+	_, err := p.ResolveForType("gmi")
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+	if !strings.Contains(err.Error(), "prompts.gmi_default_file") {
+		t.Errorf("error should mention config key, got: %v", err)
+	}
+}
+
+func TestPromptsConfigAllEmpty(t *testing.T) {
+	t.Parallel()
+	p := PromptsConfig{}
+	for _, at := range []string{"cc", "cod", "gmi"} {
+		got, err := p.ResolveForType(at)
+		if err != nil {
+			t.Fatalf("unexpected error for %s: %v", at, err)
+		}
+		if got != "" {
+			t.Errorf("expected empty for %s, got %q", at, got)
+		}
+	}
+}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -634,6 +635,13 @@ Shell Integration:
 		}
 		if robotXFStatus {
 			if err := robot.PrintXFStatus(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+		if robotDefaultPrompts {
+			if err := printDefaultPrompts(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -2083,8 +2091,9 @@ var (
 	robotMSShow   string // skill ID to show
 
 	// Robot-xf flags for XF (X Find) archive search integration
-	robotXFSearch string // search query
-	robotXFStatus bool   // health check
+	robotXFSearch       string // search query
+	robotXFStatus       bool   // health check
+	robotDefaultPrompts bool   // show per-agent-type default prompts
 	xfLimit       int    // max search results
 	xfMode        string // search mode: semantic, keyword, fuzzy
 	xfSort        string // sort: relevance, date
@@ -2605,6 +2614,9 @@ func init() {
 	rootCmd.Flags().IntVar(&xfLimit, "xf-limit", 20, "Max XF search results. Optional with --robot-xf-search. Example: --xf-limit=50")
 	rootCmd.Flags().StringVar(&xfMode, "xf-mode", "", "XF search mode: semantic, keyword, fuzzy. Optional with --robot-xf-search")
 	rootCmd.Flags().StringVar(&xfSort, "xf-sort", "", "XF sort order: relevance, date. Optional with --robot-xf-search")
+
+	// Default prompts robot flag (bd-2ywo)
+	rootCmd.Flags().BoolVar(&robotDefaultPrompts, "robot-default-prompts", false, "Get per-agent-type default prompts from config (JSON)")
 
 	// Robot-tokens flags for token usage analysis
 	rootCmd.Flags().BoolVar(&robotTokens, "robot-tokens", false, "Get token usage statistics (JSON). Group by agent, model, or time period")
@@ -3711,6 +3723,35 @@ func GetFormatter() *output.Formatter {
 
 // resolveRobotFormat determines the robot output format from CLI flag, env var, config, or default.
 // Priority: --robot-format flag > NTM_ROBOT_FORMAT > NTM_OUTPUT_FORMAT > TOON_DEFAULT_FORMAT > config > auto
+// printDefaultPrompts outputs per-agent-type default prompts as JSON (bd-2ywo).
+func printDefaultPrompts() error {
+	type result struct {
+		Success    bool   `json:"success"`
+		CCDefault  string `json:"cc_default"`
+		CodDefault string `json:"cod_default"`
+		GmiDefault string `json:"gmi_default"`
+	}
+	r := result{Success: true}
+	if cfg != nil {
+		p := cfg.Prompts
+		if v, err := p.ResolveForType("cc"); err == nil {
+			r.CCDefault = v
+		}
+		if v, err := p.ResolveForType("cod"); err == nil {
+			r.CodDefault = v
+		}
+		if v, err := p.ResolveForType("gmi"); err == nil {
+			r.GmiDefault = v
+		}
+	}
+	data, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(data))
+	return nil
+}
+
 func resolveRobotFormat(cfg *config.Config) {
 	formatStr := robotFormat
 
