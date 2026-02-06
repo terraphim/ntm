@@ -1,335 +1,553 @@
 package cli
 
 import (
+	"archive/zip"
+	"bufio"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
 
-	"github.com/Dicklesworthstone/ntm/internal/bundle"
-	"github.com/Dicklesworthstone/ntm/internal/privacy"
+	"github.com/Dicklesworthstone/ntm/internal/config"
 	"github.com/Dicklesworthstone/ntm/internal/redaction"
+	"github.com/Dicklesworthstone/ntm/internal/robot"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
-	"github.com/Dicklesworthstone/ntm/internal/tui/theme"
+	"github.com/Dicklesworthstone/ntm/internal/util"
 )
 
+// supportBundleOptions holds the command options.
+type supportBundleOptions struct {
+	Output          string
+	Session         string
+	Panes           string
+	Lines           int
+	Since           string
+	MaxSize         int64
+	NoRedact        bool
+	IncludeSessions bool
+	IncludeEvents   bool
+	RobotMode       bool
+}
+
 func newSupportBundleCmd() *cobra.Command {
-	var (
-		outputPath   string
-		formatStr    string
-		since        string
-		lines        int
-		maxSizeMB    int
-		redactMode   string
-		noRedact     bool
-		includeAll   bool
-		sessionName  string
-		allowPersist bool // Override privacy mode restrictions
-	)
+	opts := supportBundleOptions{
+		Lines:           200,
+		MaxSize:         50 * 1024 * 1024, // 50MB default max
+		IncludeSessions: false,
+		IncludeEvents:   true,
+	}
 
 	cmd := &cobra.Command{
-		Use:   "support-bundle [session]",
-		Short: "Generate a support bundle for debugging",
-		Long: `Generate a support bundle containing diagnostic information.
+		Use:   "support-bundle",
+		Short: "Generate a diagnostic support bundle archive",
+		Long: `Generate a support bundle archive containing diagnostic information
+for troubleshooting NTM issues. The bundle includes:
 
-The bundle includes session state, pane scrollback, configuration,
-and logs with sensitive content redacted by default.
+  - manifest.json      Versioned schema with checksums
+  - doctor.json        System health check results
+  - config_effective.toml  Effective configuration (redacted)
+  - versions.json      NTM, Go, tmux, and tool versions
+  - events.jsonl       Recent events (configurable time window)
+  - sessions/          Session snapshots (optional)
+
+By default, sensitive data is redacted using the configured redaction engine.
+Use --no-redact to include raw data (only for trusted recipients).
 
 Examples:
-  ntm support-bundle                           # Generate bundle for all sessions
-  ntm support-bundle myproject                 # Generate bundle for specific session
-  ntm support-bundle myproject -o debug.zip    # Custom output path
-  ntm support-bundle --format=tar.gz           # Use tar.gz format
-  ntm support-bundle --since=1h                # Only include last hour of content
-  ntm support-bundle --lines=500               # Limit scrollback to 500 lines per pane
-  ntm support-bundle --no-redact               # Skip redaction (use with caution)`,
-		Args: cobra.MaximumNArgs(1),
+  ntm support-bundle --output bundle.zip
+  ntm support-bundle --session myproj --lines 500 -o bundle.zip
+  ntm support-bundle --since 2h -o bundle.zip
+  ntm support-bundle --include-sessions -o bundle.zip`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) > 0 {
-				sessionName = args[0]
-			}
-
-			// Determine format
-			format := bundle.FormatZip
-			if formatStr == "tar.gz" || formatStr == "tgz" {
-				format = bundle.FormatTarGz
-			}
-
-			// Determine output path
-			if outputPath == "" {
-				outputPath = bundle.SuggestOutputPath(sessionName, format)
-			}
-
-			// Parse since duration
-			var sinceTime *time.Time
-			if since != "" {
-				duration, err := time.ParseDuration(since)
-				if err != nil {
-					return fmt.Errorf("invalid --since duration: %w", err)
-				}
-				t := time.Now().Add(-duration)
-				sinceTime = &t
-			}
-
-			// Determine redaction mode
-			redactConfig := redaction.DefaultConfig()
-			if noRedact {
-				redactConfig.Mode = redaction.ModeOff
-			} else {
-				switch redactMode {
-				case "warn":
-					redactConfig.Mode = redaction.ModeWarn
-				case "redact", "":
-					redactConfig.Mode = redaction.ModeRedact
-				case "block":
-					redactConfig.Mode = redaction.ModeBlock
-				default:
-					return fmt.Errorf("invalid --redact mode: %s (use: warn, redact, block)", redactMode)
-				}
-			}
-
-			// Create generator config
-			genConfig := bundle.GeneratorConfig{
-				Session:         sessionName,
-				OutputPath:      outputPath,
-				Format:          format,
-				NTMVersion:      Version,
-				Since:           sinceTime,
-				Lines:           lines,
-				MaxSizeBytes:    int64(maxSizeMB) * 1024 * 1024,
-				RedactionConfig: redactConfig,
-			}
-
-			// Create generator and collect content
-			gen := bundle.NewGenerator(genConfig)
-
-			// Track privacy mode status
-			var privacySessions []string
-			var contentSuppressed bool
-
-			// Collect session data
-			if sessionName != "" {
-				suppressed, err := collectSessionDataWithPrivacy(gen, sessionName, lines, allowPersist)
-				if err != nil {
-					return fmt.Errorf("collecting session data: %w", err)
-				}
-				if suppressed {
-					contentSuppressed = true
-					privacySessions = append(privacySessions, sessionName)
-				}
-			} else if includeAll {
-				sessions, err := tmux.ListSessions()
-				if err == nil {
-					for _, s := range sessions {
-						suppressed, err := collectSessionDataWithPrivacy(gen, s.Name, lines, allowPersist)
-						if err != nil {
-							// Record error but continue
-							gen.AddFile(
-								fmt.Sprintf("errors/%s.txt", s.Name),
-								[]byte(fmt.Sprintf("Error collecting session data: %v", err)),
-								bundle.ContentTypeLogs,
-								time.Now(),
-							)
-						}
-						if suppressed {
-							contentSuppressed = true
-							privacySessions = append(privacySessions, s.Name)
-						}
-					}
-				}
-			}
-
-			// Collect config files
-			if err := collectConfigFiles(gen); err != nil {
-				// Non-fatal
-				gen.AddFile(
-					"errors/config.txt",
-					[]byte(fmt.Sprintf("Error collecting config: %v", err)),
-					bundle.ContentTypeLogs,
-					time.Now(),
-				)
-			}
-
-			// Generate the bundle
-			result, err := gen.Generate()
-			if err != nil {
-				return fmt.Errorf("generating bundle: %w", err)
-			}
-
-			// Output result
-			if jsonOutput {
-				return json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
-					"success":            true,
-					"path":               result.Path,
-					"format":             result.Format,
-					"file_count":         result.FileCount,
-					"total_size":         result.TotalSize,
-					"redaction_summary":  result.RedactionSummary,
-					"errors":             result.Errors,
-					"warnings":           result.Warnings,
-					"privacy_mode":       contentSuppressed,
-					"privacy_sessions":   privacySessions,
-					"content_suppressed": contentSuppressed,
-				})
-			}
-
-			t := theme.Current()
-			fmt.Printf("%s\u2713%s Bundle created: %s\n", colorize(t.Success), "\033[0m", result.Path)
-			fmt.Printf("  Format: %s\n", result.Format)
-			fmt.Printf("  Files: %d\n", result.FileCount)
-			fmt.Printf("  Size: %s\n", formatBytes(result.TotalSize))
-
-			if result.RedactionSummary != nil && result.RedactionSummary.TotalFindings > 0 {
-				fmt.Printf("  Redacted: %d findings in %d files\n",
-					result.RedactionSummary.TotalFindings,
-					result.RedactionSummary.FilesRedacted)
-			}
-
-			// Privacy mode notification
-			if contentSuppressed {
-				fmt.Printf("%s⚠%s Privacy mode: scrollback content suppressed for %d session(s)\n",
-					colorize(t.Warning), "\033[0m", len(privacySessions))
-				fmt.Printf("  Use --allow-persist to include private content\n")
-			}
-
-			if len(result.Errors) > 0 {
-				fmt.Printf("  Warnings: %d (see bundle for details)\n", len(result.Errors))
-			}
-
-			return nil
+			return runSupportBundle(cmd.Context(), opts)
 		},
 	}
 
-	cmd.Flags().StringVarP(&outputPath, "output", "o", "", "output file path (default: auto-generated)")
-	cmd.Flags().StringVar(&formatStr, "format", "zip", "archive format: zip or tar.gz")
-	cmd.Flags().StringVar(&since, "since", "", "include content from this duration ago (e.g., 1h, 24h)")
-	cmd.Flags().IntVarP(&lines, "lines", "l", 1000, "max scrollback lines per pane (0 = unlimited)")
-	cmd.Flags().IntVar(&maxSizeMB, "max-size", 100, "max bundle size in MB (0 = unlimited)")
-	cmd.Flags().StringVar(&redactMode, "redact", "redact", "redaction mode: warn, redact, block")
-	cmd.Flags().BoolVar(&noRedact, "no-redact", false, "disable redaction (use with caution)")
-	cmd.Flags().BoolVar(&includeAll, "all", false, "include all sessions when no session specified")
-	cmd.Flags().BoolVar(&allowPersist, "allow-persist", false, "include private content even in privacy mode (use with caution)")
+	cmd.Flags().StringVarP(&opts.Output, "output", "o", "", "Output file path (required)")
+	cmd.Flags().StringVar(&opts.Session, "session", "", "Include specific session only")
+	cmd.Flags().StringVar(&opts.Panes, "panes", "", "Pane indices to include (comma-separated)")
+	cmd.Flags().IntVar(&opts.Lines, "lines", opts.Lines, "Lines of pane output to capture")
+	cmd.Flags().StringVar(&opts.Since, "since", "", "Include events since duration (e.g., 2h, 24h)")
+	cmd.Flags().Int64Var(&opts.MaxSize, "max-size", opts.MaxSize, "Maximum bundle size in bytes")
+	cmd.Flags().BoolVar(&opts.NoRedact, "no-redact", false, "Skip redaction (unsafe)")
+	cmd.Flags().BoolVar(&opts.IncludeSessions, "include-sessions", opts.IncludeSessions, "Include session snapshots and pane output")
+	cmd.Flags().BoolVar(&opts.IncludeEvents, "include-events", opts.IncludeEvents, "Include events log")
+	cmd.Flags().BoolVar(&opts.RobotMode, "json", false, "Output result as JSON")
+
+	_ = cmd.MarkFlagRequired("output")
 
 	return cmd
 }
 
-// collectSessionDataWithPrivacy adds session data to the bundle, respecting privacy mode.
-// Returns true if content was suppressed due to privacy mode.
-func collectSessionDataWithPrivacy(gen *bundle.Generator, session string, lines int, allowPersist bool) (bool, error) {
-	if !tmux.SessionExists(session) {
-		return false, fmt.Errorf("session %q does not exist", session)
-	}
-
-	// Check privacy mode for this session
-	privacyMgr := privacy.GetDefaultManager()
-	privacyEnabled := privacyMgr.IsPrivacyEnabled(session)
-	contentSuppressed := false
-
-	// Get panes
-	panes, err := tmux.GetPanes(session)
-	if err != nil {
-		return false, fmt.Errorf("listing panes: %w", err)
-	}
-
-	// Add session metadata (safe to include even in privacy mode)
-	privacyStatus := "disabled"
-	if privacyEnabled {
-		privacyStatus = "enabled"
-	}
-	metadata := fmt.Sprintf("Session: %s\nPanes: %d\nCaptured: %s\nPrivacy Mode: %s\n",
-		session, len(panes), time.Now().Format(time.RFC3339), privacyStatus)
-	if err := gen.AddFile(
-		filepath.Join("sessions", session, "metadata.txt"),
-		[]byte(metadata),
-		bundle.ContentTypeMetadata,
-		time.Now(),
-	); err != nil {
-		return false, err
-	}
-
-	// If privacy mode is enabled and no override, skip scrollback capture
-	if privacyEnabled && !allowPersist {
-		contentSuppressed = true
-		// Add a placeholder file explaining why content was suppressed
-		suppressedMsg := fmt.Sprintf(`Scrollback content suppressed due to privacy mode.
-
-Session: %s
-Privacy Mode: enabled
-Time: %s
-
-To include private content, use: ntm support-bundle %s --allow-persist
-`,
-			session, time.Now().Format(time.RFC3339), session)
-		gen.AddFile(
-			filepath.Join("sessions", session, "PRIVACY_SUPPRESSED.txt"),
-			[]byte(suppressedMsg),
-			bundle.ContentTypeMetadata,
-			time.Now(),
-		)
-		return contentSuppressed, nil
-	}
-
-	// Capture scrollback for each pane
-	for _, pane := range panes {
-		target := fmt.Sprintf("%s:%d", session, pane.Index)
-		content, err := tmux.CapturePaneOutput(target, lines)
-		if err != nil {
-			// Record error and continue
-			gen.AddFile(
-				filepath.Join("sessions", session, "errors", fmt.Sprintf("pane_%d.txt", pane.Index)),
-				[]byte(fmt.Sprintf("Error capturing pane: %v", err)),
-				bundle.ContentTypeLogs,
-				time.Now(),
-			)
-			continue
-		}
-
-		paneName := fmt.Sprintf("pane_%d", pane.Index)
-		if pane.Title != "" {
-			paneName = pane.Title
-		}
-
-		if err := gen.AddScrollback(
-			filepath.Join("sessions", session, paneName),
-			content,
-			lines,
-		); err != nil {
-			// Continue even if one pane fails
-			continue
-		}
-	}
-
-	return contentSuppressed, nil
+// BundleManifest describes the support bundle contents.
+type BundleManifest struct {
+	Version       string         `json:"version"`
+	SchemaVersion int            `json:"schema_version"`
+	CreatedAt     time.Time      `json:"created_at"`
+	CreatedBy     string         `json:"created_by"`
+	Files         []ManifestFile `json:"files"`
+	Checksum      string         `json:"checksum"`
+	Redacted      bool           `json:"redacted"`
+	Platform      PlatformInfo   `json:"platform"`
 }
 
-// collectSessionData adds session data to the bundle (legacy, no privacy check).
-func collectSessionData(gen *bundle.Generator, session string, lines int) error {
-	_, err := collectSessionDataWithPrivacy(gen, session, lines, true) // allowPersist=true for backwards compatibility
-	return err
+// ManifestFile describes a file in the bundle.
+type ManifestFile struct {
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	Checksum string `json:"checksum"`
+	Redacted bool   `json:"redacted,omitempty"`
 }
 
-// collectConfigFiles adds relevant config files to the bundle.
-func collectConfigFiles(gen *bundle.Generator) error {
-	// Check for .ntm directory
-	home, err := os.UserHomeDir()
+// PlatformInfo captures runtime environment details.
+type PlatformInfo struct {
+	OS     string `json:"os"`
+	Arch   string `json:"arch"`
+	NumCPU int    `json:"num_cpu"`
+}
+
+// VersionsInfo captures tool versions.
+type VersionsInfo struct {
+	NTM       string            `json:"ntm"`
+	Go        string            `json:"go"`
+	Tmux      string            `json:"tmux"`
+	Platform  string            `json:"platform"`
+	BuildTime string            `json:"build_time,omitempty"`
+	Tools     map[string]string `json:"tools"`
+}
+
+// BundleResult is the robot mode response.
+type BundleResult struct {
+	Success  bool   `json:"success"`
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	Files    int    `json:"files"`
+	Redacted bool   `json:"redacted"`
+	Error    string `json:"error,omitempty"`
+}
+
+func runSupportBundle(ctx context.Context, opts supportBundleOptions) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Validate output path
+	if opts.Output == "" {
+		return fmt.Errorf("output path is required")
+	}
+
+	// Expand path
+	outputPath := util.ExpandPath(opts.Output)
+	if !strings.HasSuffix(outputPath, ".zip") {
+		outputPath += ".zip"
+	}
+
+	// Create the bundle
+	result, err := createSupportBundle(ctx, outputPath, opts)
 	if err != nil {
+		if opts.RobotMode {
+			return robot.Output(BundleResult{
+				Success: false,
+				Error:   err.Error(),
+			}, robot.FormatJSON)
+		}
 		return err
 	}
 
-	ntmDir := filepath.Join(home, ".ntm")
-	if info, err := os.Stat(ntmDir); err == nil && info.IsDir() {
-		// Add select config files (not all - avoid sensitive data)
-		configFiles := []string{"config.toml", "palettes.yaml", "themes.yaml"}
-		for _, name := range configFiles {
-			path := filepath.Join(ntmDir, name)
-			if data, err := os.ReadFile(path); err == nil {
-				gen.AddFile(filepath.Join("config", name), data, bundle.ContentTypeConfig, time.Now())
+	if opts.RobotMode {
+		return robot.Output(result, robot.FormatJSON)
+	}
+
+	fmt.Printf("Support bundle created: %s\n", result.Path)
+	fmt.Printf("  Size: %d bytes\n", result.Size)
+	fmt.Printf("  Files: %d\n", result.Files)
+	fmt.Printf("  Redacted: %v\n", result.Redacted)
+	return nil
+}
+
+func createSupportBundle(ctx context.Context, outputPath string, opts supportBundleOptions) (*BundleResult, error) {
+	// Create output directory if needed
+	dir := filepath.Dir(outputPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("create output directory: %w", err)
+	}
+
+	// Create zip file
+	zipFile, err := os.Create(outputPath)
+	if err != nil {
+		return nil, fmt.Errorf("create zip file: %w", err)
+	}
+	defer zipFile.Close()
+
+	zipWriter := zip.NewWriter(zipFile)
+	defer zipWriter.Close()
+
+	manifest := &BundleManifest{
+		Version:       "1.0.0",
+		SchemaVersion: 1,
+		CreatedAt:     time.Now().UTC(),
+		CreatedBy:     "ntm support-bundle",
+		Redacted:      !opts.NoRedact,
+		Platform: PlatformInfo{
+			OS:     runtime.GOOS,
+			Arch:   runtime.GOARCH,
+			NumCPU: runtime.NumCPU(),
+		},
+	}
+
+	var files []ManifestFile
+
+	// Get redaction config if enabled
+	var redactCfg *redaction.Config
+	if !opts.NoRedact && cfg != nil {
+		redactCfg = buildBundleRedactionConfig(cfg)
+	}
+
+	// 1. Add versions.json
+	versionsData, err := collectBundleVersions(ctx)
+	if err == nil {
+		if file, err := addJSONToBundle(zipWriter, "versions.json", versionsData); err == nil {
+			files = append(files, file)
+		}
+	}
+
+	// 2. Add doctor.json
+	doctorReport := performDoctorCheck(ctx)
+	if file, err := addJSONToBundle(zipWriter, "doctor.json", doctorReport); err == nil {
+		files = append(files, file)
+	}
+
+	// 3. Add config_effective.toml (redacted)
+	if cfg != nil {
+		configData, err := exportBundleConfigTOML(cfg, redactCfg)
+		if err == nil {
+			if file, err := addDataToBundle(zipWriter, "config_effective.toml", configData); err == nil {
+				file.Redacted = redactCfg != nil
+				files = append(files, file)
 			}
 		}
 	}
 
-	return nil
+	// 4. Add events.jsonl (bounded)
+	if opts.IncludeEvents {
+		eventsData, err := collectBundleEvents(opts.Since, redactCfg)
+		if err == nil && len(eventsData) > 0 {
+			if file, err := addDataToBundle(zipWriter, "events.jsonl", eventsData); err == nil {
+				file.Redacted = redactCfg != nil
+				files = append(files, file)
+			}
+		}
+	}
+
+	// 5. Add session snapshots (optional)
+	if opts.IncludeSessions {
+		sessionFiles, err := collectBundleSessionSnapshots(ctx, opts, redactCfg)
+		if err == nil {
+			for _, sf := range sessionFiles {
+				if file, err := addDataToBundle(zipWriter, sf.path, sf.data); err == nil {
+					file.Redacted = redactCfg != nil
+					files = append(files, file)
+				}
+			}
+		}
+	}
+
+	// Finalize manifest
+	manifest.Files = files
+
+	// Calculate overall checksum
+	var checksumData strings.Builder
+	for _, f := range files {
+		checksumData.WriteString(f.Path)
+		checksumData.WriteString(f.Checksum)
+	}
+	manifest.Checksum = bundleSHA256([]byte(checksumData.String()))
+
+	// Add manifest as last file
+	if file, err := addJSONToBundle(zipWriter, "manifest.json", manifest); err == nil {
+		files = append(files, file)
+	}
+
+	// Close zip writer to flush
+	if err := zipWriter.Close(); err != nil {
+		return nil, fmt.Errorf("close zip: %w", err)
+	}
+
+	// Get final file size
+	info, err := os.Stat(outputPath)
+	if err != nil {
+		return nil, fmt.Errorf("stat output: %w", err)
+	}
+
+	// Check size limit
+	if info.Size() > opts.MaxSize {
+		os.Remove(outputPath)
+		return nil, fmt.Errorf("bundle size %d exceeds limit %d", info.Size(), opts.MaxSize)
+	}
+
+	return &BundleResult{
+		Success:  true,
+		Path:     outputPath,
+		Size:     info.Size(),
+		Files:    len(files),
+		Redacted: !opts.NoRedact,
+	}, nil
+}
+
+func collectBundleVersions(ctx context.Context) (*VersionsInfo, error) {
+	versions := &VersionsInfo{
+		NTM:      Version,
+		Go:       runtime.Version(),
+		Platform: fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+		Tools:    make(map[string]string),
+	}
+
+	// Get tmux version
+	if tmux.DefaultClient.IsInstalled() {
+		cmd := exec.CommandContext(ctx, tmux.BinaryPath(), "-V")
+		if out, err := cmd.Output(); err == nil {
+			versions.Tmux = strings.TrimSpace(string(out))
+		}
+	}
+
+	// Get tool versions (non-blocking)
+	toolChecks := []string{"bv", "br", "cm", "cass", "ubs", "dcg"}
+	for _, tool := range toolChecks {
+		if path, err := exec.LookPath(tool); err == nil {
+			cmd := exec.CommandContext(ctx, path, "--version")
+			cmd.Env = append(os.Environ(), "NO_COLOR=1")
+			if out, err := cmd.Output(); err == nil {
+				version := strings.TrimSpace(string(out))
+				// Take first line only
+				if idx := strings.Index(version, "\n"); idx > 0 {
+					version = version[:idx]
+				}
+				versions.Tools[tool] = version
+			}
+		}
+	}
+
+	return versions, nil
+}
+
+func exportBundleConfigTOML(cfg *config.Config, redactCfg *redaction.Config) ([]byte, error) {
+	// Create a copy and redact sensitive fields
+	var buf strings.Builder
+	encoder := toml.NewEncoder(&buf)
+	if err := encoder.Encode(cfg); err != nil {
+		return nil, err
+	}
+
+	data := buf.String()
+
+	// Apply redaction if enabled
+	if redactCfg != nil {
+		data, _ = redaction.Redact(data, *redactCfg)
+	}
+
+	return []byte(data), nil
+}
+
+func collectBundleEvents(sinceStr string, redactCfg *redaction.Config) ([]byte, error) {
+	// Default: last 24 hours
+	since := time.Now().Add(-24 * time.Hour)
+
+	if sinceStr != "" {
+		dur, err := time.ParseDuration(sinceStr)
+		if err == nil {
+			since = time.Now().Add(-dur)
+		}
+	}
+
+	// Read events log
+	eventsPath := util.ExpandPath("~/.config/ntm/analytics/events.jsonl")
+	file, err := os.Open(eventsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer file.Close()
+
+	var buf strings.Builder
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024) // 10MB max line
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		// Parse timestamp from JSON
+		var event struct {
+			Timestamp time.Time `json:"timestamp"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+
+		// Filter by time
+		if event.Timestamp.Before(since) {
+			continue
+		}
+
+		// Apply redaction
+		if redactCfg != nil {
+			line, _ = redaction.Redact(line, *redactCfg)
+		}
+
+		buf.WriteString(line)
+		buf.WriteString("\n")
+	}
+
+	return []byte(buf.String()), scanner.Err()
+}
+
+type bundleSessionFile struct {
+	path string
+	data []byte
+}
+
+func collectBundleSessionSnapshots(ctx context.Context, opts supportBundleOptions, redactor *redaction.Redactor) ([]bundleSessionFile, error) {
+	var files []bundleSessionFile
+
+	client := tmux.DefaultClient
+	if !client.IsInstalled() {
+		return files, nil
+	}
+
+	// List sessions
+	sessions, err := client.ListSessions(ctx)
+	if err != nil {
+		return files, err
+	}
+
+	for _, sess := range sessions {
+		// Filter by session name if specified
+		if opts.Session != "" && sess.Name != opts.Session {
+			continue
+		}
+
+		// Get session info
+		sessionDir := fmt.Sprintf("sessions/%s", sess.Name)
+
+		// Create session snapshot
+		snapshot := map[string]interface{}{
+			"name":       sess.Name,
+			"created":    sess.Created,
+			"attached":   sess.Attached,
+			"dimensions": fmt.Sprintf("%dx%d", sess.Width, sess.Height),
+		}
+
+		snapshotData, _ := json.MarshalIndent(snapshot, "", "  ")
+		files = append(files, bundleSessionFile{
+			path: filepath.Join(sessionDir, "snapshot.json"),
+			data: snapshotData,
+		})
+
+		// Parse pane filter
+		var paneFilter map[int]bool
+		if opts.Panes != "" {
+			paneFilter = make(map[int]bool)
+			for _, p := range strings.Split(opts.Panes, ",") {
+				if idx, err := strconv.Atoi(strings.TrimSpace(p)); err == nil {
+					paneFilter[idx] = true
+				}
+			}
+		}
+
+		// Capture pane output
+		panes, err := client.ListPanes(ctx, sess.Name)
+		if err != nil {
+			continue
+		}
+
+		for _, pane := range panes {
+			// Filter by pane index if specified
+			if paneFilter != nil && !paneFilter[pane.Index] {
+				continue
+			}
+
+			// Capture output
+			target := fmt.Sprintf("%s:%d", sess.Name, pane.Index)
+			output, err := client.CapturePaneOutput(target, opts.Lines)
+			if err != nil {
+				continue
+			}
+
+			// Apply redaction
+			if redactor != nil {
+				output = redactor.Redact(output)
+			}
+
+			files = append(files, bundleSessionFile{
+				path: filepath.Join(sessionDir, "panes", fmt.Sprintf("pane_%d.txt", pane.Index)),
+				data: []byte(output),
+			})
+		}
+	}
+
+	return files, nil
+}
+
+func addJSONToBundle(zw *zip.Writer, path string, v interface{}) (ManifestFile, error) {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return ManifestFile{}, err
+	}
+	return addDataToBundle(zw, path, data)
+}
+
+func addDataToBundle(zw *zip.Writer, path string, data []byte) (ManifestFile, error) {
+	w, err := zw.Create(path)
+	if err != nil {
+		return ManifestFile{}, err
+	}
+
+	n, err := w.Write(data)
+	if err != nil {
+		return ManifestFile{}, err
+	}
+
+	return ManifestFile{
+		Path:     path,
+		Size:     int64(n),
+		Checksum: bundleSHA256(data),
+	}, nil
+}
+
+func bundleSHA256(data []byte) string {
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
+}
+
+func buildBundleRedactor(cfg *config.Config) *redaction.Redactor {
+	if cfg == nil || cfg.Redaction.Mode == "off" {
+		return nil
+	}
+
+	redactCfg := redaction.Config{
+		Mode:      cfg.Redaction.Mode,
+		Allowlist: cfg.Redaction.Allowlist,
+	}
+
+	r, err := redaction.NewRedactor(redactCfg)
+	if err != nil {
+		return nil
+	}
+
+	return r
 }
