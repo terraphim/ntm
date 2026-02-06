@@ -2389,3 +2389,149 @@ func PrintHealthOAuth(session string) error {
 	}
 	return encodeJSON(output)
 }
+
+// =============================================================================
+// Auto-Restart Stuck Agents (bd-krqz)
+// =============================================================================
+
+// AutoRestartStuckOutput is the structured output for --robot-health-restart-stuck.
+type AutoRestartStuckOutput struct {
+	RobotResponse
+	Session    string   `json:"session"`
+	StuckPanes []int    `json:"stuck_panes"`
+	Restarted  []int    `json:"restarted"`
+	Failed     []int    `json:"failed,omitempty"`
+	Threshold  string   `json:"threshold"`
+	DryRun     bool     `json:"dry_run,omitempty"`
+	CheckedAt  string   `json:"checked_at"`
+}
+
+// AutoRestartStuckOptions configures the auto-restart-stuck operation.
+type AutoRestartStuckOptions struct {
+	Session   string        // Target session name
+	Threshold time.Duration // Duration of inactivity before considering stuck (default 5m)
+	DryRun    bool          // Preview mode: report but don't restart
+}
+
+// DefaultStuckThreshold is the default idle duration before a pane is considered stuck.
+const DefaultStuckThreshold = 5 * time.Minute
+
+// ClassifyStuckPanes identifies panes that are stuck based on health data.
+// A pane is stuck if it is an agent pane (not user/unknown) and has been idle
+// longer than the threshold duration. This is a pure function for testability.
+func ClassifyStuckPanes(agents []SessionAgentHealth, threshold time.Duration) []int {
+	var stuck []int
+	thresholdSec := int(threshold.Seconds())
+	for _, agent := range agents {
+		if agent.Health == "unhealthy" || agent.Health == "degraded" {
+			if agent.IdleSinceSeconds >= thresholdSec {
+				stuck = append(stuck, agent.Pane)
+			}
+		} else if agent.IdleSinceSeconds >= thresholdSec {
+			// Healthy but idle for too long - also stuck
+			stuck = append(stuck, agent.Pane)
+		}
+	}
+	return stuck
+}
+
+// BuildAutoRestartStuckOutput constructs the output struct from health data
+// and restart results. Pure function for testability.
+func BuildAutoRestartStuckOutput(session string, stuckPanes []int, restarted []int, failed []int, threshold time.Duration, dryRun bool) *AutoRestartStuckOutput {
+	output := &AutoRestartStuckOutput{
+		RobotResponse: NewRobotResponse(true),
+		Session:       session,
+		StuckPanes:    stuckPanes,
+		Restarted:     restarted,
+		Failed:        failed,
+		Threshold:     threshold.String(),
+		DryRun:        dryRun,
+		CheckedAt:     time.Now().UTC().Format(time.RFC3339),
+	}
+	if len(stuckPanes) == 0 {
+		output.StuckPanes = []int{}
+	}
+	if len(restarted) == 0 {
+		output.Restarted = []int{}
+	}
+	return output
+}
+
+// GetAutoRestartStuck detects stuck agent panes and optionally restarts them.
+// It uses GetSessionHealth() to detect panes idle beyond the threshold,
+// then calls GetRestartPane() for each stuck pane.
+func GetAutoRestartStuck(opts AutoRestartStuckOptions) (*AutoRestartStuckOutput, error) {
+	if opts.Threshold <= 0 {
+		opts.Threshold = DefaultStuckThreshold
+	}
+
+	// Get current health state
+	healthOutput, err := GetSessionHealth(opts.Session)
+	if err != nil {
+		return nil, err
+	}
+	if !healthOutput.Success {
+		output := &AutoRestartStuckOutput{
+			RobotResponse: healthOutput.RobotResponse,
+			Session:       opts.Session,
+			StuckPanes:    []int{},
+			Restarted:     []int{},
+			Threshold:     opts.Threshold.String(),
+			DryRun:        opts.DryRun,
+			CheckedAt:     time.Now().UTC().Format(time.RFC3339),
+		}
+		return output, nil
+	}
+
+	// Classify stuck panes
+	stuckPanes := ClassifyStuckPanes(healthOutput.Agents, opts.Threshold)
+
+	// Dry-run: report without restarting
+	if opts.DryRun {
+		return BuildAutoRestartStuckOutput(opts.Session, stuckPanes, nil, nil, opts.Threshold, true), nil
+	}
+
+	// Restart stuck panes
+	var restarted, failed []int
+	for _, paneIdx := range stuckPanes {
+		restartOpts := RestartPaneOptions{
+			Session: opts.Session,
+			Panes:   []string{fmt.Sprintf("%d", paneIdx)},
+		}
+		restartOut, restartErr := GetRestartPane(restartOpts)
+		if restartErr != nil || len(restartOut.Failed) > 0 {
+			failed = append(failed, paneIdx)
+		} else {
+			restarted = append(restarted, paneIdx)
+		}
+	}
+
+	return BuildAutoRestartStuckOutput(opts.Session, stuckPanes, restarted, failed, opts.Threshold, false), nil
+}
+
+// PrintAutoRestartStuck outputs the auto-restart-stuck result as JSON.
+// This is a thin wrapper around GetAutoRestartStuck() for CLI output.
+func PrintAutoRestartStuck(opts AutoRestartStuckOptions) error {
+	output, err := GetAutoRestartStuck(opts)
+	if err != nil {
+		return err
+	}
+	return encodeJSON(output)
+}
+
+// ParseStuckThreshold parses a duration string for the stuck threshold.
+// Accepts formats like "5m", "10m", "300s", "1h".
+// Returns DefaultStuckThreshold if the input is empty.
+func ParseStuckThreshold(s string) (time.Duration, error) {
+	if s == "" {
+		return DefaultStuckThreshold, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid threshold %q: %w (use e.g. 5m, 10m, 300s)", s, err)
+	}
+	if d < 30*time.Second {
+		return 0, fmt.Errorf("threshold %v is too short (minimum 30s)", d)
+	}
+	return d, nil
+}
