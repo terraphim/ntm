@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -839,4 +840,191 @@ scrollback = 500
 	assertMarkerIsolation(t, sessionB, markerB, sessionA)
 
 	logger.Log("[LMTO] PASS: Cross-session robot send+ack verified")
+}
+
+// TestConcurrentMultiSessionRobotSendAckStress performs a small stress test of
+// concurrent multi-session --robot-send --track calls to catch cross-session
+// leakage or flakes in ack handling.
+// bd-1680n: E2E stress tests for concurrent multi-session
+func TestConcurrentMultiSessionRobotSendAckStress(t *testing.T) {
+	testutil.RequireE2E(t)
+	testutil.RequireTmuxThrottled(t)
+	testutil.RequireNTMBinary(t)
+
+	logger := testutil.NewTestLogger(t, t.TempDir())
+	logger.Log("[BD-1680N] Starting concurrent multi-session robot send+ack stress test")
+
+	projectsBase := t.TempDir()
+	stateDir := t.TempDir()
+	stateDBPath := filepath.Join(stateDir, "bd_1680n_state.db")
+
+	configDir := t.TempDir()
+	configPath := filepath.Join(configDir, "config.toml")
+	configContent := fmt.Sprintf(`
+projects_base = %q
+state_path = %q
+
+[agents]
+claude = "bash"
+codex = "bash"
+gemini = "bash"
+
+[tmux]
+scrollback = 500
+`, projectsBase, stateDBPath)
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("[BD-1680N] Failed to write test config: %v", err)
+	}
+
+	const numSessions = 4
+	sessions := make([]string, 0, numSessions)
+	for i := 0; i < numSessions; i++ {
+		sess := fmt.Sprintf("e2e_bd_1680n_%d_%d", i, time.Now().UnixNano())
+		sessions = append(sessions, sess)
+		projectDir := filepath.Join(projectsBase, sess)
+		if err := os.MkdirAll(projectDir, 0755); err != nil {
+			t.Fatalf("[BD-1680N] Failed to create project dir for %s: %v", sess, err)
+		}
+	}
+
+	t.Cleanup(func() {
+		logger.Log("[BD-1680N] Teardown: Killing test sessions")
+		for _, sess := range sessions {
+			_ = exec.Command(tmux.BinaryPath(), "kill-session", "-t", sess).Run()
+		}
+	})
+
+	logger.LogSection("Step 1: Spawn sessions")
+	for _, sess := range sessions {
+		_, err := logger.ExecContext(45*time.Second, "ntm", "--config", configPath, "spawn", sess, "--cc=1", "--safety")
+		if err != nil {
+			t.Fatalf("[BD-1680N] Spawn failed for %s: %v", sess, err)
+		}
+		testutil.AssertSessionExists(t, logger, sess)
+	}
+
+	// Let agents initialize so --robot-ack has something to observe.
+	time.Sleep(1500 * time.Millisecond)
+
+	type sendAndAck struct {
+		Success bool `json:"success"`
+		Send    struct {
+			Success bool   `json:"success"`
+			Session string `json:"session"`
+		} `json:"send"`
+		Ack struct {
+			Success       bool   `json:"success"`
+			Session       string `json:"session"`
+			Confirmations []struct {
+				Pane string `json:"pane"`
+			} `json:"confirmations"`
+		} `json:"ack"`
+		Error string `json:"error,omitempty"`
+	}
+
+	runTrackedSend := func(sess, marker string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+
+		cmd := exec.CommandContext(
+			ctx,
+			"ntm",
+			"--config", configPath,
+			"--robot-send="+sess,
+			"--msg", fmt.Sprintf("echo %s", marker),
+			"--type=claude",
+			"--track",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil && ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("tracked send timed out for %s (output: %s)", sess, out)
+		}
+		if err != nil {
+			return fmt.Errorf("tracked send failed for %s: %w (output: %s)", sess, err, out)
+		}
+
+		var res sendAndAck
+		if err := json.Unmarshal(out, &res); err != nil {
+			return fmt.Errorf("parse send+ack json for %s: %w (output: %s)", sess, err, out)
+		}
+		if !res.Success || !res.Send.Success || !res.Ack.Success {
+			return fmt.Errorf("send+ack unsuccessful for %s: success=%v send.success=%v ack.success=%v error=%q (output: %s)",
+				sess, res.Success, res.Send.Success, res.Ack.Success, res.Error, out)
+		}
+		if res.Send.Session != sess || res.Ack.Session != sess {
+			return fmt.Errorf("session mismatch for %s: send.session=%q ack.session=%q (output: %s)", sess, res.Send.Session, res.Ack.Session, out)
+		}
+		if len(res.Ack.Confirmations) == 0 {
+			return fmt.Errorf("expected at least one ack confirmation for %s (output: %s)", sess, out)
+		}
+		return nil
+	}
+
+	const iterations = 2
+	sessionMarkers := make([][]string, numSessions)
+
+	for iter := 0; iter < iterations; iter++ {
+		logger.LogSection(fmt.Sprintf("Step 2.%d: Concurrent robot-send --track across sessions", iter+1))
+
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		errs := make([]error, 0)
+
+		for i, sess := range sessions {
+			marker := fmt.Sprintf("BD1680N_%d_%d_%d", iter, i, time.Now().UnixNano())
+			sessionMarkers[i] = append(sessionMarkers[i], marker)
+
+			wg.Add(1)
+			go func(sess, marker string) {
+				defer wg.Done()
+				if err := runTrackedSend(sess, marker); err != nil {
+					mu.Lock()
+					errs = append(errs, err)
+					mu.Unlock()
+				}
+			}(sess, marker)
+		}
+
+		wg.Wait()
+
+		if len(errs) > 0 {
+			for _, err := range errs {
+				t.Errorf("[BD-1680N] %v", err)
+			}
+			t.Fatalf("[BD-1680N] %d/%d concurrent tracked sends failed in iteration %d", len(errs), numSessions, iter+1)
+		}
+	}
+
+	logger.LogSection("Step 3: Verify markers did not leak across sessions")
+	for i, sess := range sessions {
+		paneCount, _ := testutil.GetSessionPaneCount(sess)
+
+		combined := ""
+		for p := 0; p < paneCount; p++ {
+			content, err := testutil.CapturePane(sess, p)
+			if err != nil {
+				continue
+			}
+			combined += "\n" + content
+		}
+
+		for _, marker := range sessionMarkers[i] {
+			if !strings.Contains(combined, marker) {
+				t.Fatalf("[BD-1680N] expected marker %q in session %q output", marker, sess)
+			}
+		}
+
+		for j, otherSess := range sessions {
+			if j == i {
+				continue
+			}
+			for _, marker := range sessionMarkers[j] {
+				if strings.Contains(combined, marker) {
+					t.Fatalf("[BD-1680N] marker %q leaked into wrong session %q (from %q)", marker, sess, otherSess)
+				}
+			}
+		}
+	}
+
+	logger.Log("[BD-1680N] PASS: concurrent multi-session robot send+ack stress test verified")
 }
