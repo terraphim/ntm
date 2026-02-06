@@ -814,6 +814,40 @@ Shell Integration:
 			}
 			return
 		}
+		if robotWatchBead != "" {
+			panes, err := robot.ParsePanesArg(robotPanes)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: invalid --panes: %v\n", err)
+				os.Exit(2)
+			}
+
+			interval := 30 * time.Second
+			if strings.TrimSpace(robotMonitorInterval) != "" {
+				interval, err = util.ParseDurationWithDefault(robotMonitorInterval, time.Millisecond, "interval")
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: invalid --interval: %v\n", err)
+					os.Exit(2)
+				}
+			}
+
+			lines := robotLines
+			if !cmd.Flags().Changed("lines") {
+				lines = 200
+			}
+
+			opts := robot.WatchBeadOptions{
+				Session:     robotWatchBead,
+				BeadID:      robotWatchBeadID,
+				PaneIndices: panes,
+				Lines:       lines,
+				Interval:    interval,
+			}
+			if err := robot.PrintWatchBead(opts); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 		if robotErrors != "" {
 			// Parse pane filter
 			var paneFilter []string
@@ -1731,6 +1765,14 @@ Shell Integration:
 			}
 			return
 		}
+		// Robot-proxy-status handler for rust_proxy status
+		if robotProxyStatus {
+			if err := robot.PrintProxyStatus(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 
 		// Robot-rch-workers handler for RCH workers
 		if robotRCHWorkers {
@@ -1928,6 +1970,8 @@ var (
 	robotSnapshot              bool   // unified state query
 	robotSince                 string // ISO8601 timestamp for delta snapshot
 	robotTail                  string // session name for tail
+	robotWatchBead             string // session name for bead mention watch
+	robotWatchBeadID           string // bead ID for watch command
 	robotErrors                string // session name for errors
 	robotErrorsSince           string // duration for errors filter (e.g., 5m, 1h)
 	robotLines                 int    // number of lines to capture
@@ -2110,9 +2154,9 @@ var (
 	robotDefaultPrompts bool   // show per-agent-type default prompts
 	robotProfileList    bool   // list session profiles (bd-29kr)
 	robotProfileShow    string // show session profile by name (bd-29kr)
-	xfLimit       int    // max search results
-	xfMode        string // search mode: semantic, keyword, fuzzy
-	xfSort        string // sort: relevance, date
+	xfLimit             int    // max search results
+	xfMode              string // search mode: semantic, keyword, fuzzy
+	xfSort              string // sort: relevance, date
 
 	// Robot-tokens flags for token usage analysis
 	robotTokens        bool   // token usage output
@@ -2335,9 +2379,10 @@ var (
 	robotRanoWindow string // --rano-window for stats window
 
 	// Robot-rch-status and robot-rch-workers flags for RCH
-	robotRCHStatus  bool   // --robot-rch-status flag
-	robotRCHWorkers bool   // --robot-rch-workers flag
-	robotRCHWorker  string // --worker filter for --robot-rch-workers
+	robotRCHStatus   bool   // --robot-rch-status flag
+	robotProxyStatus bool   // --robot-proxy-status flag
+	robotRCHWorkers  bool   // --robot-rch-workers flag
+	robotRCHWorker   string // --worker filter for --robot-rch-workers
 
 	// Robot-mail-check flags for Agent Mail inbox integration (bd-adgv)
 	robotMailCheck    bool   // --robot-mail-check flag
@@ -2379,6 +2424,8 @@ func init() {
 	rootCmd.Flags().BoolVar(&robotSnapshot, "robot-snapshot", false, "Unified state: sessions + beads + alerts + mail. Use --since for delta. Example: ntm --robot-snapshot")
 	rootCmd.Flags().StringVar(&robotSince, "since", "", "RFC3339 timestamp for delta snapshot. Optional with --robot-snapshot. Example: --since=2025-12-15T10:00:00Z")
 	rootCmd.Flags().StringVar(&robotTail, "robot-tail", "", "Capture recent pane output. Required: SESSION. Example: ntm --robot-tail=myproject --lines=50")
+	rootCmd.Flags().StringVar(&robotWatchBead, "robot-watch-bead", "", "Capture bead mentions across panes plus current bead status (JSON snapshot). Required: SESSION")
+	rootCmd.Flags().StringVar(&robotWatchBeadID, "bead", "", "Bead ID for --robot-watch-bead. Example: --bead=bd-abc123")
 	rootCmd.Flags().StringVar(&robotErrors, "robot-errors", "", "Filter pane output to show only errors. Required: SESSION. Example: ntm --robot-errors=myproject --lines=100")
 	rootCmd.Flags().StringVar(&robotErrorsSince, "errors-since", "", "Filter to errors from last duration. Optional with --robot-errors. Example: --errors-since=5m")
 	rootCmd.Flags().IntVar(&robotLines, "lines", 20, "Lines to capture per pane. Optional with --robot-tail, --robot-errors. Example: --lines=100")
@@ -2394,7 +2441,7 @@ func init() {
 	rootCmd.Flags().StringVar(&robotSmartRestartPrompt, "prompt", "", "Send this prompt to the agent after restart. Optional with --robot-smart-restart")
 	rootCmd.Flags().BoolVar(&robotSmartRestartVerbose, "smart-restart-verbose", false, "Include extra debugging info in --robot-smart-restart response")
 	rootCmd.Flags().StringVar(&robotMonitor, "robot-monitor", "", "Start proactive monitoring for usage limits. Emits JSONL warnings. Required: SESSION. Example: ntm --robot-monitor=myproject --interval=30s")
-	rootCmd.Flags().StringVar(&robotMonitorInterval, "interval", "", "Polling interval for --robot-monitor. Example: --interval=30s (default 30s)")
+	rootCmd.Flags().StringVar(&robotMonitorInterval, "interval", "", "Polling interval for --robot-monitor and status polling for --robot-watch-bead. Example: --interval=30s")
 	rootCmd.Flags().StringVar(&robotMonitorWarn, "warn-threshold", "", "Context % for WARNING level. Optional with --robot-monitor. Example: --warn-threshold=25 (default 25)")
 	rootCmd.Flags().StringVar(&robotMonitorCrit, "crit-threshold", "", "Context % for CRITICAL level. Optional with --robot-monitor. Example: --crit-threshold=15 (default 15)")
 	rootCmd.Flags().StringVar(&robotMonitorInfo, "info-threshold", "", "Context % for INFO level. Optional with --robot-monitor. Example: --info-threshold=40 (default 40)")
@@ -2505,7 +2552,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&robotRecipes, "robot-recipes", false, "List available spawn recipes/presets (JSON). Use with --robot-spawn --spawn-preset")
 
 	// Robot-schema flag for JSON Schema generation
-	rootCmd.Flags().StringVar(&robotSchema, "robot-schema", "", "Generate JSON Schema for response types. Required: TYPE (status, send, spawn, interrupt, tail, ack, snapshot, ensemble, ensemble_spawn, all)")
+	rootCmd.Flags().StringVar(&robotSchema, "robot-schema", "", "Generate JSON Schema for response types. Required: TYPE (status, send, spawn, interrupt, tail, watch_bead, ack, snapshot, ensemble, ensemble_spawn, proxy_status, all)")
 	rootCmd.Flags().StringVar(&robotSchema, "schema", "", "Alias for --robot-schema. Generate JSON Schema for response types")
 
 	// Robot-mail flag for Agent Mail state
@@ -2799,6 +2846,7 @@ func init() {
 
 	// Robot-rch-status and robot-rch-workers flags for RCH
 	rootCmd.Flags().BoolVar(&robotRCHStatus, "robot-rch-status", false, "Get RCH status summary (JSON). Example: ntm --robot-rch-status")
+	rootCmd.Flags().BoolVar(&robotProxyStatus, "robot-proxy-status", false, "Get rust_proxy daemon + route status (JSON). Example: ntm --robot-proxy-status")
 	rootCmd.Flags().BoolVar(&robotRCHWorkers, "robot-rch-workers", false, "List RCH workers (JSON). Example: ntm --robot-rch-workers")
 	rootCmd.Flags().StringVar(&robotRCHWorker, "worker", "", "Filter to a specific RCH worker by name. Optional with --robot-rch-workers")
 
@@ -3932,7 +3980,7 @@ func needsConfigLoading(cmdName string) bool {
 			return true
 		}
 		// Most other robot flags need full config
-		if robotStatus || robotPlan || robotSnapshot || robotTail != "" ||
+		if robotStatus || robotPlan || robotSnapshot || robotTail != "" || robotWatchBead != "" ||
 			robotSend != "" || robotAck != "" || robotSpawn != "" ||
 			robotInterrupt != "" || robotRestartPane != "" || robotProbe != "" || robotGraph || robotMail || robotHealth != "" ||
 			robotHealthOAuth != "" || robotLogs != "" || robotDiagnose != "" || robotTerse || robotMarkdown || robotSave != "" || robotRestore != "" ||

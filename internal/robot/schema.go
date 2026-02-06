@@ -17,11 +17,13 @@ var SchemaCommand = map[string]interface{}{
 	"version":  VersionOutput{},
 
 	// Session operations
-	"spawn":     SpawnOutput{},
-	"send":      SendOutput{},
-	"interrupt": InterruptOutput{},
-	"tail":      TailOutput{},
-	"ack":       AckOutput{},
+	"spawn":        SpawnOutput{},
+	"send":         SendOutput{},
+	"interrupt":    InterruptOutput{},
+	"tail":         TailOutput{},
+	"watch_bead":   WatchBeadOutput{},
+	"ack":          AckOutput{},
+	"proxy_status": ProxyStatusOutput{},
 
 	// Pane inspection
 	"inspect": InspectPaneOutput{},

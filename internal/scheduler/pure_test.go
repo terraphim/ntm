@@ -1291,3 +1291,126 @@ func TestCreateProgressHooks_FailedBroadcasts(t *testing.T) {
 		t.Errorf("event Message = %q, want 'Job failed: test error'", received.Message)
 	}
 }
+
+// ─── NewSpawnJob defaults ────────────────────────────────────────────────────
+
+func TestNewSpawnJob_Defaults(t *testing.T) {
+	t.Parallel()
+	job := NewSpawnJob("test-id", JobTypeAgentLaunch, "my-session")
+
+	if job.ID != "test-id" {
+		t.Errorf("ID = %q, want %q", job.ID, "test-id")
+	}
+	if job.Type != JobTypeAgentLaunch {
+		t.Errorf("Type = %v, want %v", job.Type, JobTypeAgentLaunch)
+	}
+	if job.SessionName != "my-session" {
+		t.Errorf("SessionName = %q, want %q", job.SessionName, "my-session")
+	}
+	if job.Priority != PriorityNormal {
+		t.Errorf("Priority = %v, want %v", job.Priority, PriorityNormal)
+	}
+	if job.Status != StatusPending {
+		t.Errorf("Status = %v, want %v", job.Status, StatusPending)
+	}
+	if job.MaxRetries != 3 {
+		t.Errorf("MaxRetries = %d, want 3", job.MaxRetries)
+	}
+	if job.RetryDelay != time.Second {
+		t.Errorf("RetryDelay = %v, want %v", job.RetryDelay, time.Second)
+	}
+	if job.Metadata == nil {
+		t.Error("Metadata should be initialized, not nil")
+	}
+	if job.CreatedAt.IsZero() {
+		t.Error("CreatedAt should be set")
+	}
+	if job.ctx == nil {
+		t.Error("ctx should be set")
+	}
+	if job.cancel == nil {
+		t.Error("cancel should be set")
+	}
+}
+
+func TestNewSpawnJob_DifferentJobTypes(t *testing.T) {
+	t.Parallel()
+	types := []JobType{JobTypeSession, JobTypePaneSplit, JobTypeAgentLaunch}
+	for _, jt := range types {
+		t.Run(string(jt), func(t *testing.T) {
+			t.Parallel()
+			job := NewSpawnJob("id-"+string(jt), jt, "sess")
+			if job.Type != jt {
+				t.Errorf("Type = %v, want %v", job.Type, jt)
+			}
+		})
+	}
+}
+
+// ─── SpawnJob Cancel / IsCancelled / IsTerminal ─────────────────────────────
+
+func TestSpawnJob_Cancel_FromPending(t *testing.T) {
+	t.Parallel()
+	job := NewSpawnJob("cancel-pending", JobTypeAgentLaunch, "sess")
+	job.Cancel()
+
+	if got := job.GetStatus(); got != StatusCancelled {
+		t.Errorf("status = %v, want %v", got, StatusCancelled)
+	}
+	if job.CompletedAt.IsZero() {
+		t.Error("CompletedAt should be set when pending job is cancelled")
+	}
+	if !job.IsCancelled() {
+		t.Error("IsCancelled() = false, want true")
+	}
+	if !job.IsTerminal() {
+		t.Error("IsTerminal() = false, want true")
+	}
+	if err := job.Context().Err(); err == nil {
+		t.Error("Context() should be cancelled after Cancel()")
+	}
+}
+
+func TestSpawnJob_Cancel_FromRunning(t *testing.T) {
+	t.Parallel()
+	job := NewSpawnJob("cancel-running", JobTypeAgentLaunch, "sess")
+	job.SetStatus(StatusRunning)
+	job.Cancel()
+
+	if got := job.GetStatus(); got != StatusRunning {
+		t.Errorf("status = %v, want %v (Cancel should not rewrite running status)", got, StatusRunning)
+	}
+	if job.IsTerminal() {
+		t.Error("IsTerminal() = true, want false for running job")
+	}
+	if !job.IsCancelled() {
+		t.Error("IsCancelled() should be true after context cancellation")
+	}
+}
+
+func TestSpawnJob_RetryLifecycle(t *testing.T) {
+	t.Parallel()
+	job := NewSpawnJob("retry-job", JobTypeAgentLaunch, "sess")
+	job.MaxRetries = 2
+	job.Error = "old error"
+
+	if !job.CanRetry() {
+		t.Fatal("CanRetry() = false at retry count 0, want true")
+	}
+
+	job.IncrementRetry()
+	if job.RetryCount != 1 {
+		t.Errorf("RetryCount = %d, want 1", job.RetryCount)
+	}
+	if job.GetStatus() != StatusRetrying {
+		t.Errorf("status = %v, want %v", job.GetStatus(), StatusRetrying)
+	}
+	if job.Error != "" {
+		t.Errorf("Error = %q, want empty after IncrementRetry()", job.Error)
+	}
+
+	job.IncrementRetry()
+	if job.CanRetry() {
+		t.Error("CanRetry() = true at retry count == MaxRetries, want false")
+	}
+}

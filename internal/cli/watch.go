@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
+	"github.com/Dicklesworthstone/ntm/internal/bv"
 	"github.com/Dicklesworthstone/ntm/internal/tmux"
 	"github.com/Dicklesworthstone/ntm/internal/tui/theme"
 	"github.com/Dicklesworthstone/ntm/internal/watcher"
@@ -28,7 +31,8 @@ func newWatchCmd() *cobra.Command {
 		tailLines    int
 		noColor      bool
 		noTimestamps bool
-		pollInterval int
+		pollInterval string
+		watchBead    string
 		watchPattern string
 		watchCommand string
 	)
@@ -48,12 +52,18 @@ func newWatchCmd() *cobra.Command {
 Examples:
   ntm watch myproject              # Stream all panes
   ntm watch myproject --cc         # Only Claude agents
+  ntm watch myproject --bead=bd-123 # Track mentions/status for one bead
   ntm watch myproject --pattern="*.go" --command="go test ./..." # Run tests on change`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var session string
 			if len(args) > 0 {
 				session = args[0]
+			}
+
+			interval, err := parseWatchInterval(pollInterval)
+			if err != nil {
+				return err
 			}
 
 			opts := watchOptions{
@@ -65,7 +75,9 @@ Examples:
 				tailLines:    tailLines,
 				noColor:      noColor,
 				noTimestamps: noTimestamps,
-				pollInterval: time.Duration(pollInterval) * time.Millisecond,
+				pollInterval: interval,
+				watchBead:    watchBead,
+				intervalSet:  cmd.Flags().Changed("interval"),
 				watchPattern: watchPattern,
 				watchCommand: watchCommand,
 			}
@@ -82,7 +94,8 @@ Examples:
 	cmd.Flags().IntVar(&tailLines, "tail", 20, "Start with last N lines of output")
 	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable colors")
 	cmd.Flags().BoolVar(&noTimestamps, "no-timestamps", false, "Disable timestamps")
-	cmd.Flags().IntVar(&pollInterval, "interval", 250, "Poll interval in milliseconds")
+	cmd.Flags().StringVar(&pollInterval, "interval", "250ms", "Poll interval (e.g. 250ms, 2s, or integer milliseconds)")
+	cmd.Flags().StringVar(&watchBead, "bead", "", "Track mentions of a bead ID across agent panes")
 	cmd.Flags().StringVar(&watchPattern, "pattern", "", "File pattern to watch (e.g. '*.go')")
 	cmd.Flags().StringVar(&watchCommand, "command", "", "Command to send to agent on change")
 	cmd.ValidArgsFunction = completeSessionArgs
@@ -101,6 +114,8 @@ type watchOptions struct {
 	noColor      bool
 	noTimestamps bool
 	pollInterval time.Duration
+	watchBead    string
+	intervalSet  bool
 	watchPattern string
 	watchCommand string
 }
@@ -141,8 +156,14 @@ func runWatch(session string, opts watchOptions) error {
 	t := theme.Current()
 
 	// File watching mode
+	if opts.watchPattern != "" && opts.watchBead != "" {
+		return fmt.Errorf("--pattern and --bead cannot be used together")
+	}
 	if opts.watchPattern != "" {
 		return runFileWatch(ctx, session, opts, t)
+	}
+	if opts.watchBead != "" {
+		return runBeadWatch(ctx, session, opts, t)
 	}
 
 	// Start watching
@@ -240,6 +261,103 @@ func watchLoop(ctx context.Context, session string, opts watchOptions, t theme.T
 				printPaneOutput(pane, newOutput, opts, t)
 				state.lastOutput = output
 			}
+		}
+
+		firstRun = false
+	}
+}
+
+func runBeadWatch(ctx context.Context, session string, opts watchOptions, t theme.Theme) error {
+	mentionRE, err := beadMentionRegexp(opts.watchBead)
+	if err != nil {
+		return err
+	}
+
+	statusPoll := 30 * time.Second
+	if opts.intervalSet {
+		statusPoll = opts.pollInterval
+	}
+
+	if !opts.noColor {
+		header := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(t.Blue).
+			Render(fmt.Sprintf("Watching bead %s in session: %s", opts.watchBead, session))
+		fmt.Printf("\n%s\n", header)
+		fmt.Println(lipgloss.NewStyle().Foreground(t.Overlay).Render("Press Ctrl+C to stop\n"))
+	} else {
+		fmt.Printf("\nWatching bead %s in session: %s\n", opts.watchBead, session)
+		fmt.Println("Press Ctrl+C to stop")
+	}
+
+	paneStates := make(map[string]*paneState)
+	ticker := time.NewTicker(opts.pollInterval)
+	defer ticker.Stop()
+
+	lastStatus := ""
+	lastStatusCheck := time.Time{}
+	firstRun := true
+
+	for {
+		if !firstRun {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-ticker.C:
+			}
+		} else {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+			}
+		}
+
+		panes, err := tmux.GetPanes(session)
+		if err != nil {
+			return fmt.Errorf("failed to get panes: %w", err)
+		}
+		filteredPanes := filterPanes(panes, opts)
+
+		for _, pane := range filteredPanes {
+			if pane.Type == tmux.AgentUser {
+				continue
+			}
+
+			if paneStates[pane.ID] == nil {
+				paneStates[pane.ID] = &paneState{}
+			}
+			state := paneStates[pane.ID]
+
+			output, err := tmux.CapturePaneOutput(pane.ID, 200)
+			if err != nil {
+				continue
+			}
+
+			diff := output
+			if state.lastOutput != "" {
+				diff = computeDiff(state.lastOutput, output)
+			}
+			state.lastOutput = output
+
+			if diff == "" {
+				continue
+			}
+			for _, mention := range extractBeadMentions(diff, mentionRE) {
+				printBeadMention(pane, mention, opts, t)
+			}
+		}
+
+		if lastStatusCheck.IsZero() || time.Since(lastStatusCheck) >= statusPoll {
+			status, statusErr := bv.GetBeadStatus("", opts.watchBead)
+			if statusErr != nil {
+				status = "unknown"
+			}
+			if status != lastStatus {
+				printBeadStatus(status, statusErr, opts, t)
+				lastStatus = status
+			}
+			lastStatusCheck = time.Now()
 		}
 
 		firstRun = false
@@ -470,4 +588,108 @@ func runFileWatch(ctx context.Context, session string, opts watchOptions, t them
 
 	<-ctx.Done()
 	return nil
+}
+
+func parseWatchInterval(raw string) (time.Duration, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return 250 * time.Millisecond, nil
+	}
+	if millis, err := strconv.Atoi(value); err == nil {
+		if millis <= 0 {
+			return 0, fmt.Errorf("--interval must be positive")
+		}
+		return time.Duration(millis) * time.Millisecond, nil
+	}
+	interval, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid --interval %q: use duration (e.g. 250ms, 2s) or integer milliseconds", raw)
+	}
+	if interval <= 0 {
+		return 0, fmt.Errorf("--interval must be positive")
+	}
+	return interval, nil
+}
+
+func beadMentionRegexp(beadID string) (*regexp.Regexp, error) {
+	id := strings.TrimSpace(beadID)
+	if id == "" {
+		return nil, fmt.Errorf("--bead is required")
+	}
+	pattern := fmt.Sprintf(`(?i)\b%s\b`, regexp.QuoteMeta(id))
+	return regexp.Compile(pattern)
+}
+
+func extractBeadMentions(output string, mentionRE *regexp.Regexp) []string {
+	lines := strings.Split(output, "\n")
+	mentions := make([]string, 0)
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if mentionRE.MatchString(trimmed) {
+			mentions = append(mentions, trimmed)
+		}
+	}
+	return mentions
+}
+
+func printBeadMention(pane tmux.Pane, line string, opts watchOptions, t theme.Theme) {
+	timestamp := ""
+	if !opts.noTimestamps {
+		timestamp = time.Now().Format("15:04:05")
+	}
+	prefix := pane.Title
+	if prefix == "" {
+		prefix = fmt.Sprintf("pane-%d", pane.Index)
+	}
+
+	if opts.noColor {
+		if timestamp != "" {
+			fmt.Printf("[%s] [%s] mention: %s\n", timestamp, prefix, line)
+		} else {
+			fmt.Printf("[%s] mention: %s\n", prefix, line)
+		}
+		return
+	}
+
+	timeStyle := lipgloss.NewStyle().Foreground(t.Overlay)
+	prefixStyle := lipgloss.NewStyle().Foreground(t.Blue).Bold(true)
+	if timestamp != "" {
+		fmt.Printf("%s %s mention: %s\n",
+			timeStyle.Render("["+timestamp+"]"),
+			prefixStyle.Render("["+prefix+"]"),
+			line)
+	} else {
+		fmt.Printf("%s mention: %s\n", prefixStyle.Render("["+prefix+"]"), line)
+	}
+}
+
+func printBeadStatus(status string, statusErr error, opts watchOptions, t theme.Theme) {
+	timestamp := ""
+	if !opts.noTimestamps {
+		timestamp = time.Now().Format("15:04:05")
+	}
+	message := fmt.Sprintf("bead status: %s", status)
+	if statusErr != nil {
+		message = fmt.Sprintf("%s (lookup error: %v)", message, statusErr)
+	}
+
+	if opts.noColor {
+		if timestamp != "" {
+			fmt.Printf("[%s] %s\n", timestamp, message)
+		} else {
+			fmt.Println(message)
+		}
+		return
+	}
+
+	statusStyle := lipgloss.NewStyle().Foreground(t.Green).Bold(true)
+	timeStyle := lipgloss.NewStyle().Foreground(t.Overlay)
+	if timestamp != "" {
+		fmt.Printf("%s %s\n", timeStyle.Render("["+timestamp+"]"), statusStyle.Render(message))
+	} else {
+		fmt.Println(statusStyle.Render(message))
+	}
 }

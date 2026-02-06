@@ -698,6 +698,62 @@ func containsString(list []string, value string) bool {
 	return false
 }
 
+// GetBeadStatus returns the current status for a bead ID using br show --json.
+func GetBeadStatus(dir, beadID string) (string, error) {
+	if strings.TrimSpace(beadID) == "" {
+		return "", errors.New("bead ID is required")
+	}
+
+	output, err := RunBd(dir, "show", beadID, "--json")
+	if err != nil {
+		return "", err
+	}
+	return parseBeadStatusOutput(output)
+}
+
+func parseBeadStatusOutput(output string) (string, error) {
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" {
+		return "", errors.New("empty bead output")
+	}
+
+	var arr []map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &arr); err == nil {
+		if len(arr) == 0 {
+			return "", errors.New("empty bead response array")
+		}
+		if status, ok := extractStatusField(arr[0]); ok {
+			return status, nil
+		}
+		return "", errors.New("status field not found in bead response")
+	}
+
+	var obj map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &obj); err != nil {
+		return "", fmt.Errorf("parse bead status: %w", err)
+	}
+	if status, ok := extractStatusField(obj); ok {
+		return status, nil
+	}
+	return "", errors.New("status field not found in bead response")
+}
+
+func extractStatusField(payload map[string]interface{}) (string, bool) {
+	raw, ok := payload["status"]
+	if !ok {
+		return "", false
+	}
+	status, ok := raw.(string)
+	if !ok {
+		return "", false
+	}
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return "", false
+	}
+	return status, true
+}
+
 // IsBdInstalled checks if br is available in PATH (legacy name).
 func IsBdInstalled() bool {
 	_, err := exec.LookPath("br")

@@ -34,6 +34,9 @@ func resetFlags() {
 	robotSnapshot = false
 	robotSince = ""
 	robotTail = ""
+	robotWatchBead = ""
+	robotWatchBeadID = ""
+	robotProxyStatus = false
 	robotLines = 20
 	robotPanes = ""
 	robotSend = ""
@@ -148,6 +151,12 @@ func TestResolveRobotFormat_ConfigFallback(t *testing.T) {
 func TestRobotOutputFormatFlagAliasRegistered(t *testing.T) {
 	if rootCmd.Flags().Lookup("robot-output-format") == nil {
 		t.Fatal("expected --robot-output-format flag to be registered (alias for --robot-format)")
+	}
+}
+
+func TestRobotProxyStatusFlagRegistered(t *testing.T) {
+	if rootCmd.Flags().Lookup("robot-proxy-status") == nil {
+		t.Fatal("expected --robot-proxy-status flag to be registered")
 	}
 }
 

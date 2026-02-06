@@ -15,11 +15,11 @@ import (
 
 // Common errors returned by tool adapters
 var (
-	ErrToolNotInstalled  = errors.New("tool not installed")
-	ErrToolNotHealthy    = errors.New("tool not healthy")
-	ErrTimeout           = errors.New("operation timed out")
-	ErrSchemaValidation  = errors.New("schema validation failed")
-	ErrCapabilityMissing = errors.New("capability not available")
+	ErrToolNotInstalled    = errors.New("tool not installed")
+	ErrToolNotHealthy      = errors.New("tool not healthy")
+	ErrTimeout             = errors.New("operation timed out")
+	ErrSchemaValidation    = errors.New("schema validation failed")
+	ErrCapabilityMissing   = errors.New("capability not available")
 	ErrOutputLimitExceeded = errors.New("output limit exceeded")
 )
 
@@ -83,31 +83,32 @@ func (b *LimitedBuffer) Write(p []byte) (n int, err error) {
 type ToolName string
 
 const (
-	ToolBV   ToolName = "bv"   // Beads Viewer - graph-aware triage
-	ToolBD   ToolName = "bd"   // Beads - issue tracking
-	ToolAM   ToolName = "am"   // Agent Mail MCP server
-	ToolCM   ToolName = "cm"   // Cass Memory system
-	ToolCASS ToolName = "cass" // Cross-Agent Semantic Search
-	ToolS2P  ToolName = "s2p"  // Source to Prompt
-	ToolJFP  ToolName = "jfp"  // JeffreysPrompts CLI - prompt library
-	ToolDCG  ToolName = "dcg"  // Destructive Command Guard - blocks dangerous commands
-	ToolSLB  ToolName = "slb"  // Simultaneous Launch Button - two-person authorization
-	ToolACFS ToolName = "acfs" // Agentic Coding Flywheel Setup - system configuration
-	ToolRU   ToolName = "ru"   // Repo Updater - multi-repo sync and management
-	ToolMS   ToolName = "ms"   // Meta Skill - skill search and suggestion
-	ToolXF   ToolName = "xf"   // X Find - X/Twitter archive search
-	ToolGIIL ToolName = "giil" // Get Image from Internet Link - cloud photo downloader
-	ToolUBS  ToolName = "ubs"  // Ultimate Bug Scanner - code review and bug detection
-	ToolCAAM ToolName = "caam" // CAAM - Coding Agent Account Manager for rate limit recovery
-	ToolRCH  ToolName = "rch"  // RCH - Remote Compilation Helper for build offloading
-	ToolRano ToolName = "rano" // rano - Network observer for per-agent API tracking
-	ToolCaut ToolName = "caut" // caut - Cloud API Usage Tracker for quota monitoring
-	ToolPT   ToolName = "pt"   // pt - process_triage - Bayesian agent health classification
+	ToolBV    ToolName = "bv"         // Beads Viewer - graph-aware triage
+	ToolBD    ToolName = "bd"         // Beads - issue tracking
+	ToolAM    ToolName = "am"         // Agent Mail MCP server
+	ToolCM    ToolName = "cm"         // Cass Memory system
+	ToolCASS  ToolName = "cass"       // Cross-Agent Semantic Search
+	ToolS2P   ToolName = "s2p"        // Source to Prompt
+	ToolJFP   ToolName = "jfp"        // JeffreysPrompts CLI - prompt library
+	ToolDCG   ToolName = "dcg"        // Destructive Command Guard - blocks dangerous commands
+	ToolSLB   ToolName = "slb"        // Simultaneous Launch Button - two-person authorization
+	ToolACFS  ToolName = "acfs"       // Agentic Coding Flywheel Setup - system configuration
+	ToolRU    ToolName = "ru"         // Repo Updater - multi-repo sync and management
+	ToolMS    ToolName = "ms"         // Meta Skill - skill search and suggestion
+	ToolXF    ToolName = "xf"         // X Find - X/Twitter archive search
+	ToolGIIL  ToolName = "giil"       // Get Image from Internet Link - cloud photo downloader
+	ToolUBS   ToolName = "ubs"        // Ultimate Bug Scanner - code review and bug detection
+	ToolCAAM  ToolName = "caam"       // CAAM - Coding Agent Account Manager for rate limit recovery
+	ToolRCH   ToolName = "rch"        // RCH - Remote Compilation Helper for build offloading
+	ToolRano  ToolName = "rano"       // rano - Network observer for per-agent API tracking
+	ToolCaut  ToolName = "caut"       // caut - Cloud API Usage Tracker for quota monitoring
+	ToolPT    ToolName = "pt"         // pt - process_triage - Bayesian agent health classification
+	ToolProxy ToolName = "rust_proxy" // rust_proxy - local HTTP proxy with failover
 )
 
 // AllTools returns a list of all supported tools
 func AllTools() []ToolName {
-	return []ToolName{ToolBV, ToolBD, ToolAM, ToolCM, ToolCASS, ToolS2P, ToolJFP, ToolDCG, ToolSLB, ToolACFS, ToolRU, ToolMS, ToolXF, ToolGIIL, ToolUBS, ToolCAAM, ToolRCH, ToolRano, ToolCaut, ToolPT}
+	return []ToolName{ToolBV, ToolBD, ToolAM, ToolCM, ToolCASS, ToolS2P, ToolJFP, ToolDCG, ToolSLB, ToolACFS, ToolRU, ToolMS, ToolXF, ToolGIIL, ToolUBS, ToolCAAM, ToolRCH, ToolRano, ToolCaut, ToolPT, ToolProxy}
 }
 
 // HealthStatus represents the health state of a tool

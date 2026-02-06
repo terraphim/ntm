@@ -142,7 +142,8 @@ This separation enables reliable parsing while providing useful context for debu
 2. Create a session: ntm --robot-spawn=myproject --spawn-cc=2
 3. Send a prompt: ntm --robot-send=myproject --msg="implement auth"
 4. Monitor progress: ntm --robot-is-working=myproject
-5. Capture output: ntm --robot-tail=myproject --lines=100`,
+5. Capture output: ntm --robot-tail=myproject --lines=100
+6. Track one bead: ntm --robot-watch-bead=myproject --bead=bd-123`,
 			},
 			{
 				Heading: "Discovery",
@@ -184,6 +185,7 @@ func getCommandsContent() *DocsContent {
 				Body: `--robot-status: Get tmux sessions, panes, and agent states
 --robot-snapshot: Unified state query (sessions + beads + alerts + mail)
 --robot-tail=SESSION: Capture recent pane output
+--robot-watch-bead=SESSION: Capture bead mentions + current bead status
 --robot-context=SESSION: Get context window usage
 --robot-is-working=SESSION: Check if agents are busy
 --robot-diagnose=SESSION: Comprehensive health check
@@ -231,6 +233,7 @@ func getCommandsContent() *DocsContent {
 --robot-docs: Documentation (this command)
 --robot-version: Version and build info
 --robot-help: Human-readable help text
+--robot-proxy-status: rust_proxy daemon/route status
 --robot-slb-pending: List SLB pending approvals
 --robot-slb-approve=ID: Approve SLB request
 --robot-slb-deny=ID: Deny SLB request`,

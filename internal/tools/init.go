@@ -61,4 +61,7 @@ func init() {
 
 	// Register PT adapter (process_triage - Bayesian agent health classification)
 	Register(NewPTAdapter())
+
+	// Register rust_proxy adapter (local HTTP proxy with failover)
+	Register(NewProxyAdapter())
 }

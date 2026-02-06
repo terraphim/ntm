@@ -196,6 +196,23 @@ func buildCommandRegistry() []RobotCommandInfo {
 			},
 		},
 		{
+			Name:        "watch-bead",
+			Flag:        "--robot-watch-bead",
+			Category:    "state",
+			Description: "Capture recent mentions of a bead across panes and report current bead status.",
+			Parameters: []RobotParameter{
+				{Name: "session", Flag: "--robot-watch-bead", Type: "string", Required: true, Description: "Session name"},
+				{Name: "bead", Flag: "--bead", Type: "string", Required: true, Description: "Bead ID to track"},
+				{Name: "panes", Flag: "--panes", Type: "string", Required: false, Description: "Comma-separated pane indices to filter"},
+				{Name: "lines", Flag: "--lines", Type: "int", Required: false, Default: "200", Description: "Lines captured per pane"},
+				{Name: "interval", Flag: "--interval", Type: "string", Required: false, Default: "30s", Description: "Status polling interval"},
+			},
+			Examples: []string{
+				"ntm --robot-watch-bead=myproject --bead=bd-abc123",
+				"ntm --robot-watch-bead=myproject --bead=bd-abc123 --panes=2,3 --lines=300 --interval=45s",
+			},
+		},
+		{
 			Name:        "inspect-pane",
 			Flag:        "--robot-inspect-pane",
 			Category:    "state",
@@ -1052,6 +1069,14 @@ func buildCommandRegistry() []RobotCommandInfo {
 			Description: "Get RCH status summary including worker counts.",
 			Parameters:  []RobotParameter{},
 			Examples:    []string{"ntm --robot-rch-status"},
+		},
+		{
+			Name:        "proxy-status",
+			Flag:        "--robot-proxy-status",
+			Category:    "utility",
+			Description: "Get rust_proxy daemon status, route metrics, and failover history.",
+			Parameters:  []RobotParameter{},
+			Examples:    []string{"ntm --robot-proxy-status"},
 		},
 		{
 			Name:        "rch-workers",
