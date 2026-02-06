@@ -312,6 +312,21 @@ func buildCommandRegistry() []RobotCommandInfo {
 			Examples: []string{"ntm --robot-diagnose=myproject --diagnose-fix"},
 		},
 		{
+			Name:        "health-restart-stuck",
+			Flag:        "--robot-health-restart-stuck",
+			Category:    "state",
+			Description: "Detect and restart agents stuck with no output for N minutes.",
+			Parameters: []RobotParameter{
+				{Name: "session", Flag: "--robot-health-restart-stuck", Type: "string", Required: true, Description: "Session name"},
+				{Name: "stuck-threshold", Flag: "--stuck-threshold", Type: "duration", Required: false, Default: "5m", Description: "Duration before considering agent stuck (e.g. 5m, 10m, 300s)"},
+				{Name: "dry-run", Flag: "--dry-run", Type: "bool", Required: false, Description: "Report stuck panes without restarting"},
+			},
+			Examples: []string{
+				"ntm --robot-health-restart-stuck=myproject",
+				"ntm --robot-health-restart-stuck=myproject --stuck-threshold=10m --dry-run",
+			},
+		},
+		{
 			Name:        "probe",
 			Flag:        "--robot-probe",
 			Category:    "state",

@@ -43,8 +43,10 @@ var SchemaCommand = map[string]interface{}{
 	"probe":    ProbeSessionOutput{},
 
 	// Agent health
-	"agent_health": AgentHealthOutput{},
-	"is_working":   IsWorkingOutput{},
+	"agent_health":       AgentHealthOutput{},
+	"is_working":         IsWorkingOutput{},
+	"restart_pane":       RestartPaneOutput{},
+	"auto_restart_stuck": AutoRestartStuckOutput{},
 }
 
 // JSONSchema represents a JSON Schema document.

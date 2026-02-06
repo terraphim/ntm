@@ -189,6 +189,7 @@ func getCommandsContent() *DocsContent {
 --robot-context=SESSION: Get context window usage
 --robot-is-working=SESSION: Check if agents are busy
 --robot-diagnose=SESSION: Comprehensive health check
+--robot-health-restart-stuck=SESSION: Detect and restart stuck agents
 --robot-probe=SESSION: Active pane responsiveness probe`,
 			},
 			{
