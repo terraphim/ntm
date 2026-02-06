@@ -113,6 +113,36 @@ func TestTruncateStr(t *testing.T) {
 	}
 }
 
+// TestTruncateStr_EdgeCases tests uncovered branches of truncateStr.
+func TestTruncateStr_EdgeCases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		input  string
+		maxLen int
+		want   string
+	}{
+		{"maxLen zero", "hello", 0, ""},
+		{"maxLen negative", "hello", -5, ""},
+		{"maxLen 1", "hello", 1, "h"},
+		{"maxLen 2", "hello", 2, "he"},
+		{"maxLen 3 exact", "abc", 3, "abc"},
+		{"multibyte loop fallthrough", "aaaa\xf0\x9f\x8c\x8d", 7, "aaaa..."},
+		{"single multibyte maxLen 3", "\xf0\x9f\x8c\x8d", 3, ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := truncateStr(tc.input, tc.maxLen)
+			if got != tc.want {
+				t.Errorf("truncateStr(%q, %d) = %q, want %q", tc.input, tc.maxLen, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAlertSeverityOrder(t *testing.T) {
 	tests := []struct {
 		severity alerts.Severity

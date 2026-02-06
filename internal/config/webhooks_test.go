@@ -171,6 +171,73 @@ webhooks:
 	}
 }
 
+// TestIsValidWebhookAgentType tests all branches of the agent type validator.
+func TestIsValidWebhookAgentType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"claude", true},
+		{"cc", true},
+		{"codex", true},
+		{"cod", true},
+		{"gemini", true},
+		{"gmi", true},
+		{"CLAUDE", true},
+		{"  cc  ", true},
+		{"Codex", true},
+		{"", false},
+		{"python", false},
+		{"claude2", false},
+		{"   ", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			t.Parallel()
+			got := isValidWebhookAgentType(tc.input)
+			if got != tc.want {
+				t.Errorf("isValidWebhookAgentType(%q) = %v, want %v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIsValidWebhookSeverity tests all branches of the severity validator.
+func TestIsValidWebhookSeverity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"info", true},
+		{"success", true},
+		{"warning", true},
+		{"warn", true},
+		{"error", true},
+		{"INFO", true},
+		{"  warning  ", true},
+		{"Error", true},
+		{"", false},
+		{"debug", false},
+		{"fatal", false},
+		{"   ", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			t.Parallel()
+			got := isValidWebhookSeverity(tc.input)
+			if got != tc.want {
+				t.Errorf("isValidWebhookSeverity(%q) = %v, want %v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestWatchProjectWebhooks(t *testing.T) {
 	tmpDir := t.TempDir()
 

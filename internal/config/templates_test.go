@@ -270,6 +270,36 @@ func TestDefaultAgentTemplates_ShellQuoting(t *testing.T) {
 	check("gemini", templates.Gemini)
 }
 
+// TestShellQuote_Branches tests both branches of ShellQuote.
+func TestShellQuote_Branches(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"empty string", "", "''"},
+		{"plain text", "hello", "'hello'"},
+		{"single quote", "it's", "'it'\\''s'"},
+		{"only single quote", "'", "''\\'''"},
+		{"multiple single quotes", "a''b", "'a'\\'''\\''b'"},
+		{"no special chars", "abc123", "'abc123'"},
+		{"with spaces", "hello world", "'hello world'"},
+		{"with semicolons", "cmd; rm -rf /", "'cmd; rm -rf /'"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := ShellQuote(tc.input)
+			if got != tc.want {
+				t.Errorf("ShellQuote(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestTemplateFunctions(t *testing.T) {
 	tests := []struct {
 		name     string

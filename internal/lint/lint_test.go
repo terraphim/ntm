@@ -333,6 +333,94 @@ func TestRuleSet_Disable_UnknownRule(t *testing.T) {
 	rs.Disable(RuleID("nonexistent-rule"))
 }
 
+// TestHasWarnings_NoWarnings tests the false branch of HasWarnings (no warnings present).
+func TestHasWarnings_NoWarnings(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		findings []Finding
+	}{
+		{"empty findings", nil},
+		{"only errors", []Finding{
+			{ID: RuleSecretDetected, Severity: SeverityError},
+		}},
+		{"only info", []Finding{
+			{ID: RuleMissingContext, Severity: SeverityInfo},
+		}},
+		{"errors and info no warnings", []Finding{
+			{ID: RuleSecretDetected, Severity: SeverityError},
+			{ID: RuleMissingContext, Severity: SeverityInfo},
+		}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			result := &Result{Findings: tc.findings}
+			if result.HasWarnings() {
+				t.Error("HasWarnings() = true, want false")
+			}
+		})
+	}
+}
+
+// TestHasErrors_NoErrors tests the false branch of HasErrors (no errors present).
+func TestHasErrors_NoErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		findings []Finding
+	}{
+		{"empty findings", nil},
+		{"only warnings", []Finding{
+			{ID: RuleDestructiveCommand, Severity: SeverityWarning},
+		}},
+		{"only info", []Finding{
+			{ID: RuleMissingContext, Severity: SeverityInfo},
+		}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			result := &Result{Findings: tc.findings}
+			if result.HasErrors() {
+				t.Error("HasErrors() = true, want false")
+			}
+		})
+	}
+}
+
+// TestIsSafeMatch_Branches tests both branches of isSafeMatch.
+func TestIsSafeMatch_Branches(t *testing.T) {
+	t.Parallel()
+
+	// Safe matches (force-with-lease is in safe patterns)
+	safeInputs := []string{
+		"git push --force-with-lease",
+	}
+	for _, input := range safeInputs {
+		if !isSafeMatch(input) {
+			t.Errorf("isSafeMatch(%q) = false, want true", input)
+		}
+	}
+
+	// Unsafe matches (no safe pattern applies)
+	unsafeInputs := []string{
+		"rm -rf /",
+		"git push --force",
+		"random text",
+		"",
+	}
+	for _, input := range unsafeInputs {
+		if isSafeMatch(input) {
+			t.Errorf("isSafeMatch(%q) = true, want false", input)
+		}
+	}
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
