@@ -273,3 +273,69 @@ func TestAlertsPanelAlertKeyFallbackWhenIDMissing(t *testing.T) {
 		t.Fatalf("expected firstSeen to contain fallback key %q", key)
 	}
 }
+
+// =============================================================================
+// shouldPulse — all branches (alerts.go:117)
+// =============================================================================
+
+func TestShouldPulse_NilFirstSeen(t *testing.T) {
+	t.Parallel()
+
+	panel := &AlertsPanel{} // firstSeen is nil
+	got := panel.shouldPulse("any-key", time.Now())
+	if got {
+		t.Error("shouldPulse with nil firstSeen should return false")
+	}
+}
+
+func TestShouldPulse_UnknownKey(t *testing.T) {
+	t.Parallel()
+
+	panel := NewAlertsPanel()
+	got := panel.shouldPulse("missing-key", time.Now())
+	if got {
+		t.Error("shouldPulse with unknown key should return false")
+	}
+}
+
+func TestShouldPulse_WithinDuration(t *testing.T) {
+	t.Parallel()
+
+	panel := NewAlertsPanel()
+	now := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
+	panel.firstSeen["test-key"] = now
+
+	// 1 second later — within 3s pulse duration
+	got := panel.shouldPulse("test-key", now.Add(1*time.Second))
+	if !got {
+		t.Error("shouldPulse within duration should return true")
+	}
+}
+
+func TestShouldPulse_ExpiredDuration(t *testing.T) {
+	t.Parallel()
+
+	panel := NewAlertsPanel()
+	now := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
+	panel.firstSeen["test-key"] = now
+
+	// 5 seconds later — past 3s pulse duration
+	got := panel.shouldPulse("test-key", now.Add(5*time.Second))
+	if got {
+		t.Error("shouldPulse past duration should return false")
+	}
+}
+
+func TestShouldPulse_FutureFirstSeen(t *testing.T) {
+	t.Parallel()
+
+	panel := NewAlertsPanel()
+	now := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
+	panel.firstSeen["test-key"] = now.Add(10 * time.Second) // firstSeen is in the future
+
+	// age is negative → age >= 0 is false
+	got := panel.shouldPulse("test-key", now)
+	if got {
+		t.Error("shouldPulse with negative age should return false")
+	}
+}
