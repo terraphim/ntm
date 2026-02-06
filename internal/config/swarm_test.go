@@ -357,6 +357,36 @@ func containsString(s, substr string) bool {
 	return len(substr) > 0 && len(s) >= len(substr) && (s == substr || contains(s, substr))
 }
 
+// =============================================================================
+// validateAllocationSpec — all negative branches (bd-4b4zf)
+// =============================================================================
+
+func TestValidateAllocationSpec_AllBranches(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		spec    AllocationSpec
+		wantErr bool
+	}{
+		{"all zero valid", AllocationSpec{}, false},
+		{"all positive valid", AllocationSpec{CC: 2, Cod: 3, Gmi: 1}, false},
+		{"negative CC", AllocationSpec{CC: -1, Cod: 0, Gmi: 0}, true},
+		{"negative Cod", AllocationSpec{CC: 0, Cod: -1, Gmi: 0}, true},
+		{"negative Gmi", AllocationSpec{CC: 0, Cod: 0, Gmi: -1}, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateAllocationSpec("test", tc.spec)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("validateAllocationSpec() error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func contains(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {

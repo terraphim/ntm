@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestParseWebhookConfig_Basic(t *testing.T) {
@@ -281,4 +283,92 @@ webhooks:
 	case <-time.After(3 * time.Second):
 		t.Fatal("timeout waiting for webhook config reload")
 	}
+}
+
+// =============================================================================
+// webhookNames — all branches (bd-4b4zf)
+// =============================================================================
+
+func TestWebhookNames_AllBranches(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfgs []WebhookConfig
+		want string
+	}{
+		{"empty slice", nil, "(none)"},
+		{"single named", []WebhookConfig{{Name: "alpha"}}, "alpha"},
+		{"multiple named sorted", []WebhookConfig{{Name: "beta"}, {Name: "alpha"}}, "alpha, beta"},
+		{"all empty names", []WebhookConfig{{Name: ""}, {Name: "  "}}, "(unnamed)"},
+		{"mixed empty and named", []WebhookConfig{{Name: ""}, {Name: "slack"}}, "slack"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := webhookNames(tc.cfgs)
+			if got != tc.want {
+				t.Errorf("webhookNames() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// findTopLevelYAMLKey — all branches (bd-4b4zf)
+// =============================================================================
+
+func TestFindTopLevelYAMLKey_AllBranches(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil root returns nil", func(t *testing.T) {
+		t.Parallel()
+		if got := findTopLevelYAMLKey(nil, "key"); got != nil {
+			t.Error("expected nil for nil root")
+		}
+	})
+
+	t.Run("non-mapping node returns nil", func(t *testing.T) {
+		t.Parallel()
+		node := &yaml.Node{Kind: yaml.ScalarNode, Value: "hello"}
+		if got := findTopLevelYAMLKey(node, "key"); got != nil {
+			t.Error("expected nil for scalar node")
+		}
+	})
+
+	t.Run("document node unwraps to mapping", func(t *testing.T) {
+		t.Parallel()
+		var doc yaml.Node
+		if err := yaml.Unmarshal([]byte("webhooks:\n  - name: test"), &doc); err != nil {
+			t.Fatal(err)
+		}
+		got := findTopLevelYAMLKey(&doc, "webhooks")
+		if got == nil {
+			t.Fatal("expected non-nil for existing key under document node")
+		}
+	})
+
+	t.Run("key not found returns nil", func(t *testing.T) {
+		t.Parallel()
+		var doc yaml.Node
+		if err := yaml.Unmarshal([]byte("other: value"), &doc); err != nil {
+			t.Fatal(err)
+		}
+		if got := findTopLevelYAMLKey(&doc, "missing"); got != nil {
+			t.Error("expected nil for missing key")
+		}
+	})
+
+	t.Run("key found returns value node", func(t *testing.T) {
+		t.Parallel()
+		var doc yaml.Node
+		if err := yaml.Unmarshal([]byte("foo: bar\nbaz: qux"), &doc); err != nil {
+			t.Fatal(err)
+		}
+		got := findTopLevelYAMLKey(&doc, "baz")
+		if got == nil || got.Value != "qux" {
+			t.Errorf("expected value 'qux', got %v", got)
+		}
+	})
 }

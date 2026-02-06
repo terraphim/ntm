@@ -518,3 +518,49 @@ func TestAgentPacingConfig_ZeroDelays(t *testing.T) {
 		t.Error("zero CooldownOnFailureMs should yield 0 duration")
 	}
 }
+
+// =============================================================================
+// validateBackoffPacingConfig (bd-4b4zf)
+// =============================================================================
+
+func TestValidateBackoffPacingConfig_AllBranches(t *testing.T) {
+	t.Parallel()
+
+	validCfg := func() BackoffPacingConfig {
+		return BackoffPacingConfig{
+			InitialDelayMs:         1000,
+			MaxDelayMs:             30000,
+			Multiplier:             2.0,
+			MaxConsecutiveFailures: 5,
+			GlobalPauseDurationMs:  10000,
+		}
+	}
+
+	tests := []struct {
+		name    string
+		modify  func(*BackoffPacingConfig)
+		wantErr bool
+	}{
+		{"valid config", func(c *BackoffPacingConfig) {}, false},
+		{"InitialDelayMs negative", func(c *BackoffPacingConfig) { c.InitialDelayMs = -1 }, true},
+		{"MaxDelayMs less than InitialDelayMs", func(c *BackoffPacingConfig) { c.MaxDelayMs = 500 }, true},
+		{"Multiplier below 1.0", func(c *BackoffPacingConfig) { c.Multiplier = 0.5 }, true},
+		{"MaxConsecutiveFailures zero", func(c *BackoffPacingConfig) { c.MaxConsecutiveFailures = 0 }, true},
+		{"GlobalPauseDurationMs negative", func(c *BackoffPacingConfig) { c.GlobalPauseDurationMs = -1 }, true},
+		{"GlobalPauseDurationMs zero valid", func(c *BackoffPacingConfig) { c.GlobalPauseDurationMs = 0 }, false},
+		{"InitialDelayMs zero valid", func(c *BackoffPacingConfig) { c.InitialDelayMs = 0; c.MaxDelayMs = 0 }, false},
+		{"Multiplier exactly 1.0 valid", func(c *BackoffPacingConfig) { c.Multiplier = 1.0 }, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := validCfg()
+			tc.modify(&cfg)
+			err := validateBackoffPacingConfig(&cfg)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("validateBackoffPacingConfig() error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}

@@ -2438,6 +2438,105 @@ func TestValidateXFConfig(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// ValidateXFConfig — nil branch (bd-4b4zf)
+// =============================================================================
+
+func TestValidateXFConfig_NilConfig(t *testing.T) {
+	t.Parallel()
+	if err := ValidateXFConfig(nil); err != nil {
+		t.Errorf("ValidateXFConfig(nil) = %v, want nil", err)
+	}
+}
+
+func TestValidateXFConfig_DisabledWithFields(t *testing.T) {
+	t.Parallel()
+	// Disabled but has non-zero fields — exercises the second !cfg.Enabled branch.
+	cfg := &XFConfig{
+		Enabled:     false,
+		BinPath:     "xf",
+		ArchivePath: "~/.xf/archive",
+	}
+	if err := ValidateXFConfig(cfg); err != nil {
+		t.Errorf("ValidateXFConfig(disabled with fields) = %v, want nil", err)
+	}
+}
+
+// =============================================================================
+// ValidateContextRotationConfig — missing branches (bd-4b4zf)
+// =============================================================================
+
+func TestValidateContextRotationConfig_MissingBranches(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cfg     ContextRotationConfig
+		wantErr bool
+	}{
+		{
+			name: "confirm_timeout_sec negative",
+			cfg: ContextRotationConfig{
+				WarningThreshold: 0.80,
+				RotateThreshold:  0.95,
+				SummaryMaxTokens: 2000,
+				ConfirmTimeoutSec: -1,
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid default_confirm_action",
+			cfg: ContextRotationConfig{
+				WarningThreshold:     0.80,
+				RotateThreshold:      0.95,
+				SummaryMaxTokens:     2000,
+				DefaultConfirmAction: "invalid",
+			},
+			wantErr: true,
+		},
+		{
+			name: "empty default_confirm_action is valid",
+			cfg: ContextRotationConfig{
+				WarningThreshold:     0.80,
+				RotateThreshold:      0.95,
+				SummaryMaxTokens:     2000,
+				DefaultConfirmAction: "",
+			},
+			wantErr: false,
+		},
+		{
+			name: "compact default_confirm_action is valid",
+			cfg: ContextRotationConfig{
+				WarningThreshold:     0.80,
+				RotateThreshold:      0.95,
+				SummaryMaxTokens:     2000,
+				DefaultConfirmAction: "compact",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateContextRotationConfig(&tt.cfg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateContextRotationConfig() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// applySafetyProfileDefaults — nil branch (bd-4b4zf)
+// =============================================================================
+
+func TestApplySafetyProfileDefaults_Nil(t *testing.T) {
+	t.Parallel()
+	// Should not panic when called with nil.
+	applySafetyProfileDefaults(nil)
+}
+
 func TestProcessTriageInIntegrationsConfig(t *testing.T) {
 	cfg := DefaultIntegrationsConfig()
 

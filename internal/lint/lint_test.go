@@ -421,6 +421,46 @@ func TestIsSafeMatch_Branches(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// SetConfig — all branches (bd-4b4zf)
+// =============================================================================
+
+func TestSetConfig_AllBranches(t *testing.T) {
+	t.Parallel()
+
+	t.Run("unknown rule ID returns early", func(t *testing.T) {
+		t.Parallel()
+		rs := DefaultRuleSet()
+		// Should not panic — just returns silently.
+		rs.SetConfig(RuleID("nonexistent"), "key", "value")
+	})
+
+	t.Run("nil Config map is initialized", func(t *testing.T) {
+		t.Parallel()
+		rs := DefaultRuleSet()
+		// Ensure rule exists but has nil Config map.
+		rule := rs.Rules[RuleSecretDetected]
+		rule.Config = nil
+		rs.Rules[RuleSecretDetected] = rule
+
+		rs.SetConfig(RuleSecretDetected, "custom_key", 42)
+		got := rs.Rules[RuleSecretDetected].Config["custom_key"]
+		if got != 42 {
+			t.Errorf("expected Config[custom_key]=42, got %v", got)
+		}
+	})
+
+	t.Run("existing Config map updated", func(t *testing.T) {
+		t.Parallel()
+		rs := DefaultRuleSet()
+		rs.SetConfig(RuleOversizedPromptBytes, ConfigKeyWarnBytes, 999)
+		got := rs.Rules[RuleOversizedPromptBytes].Config[ConfigKeyWarnBytes]
+		if got != 999 {
+			t.Errorf("expected Config[%s]=999, got %v", ConfigKeyWarnBytes, got)
+		}
+	})
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
