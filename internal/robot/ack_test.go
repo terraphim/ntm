@@ -119,6 +119,12 @@ func TestGetNewContent(t *testing.T) {
 			current:  "same",
 			expected: "",
 		},
+		{
+			name:     "rolling window shift",
+			initial:  "a\nb\nc\nd",
+			current:  "c\nd\ne\nf",
+			expected: "e\nf",
+		},
 	}
 
 	for _, tt := range tests {

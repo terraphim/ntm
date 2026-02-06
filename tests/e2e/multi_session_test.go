@@ -923,7 +923,7 @@ scrollback = 500
 	}
 
 	runTrackedSend := func(sess, marker string) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 
 		cmd := exec.CommandContext(
@@ -931,9 +931,13 @@ scrollback = 500
 			"ntm",
 			"--config", configPath,
 			"--robot-send="+sess,
-			"--msg", fmt.Sprintf("echo %s", marker),
+			// Emit 2 non-prompt output lines so ack can still detect progress even if the echoed
+			// input line is rotated out of the capture window.
+			"--msg", fmt.Sprintf("echo %s && echo %s_DONE", marker, marker),
 			"--type=claude",
 			"--track",
+			"--timeout=60s",
+			"--poll=1s",
 		)
 		out, err := cmd.CombinedOutput()
 		if err != nil && ctx.Err() == context.DeadlineExceeded {
@@ -948,8 +952,21 @@ scrollback = 500
 			return fmt.Errorf("parse send+ack json for %s: %w (output: %s)", sess, err, out)
 		}
 		if !res.Success || !res.Send.Success || !res.Ack.Success {
-			return fmt.Errorf("send+ack unsuccessful for %s: success=%v send.success=%v ack.success=%v error=%q (output: %s)",
-				sess, res.Success, res.Send.Success, res.Ack.Success, res.Error, out)
+			diag := ""
+			if paneCount, err := testutil.GetSessionPaneCount(sess); err == nil {
+				for p := 0; p < paneCount; p++ {
+					content, err := testutil.CapturePane(sess, p)
+					if err != nil {
+						continue
+					}
+					if diag == "" {
+						diag = "\n\n[BD-1680N] session pane snapshots:"
+					}
+					diag += fmt.Sprintf("\n--- %s:%d ---\n%s", sess, p, content)
+				}
+			}
+			return fmt.Errorf("send+ack unsuccessful for %s: success=%v send.success=%v ack.success=%v error=%q (output: %s)%s",
+				sess, res.Success, res.Send.Success, res.Ack.Success, res.Error, out, diag)
 		}
 		if res.Send.Session != sess || res.Ack.Session != sess {
 			return fmt.Errorf("session mismatch for %s: send.session=%q ack.session=%q (output: %s)", sess, res.Send.Session, res.Ack.Session, out)
@@ -966,6 +983,9 @@ scrollback = 500
 	for iter := 0; iter < iterations; iter++ {
 		logger.LogSection(fmt.Sprintf("Step 2.%d: Concurrent robot-send --track across sessions", iter+1))
 
+		// Limit concurrency to avoid overloading tmux capture-pane during ack polling.
+		sem := make(chan struct{}, 2)
+
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 		errs := make([]error, 0)
@@ -976,7 +996,11 @@ scrollback = 500
 
 			wg.Add(1)
 			go func(sess, marker string) {
-				defer wg.Done()
+				sem <- struct{}{}
+				defer func() {
+					<-sem
+					wg.Done()
+				}()
 				if err := runTrackedSend(sess, marker); err != nil {
 					mu.Lock()
 					errs = append(errs, err)

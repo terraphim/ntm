@@ -756,7 +756,11 @@ func stripTags(title string) string {
 const (
 	// DefaultEnterDelay is for AI agent TUIs (Claude, Codex, Gemini) which have
 	// their own input buffering and process pasted text quickly.
-	DefaultEnterDelay = 50 * time.Millisecond
+	//
+	// Note: In practice, even "agent" panes may run a plain shell (e.g. tests that
+	// set claude/codex/gemini commands to bash). A slightly higher default helps
+	// avoid flaky "lost Enter" behavior under load.
+	DefaultEnterDelay = 100 * time.Millisecond
 
 	// ShellEnterDelay is for shell panes (bash, zsh, etc.) which may need more
 	// time to process pasted text before receiving Enter. Shell input handling

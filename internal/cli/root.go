@@ -976,11 +976,26 @@ Shell Integration:
 
 			// Check if --track flag is set for combined send+ack mode
 			if robotAckTrack {
-				// Parse ack timeout duration
-				ackTimeout, err := util.ParseDurationWithDefault(robotAckTimeout, time.Millisecond, "ack-timeout")
+				// Canonical modifiers for ack behavior are --timeout and --poll.
+				// --ack-timeout/--ack-poll remain as deprecated aliases for backward compatibility.
+				ackTimeoutStr := robotAckTimeout
+				if cmd.Flags().Changed("timeout") {
+					ackTimeoutStr = robotWaitTimeout
+				}
+				ackTimeout, err := util.ParseDurationWithDefault(ackTimeoutStr, time.Millisecond, "timeout")
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: invalid --ack-timeout: %v\n", err)
+					fmt.Fprintf(os.Stderr, "Error: invalid --timeout/--ack-timeout: %v\n", err)
 					os.Exit(1)
+				}
+
+				ackPollMs := robotAckPoll
+				if cmd.Flags().Changed("poll") {
+					pollDur, err := util.ParseDurationWithDefault(robotWaitPoll, time.Millisecond, "poll")
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Error: invalid --poll/--ack-poll: %v\n", err)
+						os.Exit(1)
+					}
+					ackPollMs = int(pollDur.Milliseconds())
 				}
 				opts := robot.SendAndAckOptions{
 					SendOptions: robot.SendOptions{
@@ -995,7 +1010,7 @@ Shell Integration:
 						DryRun:     robotDryRunEffective,
 					},
 					AckTimeoutMs: int(ackTimeout.Milliseconds()),
-					AckPollMs:    robotAckPoll,
+					AckPollMs:    ackPollMs,
 				}
 				if cfg != nil {
 					opts.SendOptions.Redaction = cfg.Redaction.ToRedactionLibConfig()
@@ -1110,18 +1125,33 @@ Shell Integration:
 			if robotPanes != "" {
 				paneFilter = strings.Split(robotPanes, ",")
 			}
-			// Parse ack timeout duration
-			ackTimeout, err := util.ParseDurationWithDefault(robotAckTimeout, time.Millisecond, "ack-timeout")
+			// Canonical modifiers for ack behavior are --timeout and --poll.
+			// --ack-timeout/--ack-poll remain as deprecated aliases for backward compatibility.
+			ackTimeoutStr := robotAckTimeout
+			if cmd.Flags().Changed("timeout") {
+				ackTimeoutStr = robotWaitTimeout
+			}
+			ackTimeout, err := util.ParseDurationWithDefault(ackTimeoutStr, time.Millisecond, "timeout")
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: invalid --ack-timeout: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Error: invalid --timeout/--ack-timeout: %v\n", err)
 				os.Exit(1)
+			}
+
+			ackPollMs := robotAckPoll
+			if cmd.Flags().Changed("poll") {
+				pollDur, err := util.ParseDurationWithDefault(robotWaitPoll, time.Millisecond, "poll")
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: invalid --poll/--ack-poll: %v\n", err)
+					os.Exit(1)
+				}
+				ackPollMs = int(pollDur.Milliseconds())
 			}
 			opts := robot.AckOptions{
 				Session:   robotAck,
 				Message:   robotSendMsg, // Reuse --msg flag for echo detection
 				Panes:     paneFilter,
 				TimeoutMs: int(ackTimeout.Milliseconds()),
-				PollMs:    robotAckPoll,
+				PollMs:    ackPollMs,
 			}
 			if err := robot.PrintAck(opts); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)

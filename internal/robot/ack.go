@@ -50,6 +50,10 @@ const (
 	AckNone           AckType = "none"            // No acknowledgment detected
 )
 
+// We capture enough scrollback to avoid missing short acks when the pane is chatty
+// or when the capture window shifts between polls.
+const ackCaptureLines = 200
+
 // AckOptions configures the PrintAck operation
 type AckOptions struct {
 	Session   string   // Target session name
@@ -154,7 +158,7 @@ func GetAck(opts AckOptions) (*AckOutput, error) {
 		captured, err := func() (string, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
-			return tmux.CapturePaneOutputContext(ctx, pane.ID, 20)
+			return tmux.CapturePaneOutputContext(ctx, pane.ID, ackCaptureLines)
 		}()
 		if err == nil {
 			initialStates[paneKey] = status.StripANSI(captured)
@@ -191,7 +195,7 @@ func GetAck(opts AckOptions) (*AckOutput, error) {
 			captured, err := func() (string, error) {
 				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 				defer cancel()
-				return tmux.CapturePaneOutputContext(ctx, targetPane.ID, 20)
+				return tmux.CapturePaneOutputContext(ctx, targetPane.ID, ackCaptureLines)
 			}()
 			if err != nil {
 				stillPending = append(stillPending, paneKey)
@@ -231,7 +235,7 @@ func GetAck(opts AckOptions) (*AckOutput, error) {
 		output.RobotResponse = NewErrorResponse(
 			fmt.Errorf("ack timeout"),
 			ErrCodeTimeout,
-			"Increase --ack-timeout or check agent health",
+			"Increase --timeout (or deprecated --ack-timeout) or check agent health",
 		)
 	}
 
@@ -319,23 +323,52 @@ func detectAcknowledgment(initialOutput, currentOutput, message, paneTitle strin
 
 // getNewContent extracts the content that was added
 func getNewContent(initial, current string) string {
-	if len(current) <= len(initial) {
-		// Content might have been replaced, compare end
-		initialLines := splitLines(initial)
-		currentLines := splitLines(current)
-
-		if len(currentLines) <= len(initialLines) {
-			return ""
-		}
-
-		// Return new lines
-		newLines := currentLines[len(initialLines):]
-		return strings.Join(newLines, "\n")
+	if initial == current {
+		return ""
 	}
 
 	// Simple case: content appended
 	if strings.HasPrefix(current, initial) {
 		return current[len(initial):]
+	}
+
+	// When capture windows are fixed-size (e.g., last 20 lines), the window can shift even if
+	// only a few lines were appended. That produces different strings with the same line count,
+	// and the old length/line-count diff would incorrectly return empty.
+	if len(current) <= len(initial) {
+		// Content might have been replaced, compare end
+		initialLines := splitLines(initial)
+		currentLines := splitLines(current)
+
+		if len(currentLines) > len(initialLines) {
+			// Return new lines
+			newLines := currentLines[len(initialLines):]
+			return strings.Join(newLines, "\n")
+		}
+
+		// Rolling window shift: find the longest suffix of initial that matches a prefix of current.
+		maxK := len(initialLines)
+		if len(currentLines) < maxK {
+			maxK = len(currentLines)
+		}
+		for k := maxK; k > 0; k-- {
+			ok := true
+			initStart := len(initialLines) - k
+			for i := 0; i < k; i++ {
+				if initialLines[initStart+i] != currentLines[i] {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				if k >= len(currentLines) {
+					return ""
+				}
+				return strings.Join(currentLines[k:], "\n")
+			}
+		}
+
+		return ""
 	}
 
 	// Content changed - find common prefix and return rest
@@ -587,7 +620,7 @@ func GetSendAndAck(opts SendAndAckOptions) (*SendAndAckOutput, error) {
 		captured, err := func() (string, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
-			return tmux.CapturePaneOutputContext(ctx, pane.ID, 20)
+			return tmux.CapturePaneOutputContext(ctx, pane.ID, ackCaptureLines)
 		}()
 		if err == nil {
 			initialStates[paneKey] = status.StripANSI(captured)
@@ -679,7 +712,7 @@ func GetSendAndAck(opts SendAndAckOptions) (*SendAndAckOutput, error) {
 			captured, err := func() (string, error) {
 				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 				defer cancel()
-				return tmux.CapturePaneOutputContext(ctx, targetPane.ID, 20)
+				return tmux.CapturePaneOutputContext(ctx, targetPane.ID, ackCaptureLines)
 			}()
 			if err != nil {
 				stillPending = append(stillPending, paneKey)
@@ -716,7 +749,7 @@ func GetSendAndAck(opts SendAndAckOptions) (*SendAndAckOutput, error) {
 		ackOutput.RobotResponse = NewErrorResponse(
 			fmt.Errorf("ack timeout"),
 			ErrCodeTimeout,
-			"Increase --ack-timeout or check agent health",
+			"Increase --timeout (or deprecated --ack-timeout) or check agent health",
 		)
 	}
 
