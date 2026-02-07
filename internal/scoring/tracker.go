@@ -496,9 +496,12 @@ func (t *Tracker) AnalyzeTrend(q Query, windowDays int) (*TrendAnalysis, error) 
 
 	// Determine trend based on change percentage and significance
 	// A change is significant if > 1 standard deviation
-	threshold := analysis.StdDev * 100 / analysis.AvgScore // as percentage
-	if threshold < 5 {
-		threshold = 5 // minimum 5% threshold
+	threshold := 5.0 // minimum 5% threshold
+	if analysis.AvgScore > 0 {
+		threshold = analysis.StdDev * 100 / analysis.AvgScore // as percentage
+		if threshold < 5 {
+			threshold = 5
+		}
 	}
 
 	if analysis.ChangePercent > threshold {
