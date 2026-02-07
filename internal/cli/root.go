@@ -3172,6 +3172,7 @@ func init() {
 		newModelsCmd(),
 		newAssignCmd(),
 		newRebalanceCmd(),
+		newScaleCmd(),
 		newControllerCmd(),
 
 		// Session navigation
