@@ -61,6 +61,25 @@ func TestCacheKey(t *testing.T) {
 	if key == key3 {
 		t.Errorf("different options produced same key: %q", key)
 	}
+
+	// MS-skill inclusion must influence cache key to avoid stale component reuse.
+	optsMSOff := BuildOptions{
+		RepoRev:         "abc123",
+		BeadID:          "bd-test",
+		AgentType:       "cc",
+		IncludeMSSkills: false,
+	}
+	optsMSOn := BuildOptions{
+		RepoRev:         "abc123",
+		BeadID:          "bd-test",
+		AgentType:       "cc",
+		IncludeMSSkills: true,
+	}
+	keyMSOff := cacheKey(optsMSOff)
+	keyMSOn := cacheKey(optsMSOn)
+	if keyMSOff == keyMSOn {
+		t.Fatalf("cacheKey should differ when IncludeMSSkills flips: %q == %q", keyMSOff, keyMSOn)
+	}
 }
 
 func TestPackEstimateTokens(t *testing.T) {
@@ -887,20 +906,20 @@ func TestMSBudgetBorrowing(t *testing.T) {
 		{
 			name:       "standard budget borrows 5%",
 			budget:     10000,
-			wantMS:     500,      // 10000 * 5 / 100
-			wantS2PMin: 6500,     // 7000 - 500
+			wantMS:     500,  // 10000 * 5 / 100
+			wantS2PMin: 6500, // 7000 - 500
 		},
 		{
 			name:       "small budget uses minimum 200",
 			budget:     2000,
-			wantMS:     200,      // 2000*5/100=100, but min is 200
-			wantS2PMin: 1200,     // 1400 - 200
+			wantMS:     200,  // 2000*5/100=100, but min is 200
+			wantS2PMin: 1200, // 1400 - 200
 		},
 		{
 			name:       "tiny budget caps at s2p",
 			budget:     100,
-			wantMS:     70,       // min(200, s2pBudget=70) -> 70
-			wantS2PMin: 0,        // 70 - 70
+			wantMS:     70, // min(200, s2pBudget=70) -> 70
+			wantS2PMin: 0,  // 70 - 70
 		},
 	}
 

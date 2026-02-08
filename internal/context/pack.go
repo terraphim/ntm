@@ -108,6 +108,11 @@ func cacheKey(opts BuildOptions) string {
 	h.Write([]byte(opts.RepoRev))
 	h.Write([]byte(opts.BeadID))
 	h.Write([]byte(opts.AgentType))
+	if opts.IncludeMSSkills {
+		h.Write([]byte("ms:on"))
+	} else {
+		h.Write([]byte("ms:off"))
+	}
 	return fmt.Sprintf("%x", h.Sum(nil))[:16]
 }
 
