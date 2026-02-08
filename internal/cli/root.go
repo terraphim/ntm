@@ -1562,22 +1562,17 @@ Shell Integration:
 					os.Exit(1)
 					return
 				}
-				var targets []tmux.Pane
-				if robotContextInjectPane >= 0 {
-					for _, p := range panes {
-						if p.Index == robotContextInjectPane {
-							targets = append(targets, p)
-							break
-						}
-					}
-				} else if robotContextInjectAll {
-					targets = panes
-				} else {
-					for _, p := range panes {
-						if p.Index > 0 {
-							targets = append(targets, p)
-						}
-					}
+				targets, targetErr := selectContextInjectTargetPanes(panes, robotContextInjectPane, robotContextInjectAll, session)
+				if targetErr != nil {
+					output.PrintJSON(ContextInjectResult{
+						Success:       false,
+						Session:       session,
+						Error:         targetErr.Error(),
+						InjectedFiles: []string{},
+						PanesInjected: []int{},
+					})
+					os.Exit(1)
+					return
 				}
 				if !robotContextInjectDry {
 					for _, p := range targets {
@@ -2158,10 +2153,10 @@ var (
 	robotBulkAssignTemplate string // prompt template file path
 
 	// Robot-health flag
-	robotHealth              string // session health or project health (empty = project)
-	robotHealthOAuth         string // session OAuth/rate-limit status
-	robotHealthRestartStuck  string // session name for auto-restart-stuck
-	robotStuckThreshold      string // duration before considering stuck (e.g. 5m)
+	robotHealth             string // session health or project health (empty = project)
+	robotHealthOAuth        string // session OAuth/rate-limit status
+	robotHealthRestartStuck string // session name for auto-restart-stuck
+	robotStuckThreshold     string // duration before considering stuck (e.g. 5m)
 
 	// Robot-logs flags
 	robotLogs      string // session name for logs

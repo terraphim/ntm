@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Dicklesworthstone/ntm/internal/tmux"
 )
 
 func TestDefaultContextFiles(t *testing.T) {
@@ -165,6 +167,100 @@ func TestFormatContextInjectContent_CustomFiles(t *testing.T) {
 	if !strings.Contains(content, "Custom content") {
 		t.Error("content should contain custom.md body")
 	}
+}
+
+func TestFormatContextInjectContent_RejectsAbsolutePath(t *testing.T) {
+	dir := t.TempDir()
+	absPath := filepath.Join(dir, "README.md")
+	if err := os.WriteFile(absPath, []byte("README"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, _, err := formatContextInjectContent(dir, []string{absPath}, 0)
+	if err == nil {
+		t.Fatal("expected error for absolute inject file path, got nil")
+	}
+	if !strings.Contains(err.Error(), "project-relative") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestFormatContextInjectContent_RejectsPathTraversal(t *testing.T) {
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "secret.txt"), []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, _, err := formatContextInjectContent(projectDir, []string{"../secret.txt"}, 0)
+	if err == nil {
+		t.Fatal("expected path traversal error, got nil")
+	}
+	if !strings.Contains(err.Error(), "escapes project directory") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestFormatContextInjectContent_NegativeMaxBytes(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, _, err := formatContextInjectContent(dir, []string{"README.md"}, -1)
+	if err == nil {
+		t.Fatal("expected error for negative max bytes, got nil")
+	}
+	if !strings.Contains(err.Error(), "maxBytes must be >= 0") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSelectContextInjectTargetPanes(t *testing.T) {
+	panes := []tmux.Pane{{Index: 0}, {Index: 1}, {Index: 2}}
+
+	t.Run("default_excludes_user_pane", func(t *testing.T) {
+		targets, err := selectContextInjectTargetPanes(panes, -1, false, "demo")
+		if err != nil {
+			t.Fatalf("selectContextInjectTargetPanes returned error: %v", err)
+		}
+		if len(targets) != 2 || targets[0].Index != 1 || targets[1].Index != 2 {
+			t.Fatalf("unexpected targets: %+v", targets)
+		}
+	})
+
+	t.Run("all_includes_user_pane", func(t *testing.T) {
+		targets, err := selectContextInjectTargetPanes(panes, -1, true, "demo")
+		if err != nil {
+			t.Fatalf("selectContextInjectTargetPanes returned error: %v", err)
+		}
+		if len(targets) != 3 {
+			t.Fatalf("expected 3 targets, got %d", len(targets))
+		}
+	})
+
+	t.Run("specific_pane_found", func(t *testing.T) {
+		targets, err := selectContextInjectTargetPanes(panes, 2, false, "demo")
+		if err != nil {
+			t.Fatalf("selectContextInjectTargetPanes returned error: %v", err)
+		}
+		if len(targets) != 1 || targets[0].Index != 2 {
+			t.Fatalf("unexpected targets: %+v", targets)
+		}
+	})
+
+	t.Run("specific_pane_missing_errors", func(t *testing.T) {
+		_, err := selectContextInjectTargetPanes(panes, 99, false, "demo")
+		if err == nil {
+			t.Fatal("expected missing pane error, got nil")
+		}
+		if !strings.Contains(err.Error(), "pane 99 not found in session demo") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
 }
 
 func TestFormatContextInjectContent_NestedFiles(t *testing.T) {

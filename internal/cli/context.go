@@ -237,15 +237,77 @@ func defaultContextFiles() []string {
 	return []string{"AGENTS.md", "README.md", ".claude/project_context.md"}
 }
 
+func resolveContextInjectPath(projectDir, rawPath string) (string, string, error) {
+	file := strings.TrimSpace(rawPath)
+	if file == "" {
+		return "", "", fmt.Errorf("inject file path cannot be empty")
+	}
+
+	cleaned := filepath.Clean(file)
+	if cleaned == "." {
+		return "", "", fmt.Errorf("inject file path %q is invalid", rawPath)
+	}
+	if filepath.IsAbs(cleaned) {
+		return "", "", fmt.Errorf("inject file %q must be project-relative", rawPath)
+	}
+
+	joined := filepath.Join(projectDir, cleaned)
+	rel, err := filepath.Rel(projectDir, joined)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve inject file %q: %w", rawPath, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("inject file %q escapes project directory", rawPath)
+	}
+
+	return joined, filepath.ToSlash(rel), nil
+}
+
+func selectContextInjectTargetPanes(panes []tmux.Pane, paneIdx int, targetAll bool, session string) ([]tmux.Pane, error) {
+	if paneIdx >= 0 {
+		for _, p := range panes {
+			if p.Index == paneIdx {
+				return []tmux.Pane{p}, nil
+			}
+		}
+		return nil, fmt.Errorf("pane %d not found in session %s", paneIdx, session)
+	}
+	if targetAll {
+		return panes, nil
+	}
+
+	targets := make([]tmux.Pane, 0, len(panes))
+	for _, p := range panes {
+		if p.Index > 0 {
+			targets = append(targets, p)
+		}
+	}
+	return targets, nil
+}
+
 // formatContextInjectContent reads files and formats them for injection.
 func formatContextInjectContent(projectDir string, files []string, maxBytes int) (string, []string, bool, error) {
+	if maxBytes < 0 {
+		return "", nil, false, fmt.Errorf("maxBytes must be >= 0, got %d", maxBytes)
+	}
+	baseDir, err := filepath.Abs(projectDir)
+	if err != nil {
+		return "", nil, false, fmt.Errorf("resolve project directory: %w", err)
+	}
+
 	var parts []string
 	var injected []string
 	totalSize := 0
 	truncated := false
 
 	for _, f := range files {
-		path := filepath.Join(projectDir, f)
+		if strings.TrimSpace(f) == "" {
+			continue
+		}
+		path, displayPath, err := resolveContextInjectPath(baseDir, f)
+		if err != nil {
+			return "", nil, false, err
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -260,7 +322,7 @@ func formatContextInjectContent(projectDir string, files []string, maxBytes int)
 		}
 
 		// Check if adding this file would exceed max bytes
-		header := fmt.Sprintf("### %s\n\n", f)
+		header := fmt.Sprintf("### %s\n\n", displayPath)
 		entrySize := len(header) + len(content) + 2 // +2 for trailing newlines
 		if maxBytes > 0 && totalSize+entrySize > maxBytes {
 			// Truncate this file's content to fit
@@ -274,7 +336,7 @@ func formatContextInjectContent(projectDir string, files []string, maxBytes int)
 		}
 
 		parts = append(parts, header+content)
-		injected = append(injected, f)
+		injected = append(injected, displayPath)
 		totalSize += len(header) + len(content) + 2
 
 		if maxBytes > 0 && truncated {
@@ -370,37 +432,16 @@ Use --files to override the file list.`,
 				return fmt.Errorf("get panes: %w", err)
 			}
 
-			// Determine target panes
-			var targetPanes []tmux.Pane
-			if paneIdx >= 0 {
-				// Specific pane index
-				for _, p := range panes {
-					if p.Index == paneIdx {
-						targetPanes = append(targetPanes, p)
-						break
-					}
+			targetPanes, err := selectContextInjectTargetPanes(panes, paneIdx, targetAll, session)
+			if err != nil {
+				if IsJSONOutput() {
+					return output.PrintJSON(ContextInjectResult{
+						Success: false,
+						Session: session,
+						Error:   err.Error(),
+					})
 				}
-				if len(targetPanes) == 0 {
-					errMsg := fmt.Sprintf("pane %d not found in session %s", paneIdx, session)
-					if IsJSONOutput() {
-						return output.PrintJSON(ContextInjectResult{
-							Success: false,
-							Session: session,
-							Error:   errMsg,
-						})
-					}
-					return fmt.Errorf("%s", errMsg)
-				}
-			} else if targetAll {
-				// All panes (including user pane)
-				targetPanes = panes
-			} else {
-				// Default: all agent panes (skip user pane at index 0)
-				for _, p := range panes {
-					if p.Index > 0 {
-						targetPanes = append(targetPanes, p)
-					}
-				}
+				return err
 			}
 
 			// Track injected pane indices
