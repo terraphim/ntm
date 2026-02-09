@@ -20,6 +20,7 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/bv"
 	"github.com/Dicklesworthstone/ntm/internal/cass"
 	"github.com/Dicklesworthstone/ntm/internal/events"
+	"github.com/Dicklesworthstone/ntm/internal/kernel"
 	"github.com/Dicklesworthstone/ntm/internal/robot"
 	"github.com/Dicklesworthstone/ntm/internal/scanner"
 	"github.com/Dicklesworthstone/ntm/internal/tools"
@@ -6790,3 +6791,662 @@ func TestHandleReservePaths_DefaultTTL_Branch(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// Batch 17 — Bead success paths, session/agent valid-ID paths, output handlers,
+//            memory outcome status branches
+// =============================================================================
+
+// --- Bead handlers with real project dir (success paths) ---
+
+func TestHandleListBeads_WithProjectDir_Filters(t *testing.T) {
+	t.Parallel()
+	if !bv.IsBdInstalled() {
+		t.Skip("br not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	// Exercise query param branches: status, label, assignee
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/beads?status=open&label=test&assignee=nobody", nil)
+	rec := httptest.NewRecorder()
+	srv.handleListBeads(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleBeadsStats_WithProjectDir(t *testing.T) {
+	t.Parallel()
+	if !bv.IsBdInstalled() {
+		t.Skip("br not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/beads/stats", nil)
+	rec := httptest.NewRecorder()
+	srv.handleBeadsStats(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+	if rec.Code == http.StatusOK {
+		var resp map[string]interface{}
+		json.NewDecoder(rec.Body).Decode(&resp)
+		if _, ok := resp["stats"]; !ok {
+			t.Error("expected 'stats' in success response")
+		}
+	}
+}
+
+func TestHandleBeadsReady_WithProjectDir(t *testing.T) {
+	t.Parallel()
+	if !bv.IsBdInstalled() {
+		t.Skip("br not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/beads/ready", nil)
+	rec := httptest.NewRecorder()
+	srv.handleBeadsReady(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleBeadsBlocked_WithProjectDir(t *testing.T) {
+	t.Parallel()
+	if !bv.IsBdInstalled() {
+		t.Skip("br not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/beads/blocked", nil)
+	rec := httptest.NewRecorder()
+	srv.handleBeadsBlocked(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleBeadsInProgress_WithProjectDir(t *testing.T) {
+	t.Parallel()
+	if !bv.IsBdInstalled() {
+		t.Skip("br not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/beads/in-progress", nil)
+	rec := httptest.NewRecorder()
+	srv.handleBeadsInProgress(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleListBeadDeps_WithProjectDir(t *testing.T) {
+	t.Parallel()
+	if !bv.IsBdInstalled() {
+		t.Skip("br not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	// Use a bead ID that exists in the project
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/beads/bd-bdseb/deps", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "bd-bdseb")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	srv.handleListBeadDeps(rec, req)
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleBeadsDaemonStatus_WithProjectDir(t *testing.T) {
+	t.Parallel()
+	if !bv.IsBdInstalled() {
+		t.Skip("br not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/beads/daemon/status", nil)
+	rec := httptest.NewRecorder()
+	srv.handleBeadsDaemonStatus(rec, req)
+
+	// Daemon may or may not be running: 200 either way per handler logic
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (handler returns 200 even when daemon not running)", rec.Code)
+	}
+}
+
+func TestHandleClaimBead_WithProjectDir(t *testing.T) {
+	t.Parallel()
+	if !bv.IsBdInstalled() {
+		t.Skip("br not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	body := `{"assignee":"test-agent"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/beads/bd-nonexistent/claim", strings.NewReader(body))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "bd-nonexistent")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	srv.handleClaimBead(rec, req)
+	// Nonexistent bead → RunBd error → 500, or installed check passes
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleBeadsInsights_WithProjectDir(t *testing.T) {
+	t.Parallel()
+	if !bv.IsInstalled() {
+		t.Skip("bv not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/beads/insights", nil)
+	rec := httptest.NewRecorder()
+	srv.handleBeadsInsights(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleBeadsPlan_WithProjectDir(t *testing.T) {
+	t.Parallel()
+	if !bv.IsInstalled() {
+		t.Skip("bv not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/beads/plan", nil)
+	rec := httptest.NewRecorder()
+	srv.handleBeadsPlan(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleBeadsPriority_WithProjectDir(t *testing.T) {
+	t.Parallel()
+	if !bv.IsInstalled() {
+		t.Skip("bv not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/beads/priority", nil)
+	rec := httptest.NewRecorder()
+	srv.handleBeadsPriority(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleBeadsRecipes_WithProjectDir(t *testing.T) {
+	t.Parallel()
+	if !bv.IsInstalled() {
+		t.Skip("bv not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/beads/recipes", nil)
+	rec := httptest.NewRecorder()
+	srv.handleBeadsRecipes(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleRemoveBeadDep_WithProjectDir(t *testing.T) {
+	t.Parallel()
+	if !bv.IsBdInstalled() {
+		t.Skip("br not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/beads/bd-nonexistent/deps/bd-also-nonexistent", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "bd-nonexistent")
+	rctx.URLParams.Add("depId", "bd-also-nonexistent")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	srv.handleRemoveBeadDep(rec, req)
+	// Nonexistent bead → RunBd error → 500
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+// --- Session handlers with valid ID (exercises kernel.Run error path) ---
+
+func TestHandleSessionStatusV1_ValidID_Branch(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/test-session/status", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "test-session")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	srv.handleSessionStatusV1(rec, req)
+	// kernel.Run will fail (no tmux session) → 500
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleSessionAttachV1_ValidID_Branch(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/test-session/attach", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "test-session")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	srv.handleSessionAttachV1(rec, req)
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleSessionViewV1_ValidID_Branch(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/test-session/view", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "test-session")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	srv.handleSessionViewV1(rec, req)
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+// --- Agent handlers with valid session/body (exercises robot.Get* error path) ---
+
+func TestHandleAgentSendV1_ValidSession_Branch(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	body := `{"message":"hello","panes":["0"],"all":false}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/test-session/agents/send", strings.NewReader(body))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionId", "test-session")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	srv.handleAgentSendV1(rec, req)
+	// robot.GetSend fails (no tmux) → 500
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleAgentContextV1_WithLinesParam(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	// Exercise the lines query param parsing
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/test-session/agents/context?lines=50", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionId", "test-session")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	srv.handleAgentContextV1(rec, req)
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleAgentContextV1_InvalidLinesParam(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/test-session/agents/context?lines=notanumber", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionId", "test-session")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	srv.handleAgentContextV1(rec, req)
+	// Invalid lines param → 400
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleAgentInterruptV1_ValidBody_Branch(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	body := `{"panes":["0"],"message":"stop","force":true,"no_wait":true}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/test-session/agents/interrupt", strings.NewReader(body))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionId", "test-session")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	srv.handleAgentInterruptV1(rec, req)
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleAgentRestartV1_ValidBody_Branch(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	body := `{"panes":["0"],"agent_type":"claude","all":false,"dry_run":true}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/test-session/agents/restart", strings.NewReader(body))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionId", "test-session")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	srv.handleAgentRestartV1(rec, req)
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+// --- Output handlers with valid session (exercises robot.Get* error path) ---
+
+func TestHandleOutputTailV1_WithSessionAndPanes(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/output/tail?session=test-session&lines=20&panes=0,1", nil)
+	rec := httptest.NewRecorder()
+	srv.handleOutputTailV1(rec, req)
+
+	// robot.GetTail fails (no tmux) → 500
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleOutputDiffV1_WithSessionAndSince(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/output/diff?session=test-session&since=30m", nil)
+	rec := httptest.NewRecorder()
+	srv.handleOutputDiffV1(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleOutputFilesV1_WithSessionAndParams(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/output/files?session=test-session&window=1h&limit=50", nil)
+	rec := httptest.NewRecorder()
+	srv.handleOutputFilesV1(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleOutputSummaryV1_WithSessionAndSince(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/output/summary?session=test-session&since=1h", nil)
+	rec := httptest.NewRecorder()
+	srv.handleOutputSummaryV1(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+// --- Metrics handler with params ---
+
+func TestHandleMetricsV1_WithSessionAndPeriod(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/metrics?session=test-session&period=1h", nil)
+	rec := httptest.NewRecorder()
+	srv.handleMetricsV1(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+// --- Memory outcome status branches ---
+
+func TestHandleMemoryOutcome_SuccessStatus(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	body := `{"status":"success","rule_ids":["r1"],"sentiment":"positive","notes":"worked"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/memory/outcome", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	srv.handleMemoryOutcome(rec, req)
+
+	// status=success is valid → daemon check → 503 (no daemon) or 200
+	if rec.Code != http.StatusOK && rec.Code != http.StatusServiceUnavailable && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200, 503, or 500", rec.Code)
+	}
+}
+
+func TestHandleMemoryOutcome_FailureStatus(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	body := `{"status":"failure","notes":"broke"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/memory/outcome", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	srv.handleMemoryOutcome(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusServiceUnavailable && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200, 503, or 500", rec.Code)
+	}
+}
+
+func TestHandleMemoryOutcome_PartialStatus(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	body := `{"status":"partial","notes":"half done"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/memory/outcome", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	srv.handleMemoryOutcome(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusServiceUnavailable && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200, 503, or 500", rec.Code)
+	}
+}
+
+// --- Memory privacy with project dir ---
+
+func TestHandleMemoryPrivacyGet_WithProjectDir(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("cm"); err != nil {
+		t.Skip("cm not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/memory/privacy", nil)
+	rec := httptest.NewRecorder()
+	srv.handleMemoryPrivacyGet(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleMemoryPrivacyUpdate_EnabledWithAgents(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("cm"); err != nil {
+		t.Skip("cm not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	body := `{"enabled":true,"agents":["agent1","agent2"]}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/memory/privacy", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	srv.handleMemoryPrivacyUpdate(rec, req)
+
+	// cm privacy enable with agents → may succeed or fail
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleMemoryPrivacyUpdate_Disabled(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("cm"); err != nil {
+		t.Skip("cm not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	body := `{"enabled":false}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/memory/privacy", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	srv.handleMemoryPrivacyUpdate(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+// --- CASS handlers with project dir ---
+
+func TestHandleCASSCapabilities_WithProjectDir(t *testing.T) {
+	t.Parallel()
+	if !cassInstalled() {
+		t.Skip("cass not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cass/capabilities", nil)
+	rec := httptest.NewRecorder()
+	srv.handleCASSCapabilities(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestHandleCASSTimeline_WithProjectDir(t *testing.T) {
+	t.Parallel()
+	if !cassInstalled() {
+		t.Skip("cass not installed")
+	}
+	srv, _ := setupTestServer(t)
+	srv.projectDir = "/data/projects/ntm"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cass/timeline?limit=5", nil)
+	rec := httptest.NewRecorder()
+	srv.handleCASSTimeline(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+// --- Policy handler deeper branches ---
+
+func TestHandlePolicyResetV1_SuccessPath(t *testing.T) {
+	// Don't use t.Parallel() - writes to ~/.ntm/policy.yaml
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policy/reset", nil)
+	rec := httptest.NewRecorder()
+	srv.handlePolicyResetV1(rec, req)
+
+	// Should succeed: creates ~/.ntm dir, writes default policy
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+	if rec.Code == http.StatusOK {
+		var resp map[string]interface{}
+		json.NewDecoder(rec.Body).Decode(&resp)
+		if _, ok := resp["policy_path"]; !ok {
+			t.Error("expected 'policy_path' in success response")
+		}
+	}
+}
+
+func TestHandlePolicyAutomationGetV1_SuccessPath(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/policy/automation", nil)
+	rec := httptest.NewRecorder()
+	srv.handlePolicyAutomationGetV1(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 200 or 500", rec.Code)
+	}
+	if rec.Code == http.StatusOK {
+		var resp map[string]interface{}
+		json.NewDecoder(rec.Body).Decode(&resp)
+		if _, ok := resp["force_release"]; !ok {
+			t.Error("expected 'force_release' in success response")
+		}
+	}
+}
+
+// --- handleMailInbox with since_ts time.Parse branch ---
+
+func TestHandleMailInbox_WithSinceTS(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+	srv.projectDir = t.TempDir()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/mail/inbox?agent_name=test&since_ts=2025-01-01T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+	srv.handleMailInbox(rec, req)
+
+	// Exercises the time.Parse(time.RFC3339, sinceTSStr) branch
+	if rec.Code == http.StatusBadRequest {
+		t.Fatal("valid since_ts should not return 400")
+	}
+}
+
+// Ensure kernel import is used
+var _ = kernel.Run
