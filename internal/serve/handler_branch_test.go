@@ -20,7 +20,9 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/bv"
 	"github.com/Dicklesworthstone/ntm/internal/cass"
 	"github.com/Dicklesworthstone/ntm/internal/events"
+	"github.com/Dicklesworthstone/ntm/internal/robot"
 	"github.com/Dicklesworthstone/ntm/internal/scanner"
+	"github.com/Dicklesworthstone/ntm/internal/tools"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -6484,6 +6486,307 @@ func TestHandleDepsV1_Success_Branch(t *testing.T) {
 	// kernel.Run("core.deps") should succeed in most environments
 	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// =============================================================================
+// Batch 16 — account DependencyMissing, force-release, create agent, CASS, deps
+// =============================================================================
+
+// --- Account handlers: DependencyMissing branch (caam not on PATH) ---
+
+func TestHandleListAccountsV1_DependencyMissing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	tools.NewCAAMAdapter().InvalidateCache()
+
+	s := &Server{
+		auth: AuthConfig{Mode: AuthModeLocal},
+	}
+	s.wsHub = NewWSHub()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/accounts", nil)
+	s.handleListAccountsV1(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		ErrorCode string `json:"error_code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.ErrorCode != robot.ErrCodeDependencyMissing {
+		t.Errorf("error_code = %q, want %q", resp.ErrorCode, robot.ErrCodeDependencyMissing)
+	}
+}
+
+func TestHandleAccountStatusV1_DependencyMissing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	tools.NewCAAMAdapter().InvalidateCache()
+
+	s := &Server{
+		auth: AuthConfig{Mode: AuthModeLocal},
+	}
+	s.wsHub = NewWSHub()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/accounts/status", nil)
+	s.handleAccountStatusV1(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleActiveAccountsV1_DependencyMissing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	tools.NewCAAMAdapter().InvalidateCache()
+
+	s := &Server{
+		auth: AuthConfig{Mode: AuthModeLocal},
+	}
+	s.wsHub = NewWSHub()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/accounts/active", nil)
+	s.handleActiveAccountsV1(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleAccountQuotaV1_DependencyMissing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	tools.NewCAAMAdapter().InvalidateCache()
+
+	s := &Server{
+		auth: AuthConfig{Mode: AuthModeLocal},
+	}
+	s.wsHub = NewWSHub()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/accounts/quota", nil)
+	s.handleAccountQuotaV1(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleListAccountsByProviderV1_DependencyMissing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	tools.NewCAAMAdapter().InvalidateCache()
+
+	s := &Server{
+		auth: AuthConfig{Mode: AuthModeLocal},
+	}
+	s.wsHub = NewWSHub()
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("provider", "claude")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/accounts/claude", nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	s.handleListAccountsByProviderV1(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleRotateProviderAccountV1_DependencyMissing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	tools.NewCAAMAdapter().InvalidateCache()
+
+	s := &Server{
+		auth: AuthConfig{Mode: AuthModeLocal},
+	}
+	s.wsHub = NewWSHub()
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("provider", "claude")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts/claude/rotate", nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	s.handleRotateProviderAccountV1(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- handleForceReleaseReservation: valid body exercises getMailClient ---
+
+func TestHandleForceReleaseReservation_ValidBody_Branch(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	body := `{"agent_name":"Agent1","note":"stale","notify_previous":true}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/reservations/99/force-release", strings.NewReader(body))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "99")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	s.handleForceReleaseReservation(rec, req)
+
+	// Past all validation → exercises getMailClient path
+	if rec.Code == http.StatusBadRequest {
+		t.Fatal("valid body should not return 400")
+	}
+}
+
+// --- handleCreateMailAgent: valid body exercises getMailClient ---
+
+func TestHandleCreateMailAgent_ValidBody_Branch(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	body := `{"program":"claude-code","model":"opus-4.5","name":"TestBot","task_description":"testing"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mail/agents", strings.NewReader(body))
+
+	s.handleCreateMailAgent(rec, req)
+
+	// Past validation → exercises getMailClient
+	if rec.Code == http.StatusBadRequest {
+		t.Fatal("valid body should not return 400")
+	}
+}
+
+// --- handleCASSInsights: cass installed exercises full path ---
+
+func TestHandleCASSInsights_CassInstalled(t *testing.T) {
+	if !cassInstalled() {
+		t.Skip("cass not installed")
+	}
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	body := `{"query":"test query","aggregate":true}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cass/insights", strings.NewReader(body))
+
+	s.handleCASSInsights(rec, req)
+
+	// cass installed → past install check; may fail with 500 (no sessions) or succeed
+	if rec.Code == http.StatusServiceUnavailable {
+		t.Fatal("should not get 503 when cass is installed")
+	}
+}
+
+// --- handleCASSPreview: cass installed with existing file ---
+
+func TestHandleCASSPreview_CassInstalled_ValidPath(t *testing.T) {
+	if !cassInstalled() {
+		t.Skip("cass not installed")
+	}
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	// Provide a real existing file path
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cass/preview?path=README.md", nil)
+
+	s.handleCASSPreview(rec, req)
+
+	// cass installed → past install check
+	if rec.Code == http.StatusServiceUnavailable {
+		t.Fatal("should not get 503 when cass is installed")
+	}
+}
+
+// --- handleMemoryContext: cm installed with valid task ---
+
+func TestHandleMemoryContext_CmInstalledValidTask(t *testing.T) {
+	if _, err := exec.LookPath("cm"); err != nil {
+		t.Skip("cm not installed")
+	}
+	s, _ := setupTestServer(t)
+
+	body := `{"task":"test task description","max_rules":5,"max_snippets":3}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/memory/context", strings.NewReader(body))
+
+	s.handleMemoryContext(rec, req)
+
+	// cm installed → past install check, exercises full path
+	if rec.Code == http.StatusServiceUnavailable {
+		t.Fatal("should not get 503 when cm is installed")
+	}
+}
+
+// --- handleMailHealth: exercises getMailClient branches ---
+
+func TestHandleMailHealth_WithProjectDir(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/mail/health", nil)
+
+	s.handleMailHealth(rec, req)
+
+	// Should return 200 with available status
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	// Should have "available" field regardless of mail state
+	if _, ok := resp["available"]; !ok {
+		t.Error("expected 'available' field in response")
+	}
+}
+
+// --- handleListReservations: no agent_name exercises allAgents=true path ---
+
+func TestHandleListReservations_AllAgents_Branch(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	rec := httptest.NewRecorder()
+	// No agent_name query param → allAgents = true
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/reservations", nil)
+
+	s.handleListReservations(rec, req)
+
+	if rec.Code == http.StatusBadRequest {
+		t.Fatal("missing agent_name is valid for list reservations")
+	}
+}
+
+// --- handleReservePaths: zero TTL defaults to 3600 ---
+
+func TestHandleReservePaths_DefaultTTL_Branch(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	// No ttl_seconds field → defaults to 3600
+	body := `{"agent_name":"Agent1","paths":["src/*.go"]}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/reservations", strings.NewReader(body))
+
+	s.handleReservePaths(rec, req)
+
+	if rec.Code == http.StatusBadRequest {
+		t.Fatal("valid body should not return 400")
 	}
 }
 
