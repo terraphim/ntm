@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -5501,6 +5502,343 @@ func TestHandleBeadsSync_BrInstalledBadDir(t *testing.T) {
 
 	if w.Code == http.StatusServiceUnavailable {
 		t.Fatal("should not get 503 when br is installed")
+	}
+}
+
+// =============================================================================
+// Batch 14: CASS capabilities/insights/timeline, bead get/update/close/deps,
+//           memory daemon start, handleCreateBead with title
+// =============================================================================
+
+// --- handleCASSCapabilities: full path (cass installed) ---
+
+func TestHandleCASSCapabilities_Installed(t *testing.T) {
+	if !cassInstalled() {
+		t.Skip("cass not installed")
+	}
+	s, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cass/capabilities", nil)
+	w := httptest.NewRecorder()
+	s.handleCASSCapabilities(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["success"] != true {
+		t.Errorf("success=%v, want true", resp["success"])
+	}
+}
+
+// --- handleCASSInsights: full path (cass installed) ---
+
+func TestHandleCASSInsights_Installed(t *testing.T) {
+	if !cassInstalled() {
+		t.Skip("cass not installed")
+	}
+	s, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cass/insights", nil)
+	w := httptest.NewRecorder()
+	s.handleCASSInsights(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// --- handleCASSTimeline: full path (cass installed) ---
+
+func TestHandleCASSTimeline_Installed(t *testing.T) {
+	if !cassInstalled() {
+		t.Skip("cass not installed")
+	}
+	s, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cass/timeline", nil)
+	w := httptest.NewRecorder()
+	s.handleCASSTimeline(w, req)
+
+	// May return 200 or 500 depending on timeline data availability
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatal("should not get 503 when cass is installed")
+	}
+}
+
+// --- handleGetBead: br installed, bead not found in temp dir ---
+
+func TestHandleGetBead_NotFound(t *testing.T) {
+	if !bv.IsBdInstalled() {
+		t.Skip("br not installed")
+	}
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "bd-nonexistent")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/beads/bd-nonexistent", nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+	s.handleGetBead(w, req)
+
+	// br show will fail → 404 (bead not found)
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatal("should not get 503 when br is installed")
+	}
+}
+
+// --- handleUpdateBead: br installed, valid JSON but no .beads ---
+
+func TestHandleUpdateBead_BrInstalledBadDir(t *testing.T) {
+	if !bv.IsBdInstalled() {
+		t.Skip("br not installed")
+	}
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "bd-test")
+	body := `{"title":"updated title"}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/beads/bd-test", strings.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+	s.handleUpdateBead(w, req)
+
+	// br update fails in temp dir (no .beads) → 500
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatal("should not get 503 when br is installed")
+	}
+	if w.Code == http.StatusBadRequest {
+		t.Fatal("valid JSON body should not produce 400")
+	}
+}
+
+// --- handleCloseBead: br installed, bead not found ---
+
+func TestHandleCloseBead_BrInstalledBadDir(t *testing.T) {
+	if !bv.IsBdInstalled() {
+		t.Skip("br not installed")
+	}
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "bd-test")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/beads/bd-test/close", nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+	s.handleCloseBead(w, req)
+
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatal("should not get 503 when br is installed")
+	}
+}
+
+// --- handleListBeadDeps: br installed, bad dir ---
+
+func TestHandleListBeadDeps_BrInstalledBadDir(t *testing.T) {
+	if !bv.IsBdInstalled() {
+		t.Skip("br not installed")
+	}
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "bd-test")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/beads/bd-test/deps", nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+	s.handleListBeadDeps(w, req)
+
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatal("should not get 503 when br is installed")
+	}
+}
+
+// --- handleRemoveBeadDep: br installed, bad dir ---
+
+func TestHandleRemoveBeadDep_BrInstalledBadDir(t *testing.T) {
+	if !bv.IsBdInstalled() {
+		t.Skip("br not installed")
+	}
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "bd-test")
+	rctx.URLParams.Add("depId", "bd-other")
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/beads/bd-test/deps/bd-other", nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+	s.handleRemoveBeadDep(w, req)
+
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatal("should not get 503 when br is installed")
+	}
+}
+
+// --- handleCreateBead: br installed, valid title but bad dir ---
+
+func TestHandleCreateBead_BrInstalledBadDir(t *testing.T) {
+	if !bv.IsBdInstalled() {
+		t.Skip("br not installed")
+	}
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	body := `{"title":"test bead","type":"task","priority":"P2","labels":["test"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/beads", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleCreateBead(w, req)
+
+	// br new fails (no git repo/no .beads) → 500
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatal("should not get 503 when br is installed")
+	}
+	if w.Code == http.StatusBadRequest {
+		t.Fatal("valid JSON with title should not produce 400")
+	}
+}
+
+// --- handleMemoryDaemonStart: cm installed, temp dir (no existing daemon) ---
+
+func TestHandleMemoryDaemonStart_CmInstalled(t *testing.T) {
+	if _, err := exec.LookPath("cm"); err != nil {
+		t.Skip("cm not installed")
+	}
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/memory/daemon/start", nil)
+	w := httptest.NewRecorder()
+	s.handleMemoryDaemonStart(w, req)
+
+	// Should pass cm install check, pass daemon running check (no PID file in temp dir),
+	// then start async (202 Accepted)
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatal("should not get 503 when cm is installed")
+	}
+	if w.Code == http.StatusAccepted {
+		var resp map[string]interface{}
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if resp["state"] != string(DaemonStateStarting) {
+			t.Errorf("state=%v, want starting", resp["state"])
+		}
+	}
+	// Wait briefly for the async goroutine
+	time.Sleep(50 * time.Millisecond)
+}
+
+// --- handleMemoryDaemonStart: bad JSON body ---
+
+func TestHandleMemoryDaemonStart_BadJSON(t *testing.T) {
+	if _, err := exec.LookPath("cm"); err != nil {
+		t.Skip("cm not installed")
+	}
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	body := "{bad"
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/memory/daemon/start", strings.NewReader(body))
+	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	w := httptest.NewRecorder()
+	s.handleMemoryDaemonStart(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// --- handleMemoryContext: cm installed ---
+
+func TestHandleMemoryContext_CmInstalled(t *testing.T) {
+	if _, err := exec.LookPath("cm"); err != nil {
+		t.Skip("cm not installed")
+	}
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	body := `{"task":"test task for coverage"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/memory/context", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleMemoryContext(w, req)
+
+	// Should get past install check. May succeed (200) or fail (500) depending on cm state
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatal("should not get 503 when cm is installed")
+	}
+}
+
+// --- handleMemoryOutcome: valid JSON, exercises parse + status validation ---
+
+func TestHandleMemoryOutcome_ValidStatusParsing(t *testing.T) {
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	body := `{"status":"success","rule_ids":["r1"],"sentiment":"positive"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/memory/outcome", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleMemoryOutcome(w, req)
+
+	// Exercises JSON decode + status validation + daemon check branches
+	// Will get 503 (daemon not running) but that's past the parse/validation
+	if w.Code == http.StatusBadRequest {
+		t.Fatal("valid body should not produce 400")
+	}
+}
+
+// --- handleMemoryOutcome: invalid status ---
+
+func TestHandleMemoryOutcome_InvalidStatus_Branch(t *testing.T) {
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	body := `{"status":"bogus","rule_ids":["r1"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/memory/outcome", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleMemoryOutcome(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400 for invalid status", w.Code)
+	}
+}
+
+// --- handleMemoryOutcome: bad JSON ---
+
+func TestHandleMemoryOutcome_BadJSON_Branch(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/memory/outcome", strings.NewReader("{bad"))
+	w := httptest.NewRecorder()
+	s.handleMemoryOutcome(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400", w.Code)
+	}
+}
+
+// --- handleBeadsRecipes: bv installed check ---
+
+func TestHandleBeadsRecipes_BvInstalled(t *testing.T) {
+	if !bv.IsInstalled() {
+		t.Skip("bv not installed")
+	}
+	s, _ := setupTestServer(t)
+	s.projectDir = t.TempDir()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/beads/recipes", nil)
+	w := httptest.NewRecorder()
+	s.handleBeadsRecipes(w, req)
+
+	// bv is installed so we get past the check; may fail with 500 (no .beads) or succeed
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatal("should not get 503 when bv is installed")
 	}
 }
 
