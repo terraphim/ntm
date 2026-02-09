@@ -12787,5 +12787,287 @@ func TestHandlePolicyUpdateV1_MkdirAllError(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// BATCH 35 — LoadOrDefault errors, approval RBAC, blocked read errors
+// =============================================================================
+
+// TestHandlePolicyGetV1_LoadOrDefaultError exercises the LoadOrDefault error
+// branch in handlePolicyGetV1 (lines 434-438). A corrupt policy.yaml makes
+// LoadOrDefault return an error → 500.
+func TestHandlePolicyGetV1_LoadOrDefaultError(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	// Create corrupt policy file
+	policyDir := filepath.Join(tmpHome, ".ntm")
+	os.MkdirAll(policyDir, 0755)
+	os.WriteFile(filepath.Join(policyDir, "policy.yaml"), []byte("{{{not yaml"), 0644)
+
+	req := httptest.NewRequest("GET", "/api/v1/safety/policy?rules=true", nil)
+	rec := httptest.NewRecorder()
+
+	s.handlePolicyGetV1(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandleSafetyCheckV1_LoadOrDefaultError exercises the LoadOrDefault error
+// branch in handleSafetyCheckV1 (lines 201-205). Corrupt policy → 500.
+func TestHandleSafetyCheckV1_LoadOrDefaultError(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	policyDir := filepath.Join(tmpHome, ".ntm")
+	os.MkdirAll(policyDir, 0755)
+	os.WriteFile(filepath.Join(policyDir, "policy.yaml"), []byte("{{{not yaml"), 0644)
+
+	body := strings.NewReader(`{"command":"ls -la"}`)
+	req := httptest.NewRequest("POST", "/api/v1/safety/check", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleSafetyCheckV1(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandleSafetyBlockedV1_ReadLogError exercises the RecentBlocked error
+// branch in handleSafetyBlockedV1 (lines 144-148). Making blocked.jsonl a
+// directory triggers an os.ReadFile error.
+func TestHandleSafetyBlockedV1_ReadLogError(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	// Create blocked.jsonl as a directory instead of a file
+	logsDir := filepath.Join(tmpHome, ".ntm", "logs")
+	os.MkdirAll(filepath.Join(logsDir, "blocked.jsonl"), 0755) // dir, not file
+
+	req := httptest.NewRequest("GET", "/api/v1/safety/blocked", nil)
+	rec := httptest.NewRecorder()
+
+	s.handleSafetyBlockedV1(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandleSafetyStatusV1_LoadPolicyError exercises the LoadOrDefault error
+// path in handleSafetyStatusV1 (lines 88-97). When LoadOrDefault fails, stats
+// are skipped but the response still returns 200 with zero counts.
+func TestHandleSafetyStatusV1_LoadPolicyError(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	// Create corrupt policy that makes LoadOrDefault fail
+	policyDir := filepath.Join(tmpHome, ".ntm")
+	os.MkdirAll(policyDir, 0755)
+	os.WriteFile(filepath.Join(policyDir, "policy.yaml"), []byte("{{{corrupt"), 0644)
+
+	req := httptest.NewRequest("GET", "/api/v1/safety/status", nil)
+	rec := httptest.NewRecorder()
+
+	s.handleSafetyStatusV1(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	// With LoadOrDefault error, rule counts should be 0
+	if blocked, _ := resp["blocked_rules"].(float64); blocked != 0 {
+		t.Errorf("expected blocked_rules=0, got %v", blocked)
+	}
+}
+
+// TestHandlePolicyAutomationUpdateV1_CorruptExistingFile exercises the
+// policy.Load error branch in handlePolicyAutomationUpdateV1 (lines 834-838).
+// An existing but corrupt policy file causes Load to fail → 500.
+func TestHandlePolicyAutomationUpdateV1_CorruptExistingFile(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	policyDir := filepath.Join(tmpHome, ".ntm")
+	os.MkdirAll(policyDir, 0755)
+	os.WriteFile(filepath.Join(policyDir, "policy.yaml"), []byte("{{{bad yaml"), 0644)
+
+	autoCommit := true
+	_ = autoCommit
+	body := strings.NewReader(`{"auto_commit":true}`)
+	req := httptest.NewRequest("PUT", "/api/v1/safety/policy/automation", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handlePolicyAutomationUpdateV1(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestApprovalRequestV1_WithRBACAndSLBAction exercises the RBAC context branch
+// (line 1234) and SLB matching (line 1240) in handleApprovalRequestV1.
+// Uses HOME override to ensure default policy with SLB rules is loaded.
+func TestApprovalRequestV1_WithRBACAndSLBAction(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	// Use clean HOME so LoadOrDefault returns default policy with SLB rules
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	body := strings.NewReader(`{"action":"force_release lock-abc","resource":"lock-abc","reason":"stale lock"}`)
+	req := httptest.NewRequest("POST", "/api/v1/safety/approvals/request", body)
+	req.Header.Set("Content-Type", "application/json")
+	// Add RBAC context
+	ctx := withRoleContext(req.Context(), &RoleContext{
+		Role:   RoleAdmin,
+		UserID: "agent-force",
+	})
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	s.handleApprovalRequestV1(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["slb_required"] != true {
+		t.Errorf("expected slb_required=true for force_release action, got %v", resp["slb_required"])
+	}
+	// Clean up
+	if id, ok := resp["id"].(string); ok {
+		approvalsLock.Lock()
+		delete(approvals, id)
+		approvalsLock.Unlock()
+	}
+}
+
+// TestApprovalDenyV1_WithRBACContext exercises the RBAC context branch
+// in handleApprovalDenyV1 (line 1151). When rc != nil, the denier should
+// be set to rc.UserID.
+func TestApprovalDenyV1_WithRBACContext(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	approvalsLock.Lock()
+	approvalIDSeq++
+	id := fmt.Sprintf("apr-deny-rbac-%d", approvalIDSeq)
+	approvals[id] = &Approval{
+		ID:        id,
+		Action:    "dangerous-action",
+		Requestor: "agent-req",
+		Status:    "pending",
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+	}
+	approvalsLock.Unlock()
+
+	defer func() {
+		approvalsLock.Lock()
+		delete(approvals, id)
+		approvalsLock.Unlock()
+	}()
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", id)
+	req := httptest.NewRequest("POST", "/api/v1/safety/approvals/"+id+"/deny", nil)
+	ctx := withRoleContext(req.Context(), &RoleContext{
+		Role:   RoleAdmin,
+		UserID: "admin-denier",
+	})
+	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	s.handleApprovalDenyV1(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify the denier was recorded
+	approvalsLock.RLock()
+	a := approvals[id]
+	approvalsLock.RUnlock()
+	if a.ApprovedBy != "admin-denier" {
+		t.Errorf("expected approved_by=admin-denier, got %s", a.ApprovedBy)
+	}
+}
+
+// TestHandleSafetyInstallV1_MkdirAllError exercises the MkdirAll error branch
+// in handleSafetyInstallV1 (lines 269-273). Setting HOME so .ntm is a file
+// prevents directory creation.
+func TestHandleSafetyInstallV1_MkdirAllError(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	tmpHome := t.TempDir()
+	// Block directory creation by making .ntm a regular file
+	os.WriteFile(filepath.Join(tmpHome, ".ntm"), []byte("block"), 0644)
+	t.Setenv("HOME", tmpHome)
+
+	req := httptest.NewRequest("POST", "/api/v1/safety/install", nil)
+	rec := httptest.NewRecorder()
+
+	s.handleSafetyInstallV1(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandleSafetyInstallV1_PolicyWriteOnForce exercises the policy file
+// write path when force=true and policy already exists (line 306-311).
+func TestHandleSafetyInstallV1_PolicyWriteOnForce(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	// Pre-create all files so force=true rewrites them
+	ntmDir := filepath.Join(tmpHome, ".ntm")
+	binDir := filepath.Join(ntmDir, "bin")
+	logsDir := filepath.Join(ntmDir, "logs")
+	hookDir := filepath.Join(tmpHome, ".claude", "hooks", "PreToolUse")
+	for _, d := range []string{binDir, logsDir, hookDir} {
+		os.MkdirAll(d, 0755)
+	}
+	os.WriteFile(filepath.Join(binDir, "git"), []byte("old"), 0755)
+	os.WriteFile(filepath.Join(binDir, "rm"), []byte("old"), 0755)
+	os.WriteFile(filepath.Join(hookDir, "ntm-safety.sh"), []byte("old"), 0755)
+	os.WriteFile(filepath.Join(ntmDir, "policy.yaml"), []byte("version: 1"), 0644)
+
+	body := strings.NewReader(`{"force":true}`)
+	req := httptest.NewRequest("POST", "/api/v1/safety/install", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleSafetyInstallV1(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["policy"] == nil {
+		t.Error("expected policy path in response")
+	}
+}
+
 // Ensure kernel import is used
 var _ = kernel.Run
