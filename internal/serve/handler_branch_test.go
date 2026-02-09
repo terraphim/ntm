@@ -10435,5 +10435,235 @@ func TestHandleVerifyCheckpoint_FakeCheckpoint(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// Batch 27 – import checkpoint branches, SSE event broadcasting, restore
+//            checkpoint error mapping
+// =============================================================================
+
+// --- handleImportCheckpoint: valid base64 but corrupt archive (non-zip, non-gzip) ---
+
+func TestHandleImportCheckpoint_CorruptArchive(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionName", "imp-corrupt")
+
+	// Encode "this is not a valid archive" as base64
+	corruptData := base64.StdEncoding.EncodeToString([]byte("this is not a valid tar.gz or zip"))
+	body := fmt.Sprintf(`{"data":"%s"}`, corruptData)
+	req := httptest.NewRequest("POST", "/api/v1/sessions/imp-corrupt/checkpoints/import", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	s.handleImportCheckpoint(rec, req)
+
+	// Should fail because the archive is corrupt
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for corrupt archive, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- handleImportCheckpoint: valid base64 zip magic bytes but corrupt content ---
+
+func TestHandleImportCheckpoint_CorruptZip(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionName", "imp-zip")
+
+	// Start with PK magic bytes (zip) followed by garbage
+	zipLike := append([]byte("PK\x03\x04"), []byte("garbage data that is not a valid zip")...)
+	data := base64.StdEncoding.EncodeToString(zipLike)
+	body := fmt.Sprintf(`{"data":"%s"}`, data)
+	req := httptest.NewRequest("POST", "/api/v1/sessions/imp-zip/checkpoints/import", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	s.handleImportCheckpoint(rec, req)
+
+	// Should fail because the zip is corrupt
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for corrupt zip, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- handleImportCheckpoint: with target_session and verify_checksums ---
+
+func TestHandleImportCheckpoint_WithOptions(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionName", "imp-opts")
+
+	corruptData := base64.StdEncoding.EncodeToString([]byte("not valid"))
+	boolFalse := "false"
+	body := fmt.Sprintf(`{"data":"%s","target_session":"override-sess","verify_checksums":%s,"allow_overwrite":true}`, corruptData, boolFalse)
+	req := httptest.NewRequest("POST", "/api/v1/sessions/imp-opts/checkpoints/import", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	s.handleImportCheckpoint(rec, req)
+
+	// Will fail on import but exercises option parsing branches
+	if rec.Code != http.StatusBadRequest && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected error, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- handleRestoreCheckpoint: restore with fake checkpoint (not found by restorer) ---
+
+func TestHandleRestoreCheckpoint_CheckpointNotFound(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionName", "rs-nf")
+	rctx.URLParams.Add("checkpointId", "nonexistent")
+
+	req := httptest.NewRequest("POST", "/api/v1/sessions/rs-nf/checkpoints/nonexistent/restore", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	s.handleRestoreCheckpoint(rec, req)
+
+	// Should fail because checkpoint doesn't exist
+	if rec.Code == http.StatusOK {
+		t.Fatalf("expected error for nonexistent checkpoint, got 200")
+	}
+}
+
+// --- handleRestoreCheckpoint: with options (dry_run, force, skip_git_check) ---
+
+func TestHandleRestoreCheckpoint_WithDryRunOptions(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	// Create fake checkpoint
+	cpDir := filepath.Join(tmpHome, ".local", "share", "ntm", "checkpoints", "rs-dry", "cp-dry")
+	os.MkdirAll(cpDir, 0755)
+	metadata := `{"version":1,"id":"cp-dry","name":"dry-run","session_name":"rs-dry","working_dir":"/tmp","created_at":"2025-01-01T00:00:00Z","pane_count":1}`
+	os.WriteFile(filepath.Join(cpDir, "metadata.json"), []byte(metadata), 0644)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionName", "rs-dry")
+	rctx.URLParams.Add("checkpointId", "cp-dry")
+
+	body := `{"dry_run":true,"force":true,"skip_git_check":true}`
+	req := httptest.NewRequest("POST", "/api/v1/sessions/rs-dry/checkpoints/cp-dry/restore", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	s.handleRestoreCheckpoint(rec, req)
+
+	// May succeed (dry_run) or fail (tmux not available) — exercises option parsing
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 200 or 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- handleEventStream: sends event through broadcast ---
+
+func TestHandleEventStream_WithBroadcast(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest("GET", "/events", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		s.handleEventStream(rec, req)
+		close(done)
+	}()
+
+	// Wait for SSE handler to register client
+	time.Sleep(50 * time.Millisecond)
+
+	// Send an event through broadcast
+	s.broadcastEvent(testSSEEvent{
+		eventType: "test.event",
+		session:   "test-session",
+		timestamp: time.Now(),
+	})
+
+	// Give time for event to be received and written
+	time.Sleep(50 * time.Millisecond)
+
+	// Cancel the context to end streaming
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not complete after cancel")
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: connected") {
+		t.Fatalf("expected connected event, got: %s", body)
+	}
+	if !strings.Contains(body, "event: test.event") {
+		t.Fatalf("expected test.event in output, got: %s", body)
+	}
+}
+
+// testSSEEvent implements events.BusEvent for testing.
+type testSSEEvent struct {
+	eventType string
+	session   string
+	timestamp time.Time
+}
+
+func (e testSSEEvent) EventType() string        { return e.eventType }
+func (e testSSEEvent) EventSession() string      { return e.session }
+func (e testSSEEvent) EventTimestamp() time.Time { return e.timestamp }
+
+// --- handleExportCheckpoint: GET with redact_secrets param ---
+
+func TestHandleExportCheckpoint_GetWithRedactSecrets(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	cpDir := filepath.Join(tmpHome, ".local", "share", "ntm", "checkpoints", "exp-redact", "cp-redact")
+	os.MkdirAll(cpDir, 0755)
+	metadata := `{"version":1,"id":"cp-redact","name":"redact-test","session_name":"exp-redact","working_dir":"/tmp","created_at":"2025-01-01T00:00:00Z","pane_count":1}`
+	os.WriteFile(filepath.Join(cpDir, "metadata.json"), []byte(metadata), 0644)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionName", "exp-redact")
+	rctx.URLParams.Add("checkpointId", "cp-redact")
+
+	req := httptest.NewRequest("GET", "/api/v1/sessions/exp-redact/checkpoints/cp-redact/export?format=zip&redact_secrets=true&rewrite_paths=false", nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	s.handleExportCheckpoint(rec, req)
+
+	// Should succeed or fail on export but exercise the query param parsing
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 200 or 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 // Ensure kernel import is used
 var _ = kernel.Run
