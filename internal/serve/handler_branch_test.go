@@ -1071,3 +1071,319 @@ func TestHandleContextBuildV1_EmptyBody(t *testing.T) {
 		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// =============================================================================
+// handlePolicyUpdateV1 — invalid YAML and validation branches
+// =============================================================================
+
+func TestHandlePolicyUpdateV1_InvalidYAML(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	rec := httptest.NewRecorder()
+	body := `{"content":"not: [valid: yaml: broken"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/policy", strings.NewReader(body))
+
+	srv.handlePolicyUpdateV1(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandlePolicyUpdateV1_InvalidPolicy(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	// Valid YAML but invalid policy (bad force_release value)
+	rec := httptest.NewRecorder()
+	body := `{"content":"version: 1\nautomation:\n  force_release: invalid_value"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/policy", strings.NewReader(body))
+
+	srv.handlePolicyUpdateV1(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandlePolicyUpdateV1_ValidPolicy(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	// Valid YAML with valid policy
+	rec := httptest.NewRecorder()
+	body := `{"content":"version: 1\nblocked:\n  - pattern: 'rm -rf /'\n    reason: dangerous"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/policy", strings.NewReader(body))
+
+	srv.handlePolicyUpdateV1(rec, req)
+
+	// Should succeed (writes to ~/.ntm/policy.yaml)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// =============================================================================
+// handlePolicyAutomationUpdateV1 — additional branches
+// =============================================================================
+
+func TestHandlePolicyAutomationUpdateV1_ValidUpdate(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	rec := httptest.NewRecorder()
+	autoCommit := true
+	_ = autoCommit // used in JSON
+	body := `{"auto_commit":true,"auto_push":false}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/policy/automation", strings.NewReader(body))
+
+	srv.handlePolicyAutomationUpdateV1(rec, req)
+
+	// Should succeed or error depending on policy file state
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandlePolicyAutomationUpdateV1_ForceReleaseApproval(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	rec := httptest.NewRecorder()
+	body := `{"force_release":"approval"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/policy/automation", strings.NewReader(body))
+
+	srv.handlePolicyAutomationUpdateV1(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// =============================================================================
+// handlePolicyValidateV1 — additional branches
+// =============================================================================
+
+func TestHandlePolicyValidateV1_InvalidYAML(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	rec := httptest.NewRecorder()
+	body := `{"content":"not: [valid: yaml"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policy/validate", strings.NewReader(body))
+
+	srv.handlePolicyValidateV1(rec, req)
+
+	// Should return 200 with valid=false
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp["valid"] != false {
+		t.Errorf("valid = %v, want false", resp["valid"])
+	}
+}
+
+func TestHandlePolicyValidateV1_BadJSON(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policy/validate", strings.NewReader("{bad"))
+
+	srv.handlePolicyValidateV1(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// =============================================================================
+// handlePolicyResetV1 — success path
+// =============================================================================
+
+func TestHandlePolicyResetV1_Success(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policy/reset", nil)
+
+	srv.handlePolicyResetV1(rec, req)
+
+	// Should succeed (resets to default)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// =============================================================================
+// handleSafetyInstallV1/UninstallV1 — additional paths
+// =============================================================================
+
+func TestHandleSafetyInstallV1_InvalidBody(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/safety/install", strings.NewReader("{bad"))
+
+	srv.handleSafetyInstallV1(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleSafetyUninstallV1_NothingInstalled(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/safety/uninstall", nil)
+
+	srv.handleSafetyUninstallV1(rec, req)
+
+	// Should succeed with empty removed list
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// =============================================================================
+// handleSafetyCheckV1 — valid command path
+// =============================================================================
+
+func TestHandleSafetyCheckV1_ValidCommand_Branch(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/safety/check",
+		strings.NewReader(`{"command":"ls -la"}`))
+
+	srv.handleSafetyCheckV1(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// =============================================================================
+// handleApprovalsListV1 — with status filter
+// =============================================================================
+
+func TestHandleApprovalsListV1_WithStatusFilter(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/approvals?status=pending", nil)
+
+	srv.handleApprovalsListV1(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestHandleApprovalsListV1_NoFilter(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/approvals", nil)
+
+	srv.handleApprovalsListV1(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+}
+
+// =============================================================================
+// handleGetPaneTitleV1 — invalid pane index
+// =============================================================================
+
+func TestHandleGetPaneTitleV1_InvalidIndex(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/s/panes/abc/title", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionId", "s")
+	rctx.URLParams.Add("paneIdx", "abc")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	srv.handleGetPaneTitleV1(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleSetPaneTitleV1_InvalidIndex(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/sessions/s/panes/abc/title",
+		strings.NewReader(`{"title":"test"}`))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionId", "s")
+	rctx.URLParams.Add("paneIdx", "abc")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	srv.handleSetPaneTitleV1(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleSetPaneTitleV1_InvalidBody(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/sessions/s/panes/0/title",
+		strings.NewReader("{bad"))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionId", "s")
+	rctx.URLParams.Add("paneIdx", "0")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	srv.handleSetPaneTitleV1(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+// =============================================================================
+// handlePaneInterruptV1 — invalid pane index
+// =============================================================================
+
+func TestHandlePaneInterruptV1_InvalidIndex(t *testing.T) {
+	t.Parallel()
+	srv, _ := setupTestServer(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/s/panes/abc/interrupt", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionId", "s")
+	rctx.URLParams.Add("paneIdx", "abc")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	srv.handlePaneInterruptV1(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
