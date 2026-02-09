@@ -12158,5 +12158,232 @@ func TestHandleExecPipeline_InvalidBody(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// Batch 33 — Pipeline resume/exec validation, Job lifecycle, Safety status
+// =============================================================================
+
+// TestHandleResumePipeline_BadJSON exercises the decode error path
+// in handleResumePipeline (lines 329-332 of pipelines.go).
+func TestHandleResumePipeline_BadJSON(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "some-run")
+	body := bytes.NewBufferString(`not json`)
+	req := httptest.NewRequest("POST", "/api/v1/pipelines/some-run/resume", body)
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	s.handleResumePipeline(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandleResumePipeline_MissingRunID exercises the missing ID path
+// in handleResumePipeline (lines 323-326 of pipelines.go).
+func TestHandleResumePipeline_MissingRunID(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+
+	rctx := chi.NewRouteContext()
+	// No id param set
+	body := bytes.NewBufferString(`{}`)
+	req := httptest.NewRequest("POST", "/api/v1/pipelines//resume", body)
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	s.handleResumePipeline(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandleExecPipeline_ValidationFailure exercises the workflow validation
+// failure path in handleExecPipeline (lines 209-219 of pipelines.go).
+func TestHandleExecPipeline_ValidationFailure(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+
+	// Workflow with name but no steps and missing required fields
+	body := bytes.NewBufferString(`{
+		"workflow": {"name": "bad-wf"},
+		"session": "test-session"
+	}`)
+	req := httptest.NewRequest("POST", "/api/v1/pipelines/exec", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleExecPipeline(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["error_code"] != ErrCodeInvalidWorkflow {
+		t.Errorf("error_code = %v, want %s", resp["error_code"], ErrCodeInvalidWorkflow)
+	}
+}
+
+// TestHandleListJobs_WithJobs exercises handleListJobs when jobs exist
+// in the store, including the nil-safety path (lines 4319-4321 of server.go).
+func TestHandleListJobs_WithJobs(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+
+	// Create some jobs in the store
+	job1 := s.jobStore.Create("scan")
+	s.jobStore.Update(job1.ID, JobStatusCompleted, 100, map[string]interface{}{"result": "ok"}, "")
+	s.jobStore.Create("spawn")
+
+	req := httptest.NewRequest("GET", "/api/v1/jobs", nil)
+	rec := httptest.NewRecorder()
+	s.handleListJobs(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	count, _ := resp["count"].(float64)
+	if count < 2 {
+		t.Errorf("expected at least 2 jobs, got %v", count)
+	}
+}
+
+// TestHandleCancelJob_CompletedConflict exercises the conflict path
+// in handleCancelJob when the job is already completed (lines 4420-4425 of server.go).
+func TestHandleCancelJob_CompletedConflict(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+
+	job := s.jobStore.Create("scan")
+	s.jobStore.Update(job.ID, JobStatusCompleted, 100, nil, "")
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", job.ID)
+	req := httptest.NewRequest("DELETE", "/api/v1/jobs/"+job.ID, nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	s.handleCancelJob(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 conflict, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandleCancelJob_RunningSuccess exercises the success path
+// in handleCancelJob for a running job (lines 4427-4431 of server.go).
+func TestHandleCancelJob_RunningSuccess(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+
+	job := s.jobStore.Create("scan")
+	s.jobStore.Update(job.ID, JobStatusRunning, 50, nil, "")
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", job.ID)
+	req := httptest.NewRequest("DELETE", "/api/v1/jobs/"+job.ID, nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	s.handleCancelJob(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandleSafetyStatusV1_FullPath exercises handleSafetyStatusV1
+// with HOME set to temp dir, both with and without installed files (lines 66-117 of safety.go).
+func TestHandleSafetyStatusV1_FullPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	s, _ := setupTestServer(t)
+
+	// Test 1: nothing installed
+	req := httptest.NewRequest("GET", "/api/v1/safety/status", nil)
+	rec := httptest.NewRecorder()
+	s.handleSafetyStatusV1(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["installed"] != false {
+		t.Errorf("expected installed=false, got %v", resp["installed"])
+	}
+
+	// Test 2: install wrappers then check again
+	binDir := filepath.Join(tmpDir, ".ntm", "bin")
+	os.MkdirAll(binDir, 0755)
+	os.WriteFile(filepath.Join(binDir, "git"), []byte("#!/bin/sh\n"), 0755)
+	hookDir := filepath.Join(tmpDir, ".claude", "hooks", "PreToolUse")
+	os.MkdirAll(hookDir, 0755)
+	os.WriteFile(filepath.Join(hookDir, "ntm-safety.sh"), []byte("#!/bin/sh\n"), 0755)
+
+	req2 := httptest.NewRequest("GET", "/api/v1/safety/status", nil)
+	rec2 := httptest.NewRecorder()
+	s.handleSafetyStatusV1(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	var resp2 map[string]interface{}
+	json.Unmarshal(rec2.Body.Bytes(), &resp2)
+	if resp2["installed"] != true {
+		t.Errorf("expected installed=true, got %v", resp2["installed"])
+	}
+	if resp2["hook_installed"] != true {
+		t.Errorf("expected hook_installed=true, got %v", resp2["hook_installed"])
+	}
+}
+
+// TestHandleGetPipeline_MissingRunID exercises the empty ID path
+// in handleGetPipeline (lines 243-246 of pipelines.go).
+func TestHandleGetPipeline_MissingRunID(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+
+	rctx := chi.NewRouteContext()
+	// No id param
+	req := httptest.NewRequest("GET", "/api/v1/pipelines/", nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	s.handleGetPipeline(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandleCancelPipeline_MissingRunID exercises the empty ID path
+// in handleCancelPipeline (lines 284-287 of pipelines.go).
+func TestHandleCancelPipeline_MissingRunID(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+
+	rctx := chi.NewRouteContext()
+	req := httptest.NewRequest("DELETE", "/api/v1/pipelines/", nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	s.handleCancelPipeline(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 // Ensure kernel import is used
 var _ = kernel.Run
