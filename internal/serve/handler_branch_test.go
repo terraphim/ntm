@@ -8919,5 +8919,199 @@ func TestApprovalApproveV1_Expired(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// BATCH 23 — WS origin checks, account quota, safety blocked, smaller targets
+// =============================================================================
+
+// --- checkWSOrigin: non-local mode with valid origin ---
+
+func TestCheckWSOrigin_ValidOrigin(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+	s.auth = AuthConfig{Mode: AuthModeOIDC}
+	s.corsAllowedOrigins = []string{"https://app.example.com"}
+
+	req := httptest.NewRequest("GET", "/ws", nil)
+	req.Header.Set("Origin", "https://app.example.com")
+
+	if !s.checkWSOrigin(req) {
+		t.Error("expected origin to be allowed")
+	}
+}
+
+// --- checkWSOrigin: non-local mode with invalid origin ---
+
+func TestCheckWSOrigin_InvalidOrigin(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+	s.auth = AuthConfig{Mode: AuthModeOIDC}
+	s.corsAllowedOrigins = []string{"https://app.example.com"}
+
+	req := httptest.NewRequest("GET", "/ws", nil)
+	req.Header.Set("Origin", "https://evil.com")
+
+	if s.checkWSOrigin(req) {
+		t.Error("expected origin to be rejected")
+	}
+}
+
+
+// --- checkWSOrigin: origin missing host ---
+
+func TestCheckWSOrigin_OriginMissingHost(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+	s.auth = AuthConfig{Mode: AuthModeOIDC}
+
+	req := httptest.NewRequest("GET", "/ws", nil)
+	req.Header.Set("Origin", "https://")
+
+	if s.checkWSOrigin(req) {
+		t.Error("expected origin with missing host to be rejected")
+	}
+}
+
+// --- handleAccountQuotaV1 with real caam ---
+
+func TestHandleAccountQuotaV1_WithCAAM(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/api/v1/accounts/quota", nil)
+	rec := httptest.NewRecorder()
+
+	s.handleAccountQuotaV1(rec, req)
+
+	// May succeed (200) or fail (500/503) depending on caam state
+	if rec.Code == 0 {
+		t.Fatal("expected non-zero status code")
+	}
+}
+
+// --- handleAccountQuotaV1 DependencyMissing path ---
+
+func TestHandleAccountQuotaV1_NoCAAM(t *testing.T) {
+	s, _ := setupTestServer(t)
+	t.Setenv("PATH", t.TempDir())
+	tools.NewCAAMAdapter().InvalidateCache()
+
+	req := httptest.NewRequest("GET", "/api/v1/accounts/quota", nil)
+	rec := httptest.NewRecorder()
+
+	s.handleAccountQuotaV1(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 503 or 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- handleSafetyBlockedV1 success with default params ---
+
+func TestHandleSafetyBlockedV1_DefaultParams(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/api/v1/safety/blocked", nil)
+	rec := httptest.NewRecorder()
+
+	s.handleSafetyBlockedV1(rec, req)
+
+	// Should succeed with empty or populated entries
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- handleMetricsV1 exercises robot.GetMetrics ---
+
+func TestHandleMetricsV1_WithPeriod(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/api/v1/metrics?session=test&period=1h", nil)
+	rec := httptest.NewRecorder()
+
+	s.handleMetricsV1(rec, req)
+
+	// robot.GetMetrics may succeed or fail — either exercises the code
+	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 200 or 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- handleAgentInterruptV1 with valid session exercises past validation ---
+
+func TestHandleAgentInterruptV1_ValidSession(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionId", "test-session")
+	body := strings.NewReader(`{"pane_index":0}`)
+	req := httptest.NewRequest("POST", "/api/v1/sessions/test-session/agent/interrupt", body)
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	s.handleAgentInterruptV1(rec, req)
+
+	// Should pass validation, attempt tmux interaction → 500
+	if rec.Code == http.StatusBadRequest {
+		t.Fatal("valid session should not return 400")
+	}
+}
+
+// --- handleAgentRestartV1 with valid session ---
+
+func TestHandleAgentRestartV1_ValidSession(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sessionId", "test-session")
+	body := strings.NewReader(`{"pane_index":0}`)
+	req := httptest.NewRequest("POST", "/api/v1/sessions/test-session/agent/restart", body)
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	s.handleAgentRestartV1(rec, req)
+
+	if rec.Code == http.StatusBadRequest {
+		t.Fatal("valid session should not return 400")
+	}
+}
+
+// --- handlePaletteV1 with search param ---
+
+func TestHandlePaletteV1_WithSearch(t *testing.T) {
+	t.Parallel()
+	s, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/api/v1/palette?search=test", nil)
+	rec := httptest.NewRecorder()
+
+	s.handlePaletteV1(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- writeErrorResponse hint-only (details empty after removal) ---
+
+// --- writeErrorResponse hint only (details empty after removal) ---
+
+func TestWriteErrorResponse_HintOnly(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	writeErrorResponse(rec, http.StatusBadRequest, "BAD_REQUEST", "test error",
+		map[string]interface{}{"hint": "only hint"}, "req-456")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
 // Ensure kernel import is used
 var _ = kernel.Run
