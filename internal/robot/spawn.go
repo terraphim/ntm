@@ -29,6 +29,7 @@ type SpawnOptions struct {
 	Safety         bool   // Fail if session already exists
 	AssignWork     bool   // Enable orchestrator work assignment mode
 	AssignStrategy string // Assignment strategy: top-n, diverse, dependency-aware, skill-matched
+	CustomNames    []string // Custom agent names (used in order, then NATO alphabet)
 }
 
 // SpawnOutput is the structured output for --robot-spawn.
@@ -77,6 +78,7 @@ type SpawnAssignment struct {
 // SpawnedAgent represents an agent created during spawn.
 type SpawnedAgent struct {
 	Pane      string `json:"pane"`
+	Name      string `json:"name,omitempty"`
 	Type      string `json:"type"`
 	Variant   string `json:"variant,omitempty"`
 	Title     string `json:"title"`
@@ -209,11 +211,21 @@ func GetSpawn(opts SpawnOptions, cfg *config.Config) (*SpawnOutput, error) {
 		output.DryRun = true
 		output.WouldCreate = []SpawnedAgent{}
 
+		// Initialize name map for dry-run preview
+		var dryRunNameMap *AgentNameMap
+		if len(opts.CustomNames) > 0 {
+			dryRunNameMap = NewAgentNameMapWithCustomNames(opts.Session, opts.CustomNames)
+		} else {
+			dryRunNameMap = NewAgentNameMap(opts.Session)
+		}
+
 		// Build list of what would be created
 		paneIdx := 0
 		if !opts.NoUserPane {
+			userPane := fmt.Sprintf("0.%d", paneIdx)
 			output.WouldCreate = append(output.WouldCreate, SpawnedAgent{
-				Pane:  fmt.Sprintf("0.%d", paneIdx),
+				Pane:  userPane,
+				Name:  dryRunNameMap.AssignNew("user", userPane),
 				Type:  "user",
 				Title: fmt.Sprintf("%s__user", opts.Session),
 				Ready: true,
@@ -222,8 +234,10 @@ func GetSpawn(opts SpawnOptions, cfg *config.Config) (*SpawnOutput, error) {
 		}
 
 		for i := 0; i < opts.CCCount; i++ {
+			ccPane := fmt.Sprintf("0.%d", paneIdx)
 			output.WouldCreate = append(output.WouldCreate, SpawnedAgent{
-				Pane:  fmt.Sprintf("0.%d", paneIdx),
+				Pane:  ccPane,
+				Name:  dryRunNameMap.AssignNew("claude", ccPane),
 				Type:  "claude",
 				Title: fmt.Sprintf("%s__cc_%d", opts.Session, i+1),
 			})
@@ -231,8 +245,10 @@ func GetSpawn(opts SpawnOptions, cfg *config.Config) (*SpawnOutput, error) {
 		}
 
 		for i := 0; i < opts.CodCount; i++ {
+			codPane := fmt.Sprintf("0.%d", paneIdx)
 			output.WouldCreate = append(output.WouldCreate, SpawnedAgent{
-				Pane:  fmt.Sprintf("0.%d", paneIdx),
+				Pane:  codPane,
+				Name:  dryRunNameMap.AssignNew("codex", codPane),
 				Type:  "codex",
 				Title: fmt.Sprintf("%s__cod_%d", opts.Session, i+1),
 			})
@@ -240,8 +256,10 @@ func GetSpawn(opts SpawnOptions, cfg *config.Config) (*SpawnOutput, error) {
 		}
 
 		for i := 0; i < opts.GmiCount; i++ {
+			gmiPane := fmt.Sprintf("0.%d", paneIdx)
 			output.WouldCreate = append(output.WouldCreate, SpawnedAgent{
-				Pane:  fmt.Sprintf("0.%d", paneIdx),
+				Pane:  gmiPane,
+				Name:  dryRunNameMap.AssignNew("gemini", gmiPane),
 				Type:  "gemini",
 				Title: fmt.Sprintf("%s__gmi_%d", opts.Session, i+1),
 			})
@@ -304,14 +322,25 @@ func GetSpawn(opts SpawnOptions, cfg *config.Config) (*SpawnOutput, error) {
 	// Apply tiled layout
 	_ = tmux.ApplyTiledLayout(opts.Session)
 
+	// Initialize agent name map
+	var nameMap *AgentNameMap
+	if len(opts.CustomNames) > 0 {
+		nameMap = NewAgentNameMapWithCustomNames(opts.Session, opts.CustomNames)
+	} else {
+		nameMap = NewAgentNameMap(opts.Session)
+	}
+
 	// Start assigning agents (skip first pane if user pane)
 	startIdx := 0
 	if !opts.NoUserPane {
 		startIdx = 1
 		// Add user pane info
 		if len(panes) > 0 {
+			userPaneRef := fmt.Sprintf("0.%d", panes[0].Index)
+			userName := nameMap.AssignNew("user", userPaneRef)
 			output.Agents = append(output.Agents, SpawnedAgent{
-				Pane:      fmt.Sprintf("0.%d", panes[0].Index),
+				Pane:      userPaneRef,
+				Name:      userName,
 				Type:      "user",
 				Title:     panes[0].Title,
 				Ready:     true,
@@ -326,6 +355,7 @@ func GetSpawn(opts SpawnOptions, cfg *config.Config) (*SpawnOutput, error) {
 	// Launch Claude agents
 	for i := 0; i < opts.CCCount && agentNum < len(panes); i++ {
 		agent := launchAgent(panes[agentNum], opts.Session, "claude", i+1, dir, agentCommands["claude"])
+		agent.Name = nameMap.AssignNew("claude", agent.Pane)
 		output.Agents = append(output.Agents, agent)
 		agentNum++
 	}
@@ -333,6 +363,7 @@ func GetSpawn(opts SpawnOptions, cfg *config.Config) (*SpawnOutput, error) {
 	// Launch Codex agents
 	for i := 0; i < opts.CodCount && agentNum < len(panes); i++ {
 		agent := launchAgent(panes[agentNum], opts.Session, "codex", i+1, dir, agentCommands["codex"])
+		agent.Name = nameMap.AssignNew("codex", agent.Pane)
 		output.Agents = append(output.Agents, agent)
 		agentNum++
 	}
@@ -340,6 +371,7 @@ func GetSpawn(opts SpawnOptions, cfg *config.Config) (*SpawnOutput, error) {
 	// Launch Gemini agents
 	for i := 0; i < opts.GmiCount && agentNum < len(panes); i++ {
 		agent := launchAgent(panes[agentNum], opts.Session, "gemini", i+1, dir, agentCommands["gemini"])
+		agent.Name = nameMap.AssignNew("gemini", agent.Pane)
 		output.Agents = append(output.Agents, agent)
 		agentNum++
 	}

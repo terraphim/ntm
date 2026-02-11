@@ -1519,6 +1519,7 @@ type Agent struct {
 	Type     string `json:"type"`              // claude, codex, gemini
 	Variant  string `json:"variant,omitempty"` // Model alias or persona name
 	Pane     string `json:"pane"`
+	Name     string `json:"name,omitempty"`     // Memorable agent name (e.g., claude-alpha)
 	Window   int    `json:"window"`
 	PaneIdx  int    `json:"pane_idx"`
 	IsActive bool   `json:"is_active"`

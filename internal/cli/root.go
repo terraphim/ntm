@@ -1348,8 +1348,17 @@ Shell Integration:
 				Safety:         robotSpawnSafety,
 				AssignWork:     robotSpawnAssignWork,
 				AssignStrategy: robotSpawnStrategy,
+				CustomNames:    robot.ParseCustomNames(robotSpawnNames),
 			}
 			if err := robot.PrintSpawn(opts, cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+		if robotAgentNames != "" {
+			customNames := robot.ParseCustomNames(robotSpawnNames)
+			if err := robot.PrintAgentNames(robotAgentNames, customNames); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -2204,6 +2213,10 @@ var (
 	robotSpawnDir        string // working directory override
 	robotSpawnAssignWork bool   // enable orchestrator work assignment mode
 	robotSpawnStrategy   string // assignment strategy: top-n, diverse, dependency-aware, skill-matched
+	robotSpawnNames      string // custom agent names (comma-separated)
+
+	// Robot-agent-names flag for querying agent name mappings
+	robotAgentNames string // session name for --robot-agent-names
 
 	// Robot-controller-spawn flags for launching controller agents
 	robotControllerSpawn     string // session name for controller spawn
@@ -2724,6 +2737,10 @@ func init() {
 	rootCmd.Flags().StringVar(&robotSpawnDir, "spawn-dir", "", "Working directory for spawned session. Use with --robot-spawn. Example: --spawn-dir=/path/to/project")
 	rootCmd.Flags().BoolVar(&robotSpawnAssignWork, "spawn-assign-work", false, "Enable orchestrator work assignment: get bv triage, claim beads, send work prompts to agents")
 	rootCmd.Flags().StringVar(&robotSpawnStrategy, "spawn-assign-strategy", "top-n", "Work assignment strategy (use with --spawn-assign-work). Values: top-n, diverse, dependency-aware, skill-matched")
+	rootCmd.Flags().StringVar(&robotSpawnNames, "spawn-names", "", "Custom agent names (comma-separated). Use with --robot-spawn. Example: --spawn-names=alice,bob,charlie")
+
+	// Robot-agent-names flag for querying agent name mappings
+	rootCmd.Flags().StringVar(&robotAgentNames, "robot-agent-names", "", "Get agent name mappings for a session (JSON). Names are generated using NATO phonetic alphabet. Example: ntm --robot-agent-names=myproject")
 
 	// Robot-controller-spawn flags for launching controller agent
 	rootCmd.Flags().StringVar(&robotControllerSpawn, "robot-controller-spawn", "", "Launch controller agent in session. Required: SESSION. Example: ntm --robot-controller-spawn=proj")
