@@ -22,6 +22,7 @@ import (
 
 	"github.com/Dicklesworthstone/ntm/internal/audit"
 	"github.com/Dicklesworthstone/ntm/internal/bv"
+	"github.com/Dicklesworthstone/ntm/internal/config"
 	"github.com/Dicklesworthstone/ntm/internal/cass"
 	"github.com/Dicklesworthstone/ntm/internal/checkpoint"
 	"github.com/Dicklesworthstone/ntm/internal/events"
@@ -489,6 +490,9 @@ func newSendCmd() *cobra.Command {
 	var batchBroadcast bool
 	var batchAgentIndex int
 
+	// Project filter (bd-3cu02.14)
+	var projectFilter string
+
 	cmd := &cobra.Command{
 		Use:   "send <session> [prompt]",
 		Short: "Send a prompt to agent panes",
@@ -544,8 +548,23 @@ func newSendCmd() *cobra.Command {
 		  ntm send myproject -t fix --var issue="null pointer" --file src/app.go  # Template with vars
 		  ntm send myproject --smart "fix auth bug"             # Auto-select best agent
 		  ntm send myproject --smart --route=affinity "auth"    # Use affinity strategy`,
-		Args: cobra.MinimumNArgs(1),
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Handle --project mode: broadcast to all matching sessions (bd-3cu02.14)
+			if projectFilter != "" {
+				if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+					// Check if first arg looks like a session name (no spaces, no special chars)
+					// If it could be a session name, error out
+					if !strings.Contains(args[0], " ") {
+						return fmt.Errorf("cannot use --project with a specific session name; use just --project or just a session name")
+					}
+				}
+				return runSendProject(cmd, projectFilter, args, targets, targetAll, skipFirst, paneIndex, tags, noHooks, dryRun)
+			}
+
+			if len(args) == 0 {
+				return fmt.Errorf("session name required (or use --project)")
+			}
 			session := args[0]
 
 			// Resolve base prompt: flag > file > config (bd-3ejl)
@@ -731,11 +750,76 @@ func newSendCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&batchBroadcast, "broadcast", false, "Send same prompt to all agents simultaneously")
 	cmd.Flags().IntVar(&batchAgentIndex, "agent", -1, "Send to specific agent index only (-1 = round-robin)")
 
+	// Project filter (bd-3cu02.14)
+	cmd.Flags().StringVar(&projectFilter, "project", "", "broadcast to all sessions for a base project name")
+
 	cmd.ValidArgsFunction = completeSessionArgs
 	_ = cmd.RegisterFlagCompletionFunc("pane", completePaneIndexes)
 	_ = cmd.RegisterFlagCompletionFunc("panes", completePaneIndexes)
 
 	return cmd
+}
+
+// runSendProject broadcasts a prompt to all sessions matching a base project (bd-3cu02.14).
+func runSendProject(cmd *cobra.Command, project string, args []string, targets SendTargets, targetAll, skipFirst bool, paneIndex int, tags []string, noHooks, dryRun bool) error {
+	if err := tmux.EnsureInstalled(); err != nil {
+		return err
+	}
+
+	sessions, err := tmux.ListSessions()
+	if err != nil {
+		return err
+	}
+
+	var matching []tmux.Session
+	for _, s := range sessions {
+		if config.SessionBase(s.Name) == project {
+			matching = append(matching, s)
+		}
+	}
+
+	if len(matching) == 0 {
+		return fmt.Errorf("no sessions found for project %q", project)
+	}
+
+	// Build prompt from remaining args
+	promptText := strings.Join(args, " ")
+	if strings.TrimSpace(promptText) == "" {
+		return fmt.Errorf("prompt text required")
+	}
+
+	var names []string
+	for _, s := range matching {
+		names = append(names, s.Name)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Sending to %d session(s): %s\n", len(matching), strings.Join(names, ", "))
+
+	var sendErrors []string
+	delivered := 0
+	for _, s := range matching {
+		opts := SendOptions{
+			Session:   s.Name,
+			Prompt:    promptText,
+			Targets:   targets,
+			TargetAll: targetAll,
+			SkipFirst: skipFirst,
+			PaneIndex: paneIndex,
+			Tags:      tags,
+			NoHooks:   noHooks,
+			DryRun:    dryRun,
+		}
+		if err := runSendWithTargets(opts); err != nil {
+			sendErrors = append(sendErrors, fmt.Sprintf("%s: %v", s.Name, err))
+		} else {
+			delivered++
+		}
+	}
+
+	if len(sendErrors) > 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "Delivered to %d/%d sessions. Errors: %s\n", delivered, len(matching), strings.Join(sendErrors, "; "))
+	}
+
+	return nil
 }
 
 // getPromptContent resolves the prompt content from various sources:
@@ -1760,19 +1844,32 @@ func newKillCmd() *cobra.Command {
 	var tags []string
 	var noHooks bool
 	var summarize bool
+	var project string
 
 	cmd := &cobra.Command{
 		Use:   "kill <session>",
 		Short: "Kill a tmux session",
 		Long: `Kill a tmux session and all its panes.
 
+Use --project to kill all sessions for a base project (requires confirmation).
+
 Examples:
-  ntm kill myproject           # Prompts for confirmation
-  ntm kill myproject --force   # No confirmation
-  ntm kill myproject --tag=ui  # Kill only panes with 'ui' tag
-  ntm kill myproject --summarize # Generate summary before killing`,
-		Args: cobra.ExactArgs(1),
+  ntm kill myproject              # Prompts for confirmation
+  ntm kill myproject --force      # No confirmation
+  ntm kill myproject --tag=ui     # Kill only panes with 'ui' tag
+  ntm kill myproject --summarize  # Generate summary before killing
+  ntm kill --project myproject    # Kill all sessions for the project`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if project != "" && len(args) > 0 {
+				return fmt.Errorf("cannot use --project with a specific session name")
+			}
+			if project != "" {
+				return runKillProject(cmd.OutOrStdout(), project, force, tags, noHooks, summarize)
+			}
+			if len(args) == 0 {
+				return fmt.Errorf("session name or --project required")
+			}
 			return runKill(cmd.OutOrStdout(), args[0], force, tags, noHooks, summarize)
 		},
 	}
@@ -1781,6 +1878,7 @@ Examples:
 	cmd.Flags().StringSliceVar(&tags, "tag", nil, "filter panes to kill by tag (if used, only matching panes are killed)")
 	cmd.Flags().BoolVar(&noHooks, "no-hooks", false, "Disable command hooks")
 	cmd.Flags().BoolVar(&summarize, "summarize", false, "Generate session summary before killing")
+	cmd.Flags().StringVarP(&project, "project", "p", "", "kill all sessions for a base project name")
 
 	return cmd
 }
@@ -2005,6 +2103,55 @@ func runKill(w io.Writer, session string, force bool, tags []string, noHooks boo
 		}
 	}
 
+	return nil
+}
+
+// runKillProject kills all sessions matching a base project name (bd-3cu02.14).
+func runKillProject(w io.Writer, project string, force bool, tags []string, noHooks bool, summarize bool) error {
+	if err := tmux.EnsureInstalled(); err != nil {
+		return err
+	}
+
+	sessions, err := tmux.ListSessions()
+	if err != nil {
+		return err
+	}
+
+	var targets []tmux.Session
+	for _, s := range sessions {
+		if config.SessionBase(s.Name) == project {
+			targets = append(targets, s)
+		}
+	}
+
+	if len(targets) == 0 {
+		return fmt.Errorf("no sessions found for project %q", project)
+	}
+
+	// Show what will be killed and confirm
+	var names []string
+	for _, s := range targets {
+		names = append(names, s.Name)
+	}
+
+	if !force {
+		fmt.Fprintf(w, "Kill %d session(s)? %s\n", len(targets), strings.Join(names, ", "))
+		if !confirm("Proceed?") {
+			fmt.Fprintln(w, "Aborted.")
+			return nil
+		}
+	}
+
+	var killErrors []string
+	for _, s := range targets {
+		if err := runKill(w, s.Name, true, tags, noHooks, summarize); err != nil {
+			killErrors = append(killErrors, fmt.Sprintf("%s: %v", s.Name, err))
+		}
+	}
+
+	if len(killErrors) > 0 {
+		return fmt.Errorf("some sessions failed to kill: %s", strings.Join(killErrors, "; "))
+	}
 	return nil
 }
 
