@@ -413,6 +413,9 @@ type SpawnOptions struct {
 
 	// Per-agent-type default prompts (bd-2ywo)
 	DefaultPrompts config.PromptsConfig
+
+	// Goal label for multi-session support (bd-1933u)
+	Label string
 }
 
 // RecoveryContext holds all the information needed to help an agent recover
@@ -576,6 +579,9 @@ func newSpawnCmd() *cobra.Command {
 	// Marching orders flag (bd-2lodn)
 	var marchingOrdersFile string
 
+	// Goal label for multi-session support (bd-1933u)
+	var label string
+
 	// Pre-load plugins to avoid double loading in RunE
 	// TODO: This runs eagerly during init() which slows down startup for all commands.
 	// Fixing this requires refactoring how dynamic flags are registered.
@@ -680,6 +686,15 @@ Examples:
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sessionName := args[0]
+
+			// Apply goal label to session name (bd-1933u)
+			if label != "" {
+				if err := config.ValidateLabel(label); err != nil {
+					return fmt.Errorf("invalid label: %w", err)
+				}
+				sessionName = config.FormatSessionName(sessionName, label)
+			}
+
 			dir := cfg.GetProjectDir(sessionName)
 
 			// Update CASS config from flags
@@ -911,6 +926,7 @@ Examples:
 				AllowPersist:          allowPersist,
 				MarchingOrders:        marchingOrders,
 				DefaultPrompts:        cfg.Prompts,
+				Label:                 label,
 			}
 
 			// Apply session profile if specified (bd-29kr).
@@ -945,6 +961,9 @@ Examples:
 	cmd.Flags().StringVarP(&recipeName, "recipe", "r", "", "use a recipe for agent configuration")
 	cmd.Flags().StringVarP(&templateName, "template", "t", "", "use a workflow template for agent configuration")
 	cmd.Flags().BoolVar(&autoRestart, "auto-restart", false, "monitor and auto-restart crashed agents")
+
+	// Goal label for multi-session support (bd-1933u)
+	cmd.Flags().StringVarP(&label, "label", "l", "", "Goal label for multi-session support (e.g., --label frontend creates session PROJECT--frontend)")
 
 	// Stagger flag for thundering herd prevention
 	// Custom handling: --stagger enables with default 30s, --stagger=2m for custom duration

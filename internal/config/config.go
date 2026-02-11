@@ -2992,10 +2992,12 @@ func ExpandHome(path string) string {
 	return path
 }
 
-// GetProjectDir returns the project directory for a session
+// GetProjectDir returns the project directory for a session.
+// Labels are stripped so that labeled sessions (e.g. "myproject--frontend")
+// resolve to the same directory as the base session ("myproject").
 func (c *Config) GetProjectDir(session string) string {
 	base := ExpandHome(c.ProjectsBase)
-	return filepath.Join(base, session)
+	return filepath.Join(base, SessionBase(session))
 }
 
 // SetProjectsBase sets the projects_base in the config file.
