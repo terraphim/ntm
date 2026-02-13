@@ -1519,7 +1519,7 @@ type Agent struct {
 	Type     string `json:"type"`              // claude, codex, gemini
 	Variant  string `json:"variant,omitempty"` // Model alias or persona name
 	Pane     string `json:"pane"`
-	Name     string `json:"name,omitempty"`     // Memorable agent name (e.g., claude-alpha)
+	Name     string `json:"name,omitempty"` // Memorable agent name (e.g., claude-alpha)
 	Window   int    `json:"window"`
 	PaneIdx  int    `json:"pane_idx"`
 	IsActive bool   `json:"is_active"`
@@ -2180,7 +2180,7 @@ func GetMail(opts MailOptions) (*MailOutput, error) {
 	output.Available = true
 
 	// Ensure project exists
-	if _, err := client.EnsureProject(ctx, projectKey); err != nil {
+	if _, err := ensureProjectWithRetry(ctx, client, projectKey); err != nil {
 		output.RobotResponse = NewErrorResponse(
 			fmt.Errorf("ensure_project: %w", err),
 			ErrCodeInternalError,
@@ -3329,7 +3329,14 @@ func fetchAgentMailData(projectKey string) (*SnapshotAgentMail, []agentmail.Agen
 	defer cancel()
 
 	// Ensure project exists
-	if _, err := client.EnsureProject(ctx, projectKey); err != nil {
+	if _, err := ensureProjectWithRetry(ctx, client, projectKey); err != nil {
+		if isAgentMailDBLockError(err) {
+			return &SnapshotAgentMail{
+				Available: true,
+				Reason:    "temporarily unavailable: Agent Mail resource busy",
+				Project:   projectKey,
+			}, nil, nil
+		}
 		return &SnapshotAgentMail{
 			Available: true,
 			Reason:    fmt.Sprintf("ensure_project failed: %v", err),
@@ -3339,6 +3346,13 @@ func fetchAgentMailData(projectKey string) (*SnapshotAgentMail, []agentmail.Agen
 
 	agents, err := client.ListProjectAgents(ctx, projectKey)
 	if err != nil {
+		if isAgentMailDBLockError(err) {
+			return &SnapshotAgentMail{
+				Available: true,
+				Reason:    "temporarily unavailable: Agent Mail resource busy",
+				Project:   projectKey,
+			}, nil, nil
+		}
 		return &SnapshotAgentMail{
 			Available: true,
 			Reason:    fmt.Sprintf("list_agents failed: %v", err),
@@ -5505,6 +5519,53 @@ func PrintTerse(cfg *config.Config) error {
 	return nil
 }
 
+// ensureProjectWithRetry wraps EnsureProject with a small retry window for
+// transient SQLite lock contention on the Agent Mail server.
+func ensureProjectWithRetry(ctx context.Context, client *agentmail.Client, projectKey string) (*agentmail.Project, error) {
+	const maxAttempts = 4
+	backoff := 100 * time.Millisecond
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		project, err := client.EnsureProject(ctx, projectKey)
+		if err == nil {
+			return project, nil
+		}
+		lastErr = err
+
+		if !isAgentMailDBLockError(err) || attempt == maxAttempts {
+			return nil, err
+		}
+
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+
+		if backoff < time.Second {
+			backoff *= 2
+		}
+	}
+
+	return nil, lastErr
+}
+
+func isAgentMailDBLockError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "database is busy") ||
+		strings.Contains(msg, "resource busy")
+}
+
 // getTerseMailCount returns unread mail count for terse output (best-effort).
 func getTerseMailCount() int {
 	projectKey, err := os.Getwd()
@@ -5521,7 +5582,7 @@ func getTerseMailCount() int {
 	}
 
 	// Ensure project exists
-	if _, err := client.EnsureProject(ctx, projectKey); err != nil {
+	if _, err := ensureProjectWithRetry(ctx, client, projectKey); err != nil {
 		return 0
 	}
 
@@ -5566,13 +5627,19 @@ func getAgentMailSummary() (*AgentMailSummary, error) {
 	summary.Available = true
 
 	// Ensure project exists
-	if _, err := client.EnsureProject(ctx, projectKey); err != nil {
+	if _, err := ensureProjectWithRetry(ctx, client, projectKey); err != nil {
+		if isAgentMailDBLockError(err) {
+			return summary, nil
+		}
 		summary.Error = fmt.Sprintf("ensure_project: %v", err)
 		return summary, nil
 	}
 
 	agents, err := client.ListProjectAgents(ctx, projectKey)
 	if err != nil {
+		if isAgentMailDBLockError(err) {
+			return summary, nil
+		}
 		summary.Error = fmt.Sprintf("list_agents: %v", err)
 		return summary, nil
 	}
