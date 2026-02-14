@@ -299,6 +299,7 @@ func TestSpawnOptions_NoAgentsSpecified(t *testing.T) {
 		CCCount:    0,
 		CodCount:   0,
 		GmiCount:   0,
+		OCCount:    0,
 		NoUserPane: true,
 	}
 
@@ -315,7 +316,7 @@ func TestSpawnOptions_NoAgentsSpecified(t *testing.T) {
 	if resp.Error == "" {
 		t.Error("[E2E-SPAWN] Expected error for no agents specified")
 	}
-	if resp.Error != "no agents specified (use cc, cod, or gmi counts)" {
+	if resp.Error != "no agents specified (use cc, cod, gmi, or oc counts)" {
 		t.Errorf("[E2E-SPAWN] Unexpected error message: %s", resp.Error)
 	}
 
