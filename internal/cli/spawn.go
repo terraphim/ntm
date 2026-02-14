@@ -176,8 +176,10 @@ func parseLocalFallbackProvider(raw string) (AgentType, error) {
 		return AgentTypeCodex, nil
 	case "gmi", "gemini", "google-gemini":
 		return AgentTypeGemini, nil
+	case "oc", "opencode":
+		return AgentTypeOpenCode, nil
 	default:
-		return "", fmt.Errorf("invalid --local-fallback-provider %q (expected one of: cc|cod|gmi)", raw)
+		return "", fmt.Errorf("invalid --local-fallback-provider %q (expected one of: cc|cod|gmi|oc)", raw)
 	}
 }
 
@@ -185,6 +187,7 @@ func recomputeSpawnAgentCounts(opts *SpawnOptions) {
 	opts.CCCount = 0
 	opts.CodCount = 0
 	opts.GmiCount = 0
+	opts.OCCount = 0
 	opts.CursorCount = 0
 	opts.WindsurfCount = 0
 	opts.AiderCount = 0
@@ -197,6 +200,8 @@ func recomputeSpawnAgentCounts(opts *SpawnOptions) {
 			opts.CodCount++
 		case AgentTypeGemini:
 			opts.GmiCount++
+		case AgentTypeOpenCode:
+			opts.OCCount++
 		case AgentTypeCursor:
 			opts.CursorCount++
 		case AgentTypeWindsurf:
@@ -667,7 +672,7 @@ Worktree isolation (--worktrees):
 Local fallback (--local-fallback):
   If Ollama is unavailable or model preflight fails, local agents can be
   converted to cloud agents instead of failing spawn.
-  --local-fallback-provider selects fallback target (cc, cod, gmi).
+  --local-fallback-provider selects fallback target (cc, cod, gmi, oc).
 
 For running multiple agent swarms on the same project with different goals,
 use --label:
@@ -681,6 +686,7 @@ share the same project directory. Use ntm list --project myproject to see all.
 Examples:
   ntm spawn myproject --cc=2 --cod=2           # 2 Claude, 2 Codex + user pane
   ntm spawn myproject --cc=3 --cod=3 --gmi=1   # 3 Claude, 3 Codex, 1 Gemini
+  ntm spawn myproject --cc=2 --oc=2            # 2 Claude, 2 OpenCode + user pane
   ntm spawn myproject --cc=4 --no-user         # 4 Claude, no user pane
   ntm spawn myproject -r full-stack            # Use full-stack recipe
   ntm spawn myproject -t red-green             # Use red-green workflow template
@@ -768,6 +774,9 @@ Examples:
 				if agentSpecs.ByType(AgentTypeGemini).TotalCount() == 0 && counts["gmi"] > 0 {
 					agentSpecs = append(agentSpecs, AgentSpec{Type: AgentTypeGemini, Count: counts["gmi"]})
 				}
+				if agentSpecs.ByType(AgentTypeOpenCode).TotalCount() == 0 && counts["oc"] > 0 {
+					agentSpecs = append(agentSpecs, AgentSpec{Type: AgentTypeOpenCode, Count: counts["oc"]})
+				}
 				fmt.Printf("Using recipe '%s': %s\n", r.Name, r.Description)
 			}
 
@@ -797,6 +806,9 @@ Examples:
 				if agentSpecs.ByType(AgentTypeGemini).TotalCount() == 0 && counts["gmi"] > 0 {
 					agentSpecs = append(agentSpecs, AgentSpec{Type: AgentTypeGemini, Count: counts["gmi"]})
 				}
+				if agentSpecs.ByType(AgentTypeOpenCode).TotalCount() == 0 && counts["oc"] > 0 {
+					agentSpecs = append(agentSpecs, AgentSpec{Type: AgentTypeOpenCode, Count: counts["oc"]})
+				}
 				if !IsJSONOutput() {
 					fmt.Printf("Using template '%s': %s (%s coordination)\n",
 						tmpl.Name, tmpl.Description, tmpl.Coordination)
@@ -817,6 +829,7 @@ Examples:
 			ccCount := agentSpecs.ByType(AgentTypeClaude).TotalCount()
 			codCount := agentSpecs.ByType(AgentTypeCodex).TotalCount()
 			gmiCount := agentSpecs.ByType(AgentTypeGemini).TotalCount()
+			ocCount := agentSpecs.ByType(AgentTypeOpenCode).TotalCount()
 
 			// Apply defaults
 			if len(agentSpecs) == 0 && len(cfg.ProjectDefaults) > 0 {
@@ -829,11 +842,15 @@ Examples:
 				if v, ok := cfg.ProjectDefaults["gmi"]; ok && v > 0 {
 					agentSpecs = append(agentSpecs, AgentSpec{Type: AgentTypeGemini, Count: v})
 				}
+				if v, ok := cfg.ProjectDefaults["oc"]; ok && v > 0 {
+					agentSpecs = append(agentSpecs, AgentSpec{Type: AgentTypeOpenCode, Count: v})
+				}
 				ccCount = agentSpecs.ByType(AgentTypeClaude).TotalCount()
 				codCount = agentSpecs.ByType(AgentTypeCodex).TotalCount()
 				gmiCount = agentSpecs.ByType(AgentTypeGemini).TotalCount()
+				ocCount = agentSpecs.ByType(AgentTypeOpenCode).TotalCount()
 				if !IsJSONOutput() && len(agentSpecs) > 0 {
-					fmt.Printf("Using default configuration: %d cc, %d cod, %d gmi\n", ccCount, codCount, gmiCount)
+					fmt.Printf("Using default configuration: %d cc, %d cod, %d gmi, %d oc\n", ccCount, codCount, gmiCount, ocCount)
 				}
 			}
 
@@ -908,6 +925,7 @@ Examples:
 				CCCount:               ccCount,
 				CodCount:              codCount,
 				GmiCount:              gmiCount,
+				OCCount:               ocCount,
 				UserPane:              !noUserPane,
 				AutoRestart:           autoRestart,
 				RecipeName:            recipeName,
@@ -962,12 +980,13 @@ Examples:
 	cmd.Flags().Var(NewAgentSpecsValue(AgentTypeClaude, &agentSpecs), "cc", "Claude agents (N or N:model, model charset: a-zA-Z0-9._/@:+-)")
 	cmd.Flags().Var(NewAgentSpecsValue(AgentTypeCodex, &agentSpecs), "cod", "Codex agents (N or N:model, model charset: a-zA-Z0-9._/@:+-)")
 	cmd.Flags().Var(NewAgentSpecsValue(AgentTypeGemini, &agentSpecs), "gmi", "Gemini agents (N or N:model, model charset: a-zA-Z0-9._/@:+-)")
+	cmd.Flags().Var(NewAgentSpecsValue(AgentTypeOpenCode, &agentSpecs), "oc", "OpenCode agents (N or N:model, model charset: a-zA-Z0-9._/@:+-)")
 	cmd.Flags().IntVar(&localCount, "local", 0, "Local agents via Ollama (alias: --ollama)")
 	cmd.Flags().IntVar(&ollamaCount, "ollama", 0, "Alias for --local (explicit Ollama)")
 	cmd.Flags().StringVar(&localModel, "local-model", "codellama:latest", "Ollama model to run for --local/--ollama agents")
 	cmd.Flags().StringVar(&localHost, "local-host", "", "Ollama host URL for --local/--ollama agents (overrides OLLAMA_HOST/NTM_OLLAMA_HOST)")
 	cmd.Flags().BoolVar(&localFallback, "local-fallback", false, "Fallback local Ollama agents to cloud provider when preflight fails")
-	cmd.Flags().StringVar(&localFallbackProvider, "local-fallback-provider", "cod", "Provider for --local-fallback: cc|cod|gmi")
+	cmd.Flags().StringVar(&localFallbackProvider, "local-fallback-provider", "cod", "Provider for --local-fallback: cc|cod|gmi|oc")
 	cmd.Flags().Var(NewAgentSpecsValue(AgentTypeCursor, &agentSpecs), "cursor", "Cursor agents (N or N:model)")
 	cmd.Flags().Var(NewAgentSpecsValue(AgentTypeWindsurf, &agentSpecs), "windsurf", "Windsurf agents (N or N:model)")
 	cmd.Flags().Var(NewAgentSpecsValue(AgentTypeAider, &agentSpecs), "aider", "Aider agents (N or N:model)")

@@ -20,6 +20,7 @@ const (
 	AgentTypeClaude   AgentType = "cc"
 	AgentTypeCodex    AgentType = "cod"
 	AgentTypeGemini   AgentType = "gmi"
+	AgentTypeOpenCode AgentType = "oc"
 	AgentTypeOllama   AgentType = "ollama"
 	AgentTypeCursor   AgentType = "cursor"
 	AgentTypeWindsurf AgentType = "windsurf"
