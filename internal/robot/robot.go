@@ -1798,7 +1798,7 @@ Core Commands:
 
 Session Operations:
 -------------------
---robot-spawn=SESSION   Create session with --spawn-cc=N, --spawn-cod=N, --spawn-gmi=N, --spawn-label=LABEL
+--robot-spawn=SESSION   Create session with --spawn-cc=N, --spawn-cod=N, --spawn-gmi=N, --spawn-oc=N, --spawn-label=LABEL
 --robot-ensemble-spawn=SESSION  Spawn ensemble with --preset/--modes and --question
 --robot-send=SESSION    Send prompts (--msg="text", --panes=1,2, --type=claude)
 --robot-tail=SESSION    Capture pane output (--lines=50, --panes=1,2)

@@ -69,7 +69,7 @@ var rootCmd = &cobra.Command{
 	Use:   "ntm",
 	Short: "Named Tmux Manager - orchestrate AI coding agents in tmux sessions",
 	Long: `NTM (Named Tmux Manager) helps you create and manage tmux sessions
-with multiple AI coding agents (Claude, Codex, Gemini) in separate panes.
+with multiple AI coding agents (Claude, Codex, Gemini, OpenCode) in separate panes.
 
 Quick Start:
   ntm spawn myproject --cc=2 --cod=2    # Create session with 4 agents
@@ -1340,6 +1340,7 @@ Shell Integration:
 				CCCount:        robotSpawnCC,
 				CodCount:       robotSpawnCod,
 				GmiCount:       robotSpawnGmi,
+				OCCount:        robotSpawnOC,
 				Preset:         robotSpawnPreset,
 				NoUserPane:     robotSpawnNoUser,
 				WorkingDir:     robotSpawnDir,
@@ -2206,6 +2207,7 @@ var (
 	robotSpawnCC         int    // number of Claude agents
 	robotSpawnCod        int    // number of Codex agents
 	robotSpawnGmi        int    // number of Gemini agents
+	robotSpawnOC         int    // number of OpenCode agents
 	robotSpawnPreset     string // recipe/preset name
 	robotSpawnNoUser     bool   // don't create user pane
 	robotSpawnWait       bool   // wait for agents to be ready
@@ -2730,6 +2732,7 @@ func init() {
 	rootCmd.Flags().IntVar(&robotSpawnCC, "spawn-cc", 0, "Claude Code agents to spawn. Use with --robot-spawn. Example: --spawn-cc=2")
 	rootCmd.Flags().IntVar(&robotSpawnCod, "spawn-cod", 0, "Codex CLI agents to spawn. Use with --robot-spawn. Example: --spawn-cod=1")
 	rootCmd.Flags().IntVar(&robotSpawnGmi, "spawn-gmi", 0, "Gemini CLI agents to spawn. Use with --robot-spawn. Example: --spawn-gmi=1")
+	rootCmd.Flags().IntVar(&robotSpawnOC, "spawn-oc", 0, "OpenCode CLI agents to spawn. Use with --robot-spawn. Example: --spawn-oc=1")
 	rootCmd.Flags().StringVar(&robotSpawnPreset, "spawn-preset", "", "Use recipe preset instead of counts. See --robot-recipes. Example: --spawn-preset=standard")
 	rootCmd.Flags().BoolVar(&robotSpawnNoUser, "spawn-no-user", false, "Skip user pane creation. Optional with --robot-spawn. For headless/automation")
 	rootCmd.Flags().BoolVar(&robotSpawnWait, "spawn-wait", false, "Wait for agents to show ready state before returning. Recommended for automation")

@@ -490,6 +490,7 @@ func buildCommandRegistry() []RobotCommandInfo {
 				{Name: "spawn-cc", Flag: "--spawn-cc", Type: "int", Required: false, Description: "Number of Claude agents"},
 				{Name: "spawn-cod", Flag: "--spawn-cod", Type: "int", Required: false, Description: "Number of Codex agents"},
 				{Name: "spawn-gmi", Flag: "--spawn-gmi", Type: "int", Required: false, Description: "Number of Gemini agents"},
+				{Name: "spawn-oc", Flag: "--spawn-oc", Type: "int", Required: false, Description: "Number of OpenCode agents"},
 				{Name: "spawn-preset", Flag: "--spawn-preset", Type: "string", Required: false, Description: "Use recipe preset instead of counts"},
 				{Name: "spawn-no-user", Flag: "--spawn-no-user", Type: "bool", Required: false, Description: "Skip user pane creation"},
 				{Name: "spawn-dir", Flag: "--spawn-dir", Type: "string", Required: false, Description: "Working directory for session"},

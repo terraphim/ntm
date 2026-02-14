@@ -223,7 +223,7 @@ func DefaultResilienceConfig() ResilienceConfig {
 		MaxRestarts:         3,     // Stop after 3 restart attempts
 		RestartDelaySeconds: 30,    // Wait 30 seconds before restarting
 		HealthCheckSeconds:  10,    // Check health every 10 seconds
-		CrashThreshold:      3,    // 3 consecutive text-based failures before restart
+		CrashThreshold:      3,     // 3 consecutive text-based failures before restart
 		NotifyOnCrash:       true,  // Notify on crash by default
 		NotifyOnMaxRestarts: true,  // Notify when max restarts exceeded
 		RateLimit: RateLimitConfig{
@@ -474,6 +474,7 @@ type AgentConfig struct {
 	Claude       string            `toml:"claude"`
 	Codex        string            `toml:"codex"`
 	Gemini       string            `toml:"gemini"`
+	OpenCode     string            `toml:"opencode"`
 	Ollama       string            `toml:"ollama"`
 	Cursor       string            `toml:"cursor"`
 	Windsurf     string            `toml:"windsurf"`

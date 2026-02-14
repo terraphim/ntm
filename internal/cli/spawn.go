@@ -351,6 +351,7 @@ type SpawnOptions struct {
 	CCCount       int
 	CodCount      int
 	GmiCount      int
+	OCCount       int
 	CursorCount   int
 	WindsurfCount int
 	AiderCount    int
@@ -1080,9 +1081,9 @@ func spawnSessionLogic(opts SpawnOptions) (err error) {
 	// Calculate total agents - either from Agents slice or explicit counts (legacy path)
 	var totalAgents int
 	if len(opts.Agents) == 0 {
-		totalAgents = opts.CCCount + opts.CodCount + opts.GmiCount + opts.CursorCount + opts.WindsurfCount + opts.AiderCount
+		totalAgents = opts.CCCount + opts.CodCount + opts.GmiCount + opts.OCCount + opts.CursorCount + opts.WindsurfCount + opts.AiderCount
 		if totalAgents == 0 {
-			return outputError(fmt.Errorf("no agents specified (use --cc, --cod, --gmi, --cursor, --windsurf, --aider or plugin flags)"))
+			return outputError(fmt.Errorf("no agents specified (use --cc, --cod, --gmi, --oc, --cursor, --windsurf, --aider or plugin flags)"))
 		}
 	} else {
 		totalAgents = len(opts.Agents)
@@ -1153,6 +1154,7 @@ func spawnSessionLogic(opts SpawnOptions) (err error) {
 			"NTM_AGENT_COUNT_CC":       fmt.Sprintf("%d", opts.CCCount),
 			"NTM_AGENT_COUNT_COD":      fmt.Sprintf("%d", opts.CodCount),
 			"NTM_AGENT_COUNT_GMI":      fmt.Sprintf("%d", opts.GmiCount),
+			"NTM_AGENT_COUNT_OC":       fmt.Sprintf("%d", opts.OCCount),
 			"NTM_AGENT_COUNT_CURSOR":   fmt.Sprintf("%d", opts.CursorCount),
 			"NTM_AGENT_COUNT_WINDSURF": fmt.Sprintf("%d", opts.WindsurfCount),
 			"NTM_AGENT_COUNT_AIDER":    fmt.Sprintf("%d", opts.AiderCount),
