@@ -604,6 +604,8 @@ func agentTypeShort(agentType string) string {
 		return "cod"
 	case "gemini":
 		return "gmi"
+	case "opencode":
+		return "oc"
 	default:
 		return agentType
 	}

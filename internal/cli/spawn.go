@@ -1501,6 +1501,8 @@ func spawnSessionLogic(opts SpawnOptions) (err error) {
 			agentCmdTemplate = cfg.Agents.Windsurf
 		case AgentTypeAider:
 			agentCmdTemplate = cfg.Agents.Aider
+		case AgentTypeOpenCode:
+			agentCmdTemplate = cfg.Agents.OpenCode
 		default:
 			// Check plugins
 			if p, ok := opts.PluginMap[string(agent.Type)]; ok {
